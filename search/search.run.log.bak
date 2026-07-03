@@ -1,0 +1,76 @@
+2025-07-10 11:57:10.329 User  New 'C:\repos\CoreProjects\search\Filters' will be created
+2025-07-10 11:59:48.532 User  App exiting with 0
+2025-07-10 12:00:26.663 User  New 'C:\repos\CoreProjects\search\Filters' will be created
+2025-07-10 12:10:24.608 User  New 'C:\repos\CoreProjects\search\Filters' will be created
+2025-08-08 11:35:44.533 User  Key F12 pressed => Still down: F12
+2025-08-14 15:47:18.092 User  starting
+2025-08-14 15:47:18.200 User  waiting for Admin connection
+2025-08-14 15:47:18.278 Admin starting
+2025-08-14 15:47:18.287 User  Admin connected
+2025-08-14 15:47:18.290 Admin runs command READY
+2025-08-14 15:47:18.293 User  processing command READY
+2025-08-14 15:47:18.293 User  command READY done
+2025-08-14 15:47:18.296 Admin command READY returned ''
+2025-08-14 15:47:18.297 Admin starting UI
+2025-08-14 15:57:32.557 User  starting
+2025-08-14 15:57:32.670 User  waiting for Admin connection
+2025-08-14 15:57:32.761 Admin starting
+2025-08-14 15:57:32.771 User  Admin connected
+2025-08-14 15:57:32.775 Admin runs command READY
+2025-08-14 15:57:32.777 User  processing command READY
+2025-08-14 15:57:32.778 User  command READY done
+2025-08-14 15:57:32.780 Admin command READY returned ''
+2025-08-14 15:57:32.781 Admin starting UI
+2025-08-14 15:57:36.234 Admin App exiting with 0
+2025-08-14 15:57:36.343 Admin closed UI
+2025-08-14 15:57:36.343 Admin runs command EXIT
+2025-08-14 15:57:36.345 User  processing command EXIT
+2025-08-14 15:57:36.349 User  exiting
+2025-08-14 15:57:36.353 Admin exiting
+2025-08-14 15:58:25.306 Admin App exiting with 0
+2025-08-14 15:58:25.354 Admin closed UI
+2025-08-14 15:58:25.355 Admin runs command EXIT
+2025-08-14 15:58:25.357 User  processing command EXIT
+2025-08-14 15:58:25.359 User  exiting
+2025-08-14 15:58:25.361 Admin exiting
+2025-08-14 15:59:05.159 User  App exiting with 0
+2025-08-14 15:59:18.243 User  starting
+2025-08-14 15:59:18.360 User  waiting for Admin connection
+2025-08-14 15:59:18.439 Admin starting
+2025-08-14 15:59:18.447 User  Admin connected
+2025-08-14 15:59:18.451 Admin runs command READY
+2025-08-14 15:59:18.453 User  processing command READY
+2025-08-14 15:59:18.455 User  command READY done
+2025-08-14 15:59:18.457 Admin command READY returned ''
+2025-08-14 15:59:18.459 Admin starting UI
+2025-08-14 16:07:21.815 Admin Key F4 pressed => Still down: F4
+2025-08-14 16:07:21.835 Admin Key F4 released => Down: 
+2025-08-14 16:07:21.858 Admin OpenFromUnevevated 'C:\Program Files\Notepad++\notepad++.exe' '"C:\repos\monorepo\Modules\MyQ\License\Resources\translations\en.csv"'
+2025-08-14 16:07:21.858 Admin runs command OPEN_FILE
+2025-08-14 16:07:21.860 User  processing command OPEN_FILE
+2025-08-14 16:07:21.880 User  command OPEN_FILE done
+2025-08-14 16:07:21.881 Admin command OPEN_FILE returned ''
+2025-08-14 16:15:04.748 Admin App exiting with 0
+2025-08-14 16:15:04.807 Admin closed UI
+2025-08-14 16:15:04.808 Admin runs command EXIT
+2025-08-14 16:15:04.810 User  processing command EXIT
+2025-08-14 16:15:04.812 User  exiting
+2025-08-14 16:15:04.813 Admin exiting
+2026-07-02 15:39:25.301 User  starting
+2026-07-02 15:39:28.517 User  waiting for Admin connection
+2026-07-02 15:39:28.700 Admin starting
+2026-07-02 15:39:28.718 User  Admin connected
+2026-07-02 15:39:28.724 Admin runs command READY
+2026-07-02 15:39:28.726 User  processing command READY
+2026-07-02 15:39:28.728 User  command READY done
+2026-07-02 15:39:28.732 Admin command READY returned ''
+2026-07-02 15:39:28.734 Admin starting UI
+2026-07-02 15:58:33.368 Admin App exiting with 0
+2026-07-02 15:58:33.568 Admin closed UI
+2026-07-02 15:58:33.569 Admin runs command EXIT
+2026-07-02 15:58:33.602 Admin UI exception: System.IO.IOException: Pipe is broken.
+   at System.IO.Pipes.PipeStream.WriteCore(ReadOnlySpan`1 buffer)
+   at System.IO.StreamWriter.Flush(Boolean flushStream, Boolean flushEncoder)
+   at search.UnelevatedApp.Run(Command cmd, Action`1 args, Action`1 getResult) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 106
+   at search.UnelevatedApp.Main(String[] args) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 149
+2026-07-02 15:58:33.603 Admin exiting

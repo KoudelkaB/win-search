@@ -1,0 +1,188 @@
+2026-07-02 16:11:29.662 User  starting
+2026-07-02 16:11:33.614 User  waiting for Admin connection
+2026-07-02 16:11:33.952 Admin starting
+2026-07-02 16:11:33.981 User  Admin connected
+2026-07-02 16:11:33.991 Admin runs command READY
+2026-07-02 16:11:33.998 User  processing command READY
+2026-07-02 16:11:34.003 User  command READY done
+2026-07-02 16:11:34.009 Admin command READY returned ''
+2026-07-02 16:11:34.013 Admin starting UI
+2026-07-02 16:21:16.241 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.705 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.737 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.767 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.812 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.842 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.871 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.901 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.931 Admin Key O pressed => Still down: O
+2026-07-02 16:21:16.977 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.007 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.038 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.069 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.097 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.143 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.174 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.205 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.234 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.267 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.295 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.344 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.373 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.402 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.432 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.461 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.492 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.537 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.569 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.599 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.630 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.658 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.706 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.735 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.764 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.797 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.824 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.856 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.900 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.931 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.961 Admin Key O pressed => Still down: O
+2026-07-02 16:21:17.991 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.022 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.068 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.099 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.129 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.158 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.190 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.219 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.263 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.292 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.323 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.353 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.390 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.433 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.464 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.492 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.522 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.554 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.582 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.630 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.659 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.691 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.717 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.758 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.791 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.820 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.851 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.883 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.913 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.959 Admin Key O pressed => Still down: O
+2026-07-02 16:21:18.986 Admin Key O pressed => Still down: O
+2026-07-02 16:21:19.017 Admin Key O pressed => Still down: O
+2026-07-02 16:21:19.049 Admin Key O pressed => Still down: O
+2026-07-02 16:21:19.055 Admin Key E pressed => Still down: O, E
+2026-07-02 16:21:19.095 Admin Key E released => Down: O
+2026-07-02 16:21:19.206 Admin Key O released => Down: 
+2026-07-02 16:21:19.222 Admin OpenFromUnevevated 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application\149.0.4022.80\msedge.exe' '"C:\Program Files\Microsoft OneDrive\26.108.0607.0002\WebAssets\globe.html"'
+2026-07-02 16:21:19.223 Admin runs command OPEN_FILE
+2026-07-02 16:21:19.243 Admin WaitFor exception System.IO.IOException: Pipe is broken.
+   at System.IO.Pipes.PipeStream.WriteCore(ReadOnlySpan`1 buffer)
+   at System.IO.StreamWriter.Flush(Boolean flushStream, Boolean flushEncoder)
+   at search.UnelevatedApp.Run(Command cmd, Action`1 args, Action`1 getResult) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 106
+   at search.UnelevatedApp.OpenFromUnevevated(String file, String args, String workDir) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 22
+   at search.Extensions.Open(String name, String args, String workDir, Boolean elevated) in c:\repos\CoreProjects\search\Extensions.cs:line 60
+   at search.MainWindow.<>c__DisplayClass25_1.<Open>b__2() in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 395
+   at search.MainWindow.WaitFor(Action a) in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 351
+2026-07-02 16:21:49.343 Admin Key O pressed => Still down: O
+2026-07-02 16:21:49.851 Admin Key O pressed => Still down: O
+2026-07-02 16:21:49.882 Admin Key O pressed => Still down: O
+2026-07-02 16:21:49.911 Admin Key O pressed => Still down: O
+2026-07-02 16:21:49.954 Admin Key O pressed => Still down: O
+2026-07-02 16:21:49.983 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.014 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.046 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.076 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.120 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.150 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.180 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.209 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.242 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.271 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.318 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.347 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.376 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.408 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.437 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.482 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.513 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.543 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.573 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.602 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.636 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.679 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.710 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.739 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.769 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.798 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.845 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.874 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.903 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.936 Admin Key O pressed => Still down: O
+2026-07-02 16:21:50.968 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.012 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.041 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.071 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.102 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.132 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.164 Admin Key O pressed => Still down: O
+2026-07-02 16:21:51.194 Admin Key E pressed => Still down: O, E
+2026-07-02 16:21:51.258 Admin Key E released => Down: O
+2026-07-02 16:21:52.365 Admin Key O released => Down: 
+2026-07-02 16:21:52.367 Admin OpenFromUnevevated 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application\149.0.4022.80\msedge.exe' '"C:\repos\monorepo1\apps\document-processor\Confluence\TLS Remote CA Trust.html"'
+2026-07-02 16:21:52.370 Admin runs command OPEN_FILE
+2026-07-02 16:21:52.374 Admin WaitFor exception System.IO.IOException: Pipe is broken.
+   at System.IO.Pipes.PipeStream.CheckWriteOperations()
+   at System.IO.Pipes.PipeStream.Write(ReadOnlySpan`1 buffer)
+   at System.IO.StreamWriter.Flush(Boolean flushStream, Boolean flushEncoder)
+   at search.UnelevatedApp.Run(Command cmd, Action`1 args, Action`1 getResult) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 106
+   at search.UnelevatedApp.OpenFromUnevevated(String file, String args, String workDir) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 22
+   at search.Extensions.Open(String name, String args, String workDir, Boolean elevated) in c:\repos\CoreProjects\search\Extensions.cs:line 60
+   at search.MainWindow.<>c__DisplayClass25_1.<Open>b__2() in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 395
+   at search.MainWindow.WaitFor(Action a) in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 351
+2026-07-02 16:22:00.005 Admin Key O pressed => Still down: O
+2026-07-02 16:22:00.015 Admin OpenFromUnevevated 'C:\repos\monorepo1\apps\document-processor\Confluence\Operations\OCR.html' ''
+2026-07-02 16:22:00.017 Admin runs command OPEN_FILE
+2026-07-02 16:22:00.022 Admin Key O released => Down: 
+2026-07-02 16:22:00.052 Admin UI exception: System.IO.IOException: Pipe is broken.
+   at System.IO.Pipes.PipeStream.CheckWriteOperations()
+   at System.IO.Pipes.PipeStream.Write(ReadOnlySpan`1 buffer)
+   at System.IO.StreamWriter.Flush(Boolean flushStream, Boolean flushEncoder)
+   at search.UnelevatedApp.Run(Command cmd, Action`1 args, Action`1 getResult) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 106
+   at search.UnelevatedApp.OpenFromUnevevated(String file, String args, String workDir) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 22
+   at search.Extensions.Open(String name, String args, String workDir, Boolean elevated) in c:\repos\CoreProjects\search\Extensions.cs:line 60
+   at search.MainWindow.<>c__DisplayClass25_0.<Open>b__0(INode n) in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 388
+   at search.Models.Extensions.ForEach[T](IEnumerable`1 e, Action`1 a) in c:\repos\CoreProjects\search\Models\Extensions.cs:line 53
+   at search.MainWindow.Open(String path, INode[] nodes, Boolean asAdmin) in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 388
+   at search.MainWindow.OpenIn(IEnumerable`1 nodes, IEnumerable`1 arg, Boolean asAdmin) in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 562
+   at search.MainWindow.<.ctor>b__2_29(IEnumerable`1 n, IEnumerable`1 a) in c:\repos\CoreProjects\search\MainWindow.xaml.cs:line 102
+   at System.Threading.Tasks.Task.<>c.<ThrowAsync>b__124_0(Object state)
+   at System.Windows.Threading.ExceptionWrapper.InternalRealCall(Delegate callback, Object args, Int32 numArgs)
+   at System.Windows.Threading.ExceptionWrapper.TryCatchWhen(Object source, Delegate callback, Object args, Int32 numArgs, Delegate catchHandler)
+   at System.Windows.Threading.DispatcherOperation.InvokeImpl()
+   at MS.Internal.CulturePreservingExecutionContext.CallbackWrapper(Object obj)
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Windows.Threading.DispatcherOperation.Invoke()
+   at System.Windows.Threading.Dispatcher.ProcessQueue()
+   at MS.Win32.HwndWrapper.WndProc(IntPtr hwnd, Int32 msg, IntPtr wParam, IntPtr lParam, Boolean& handled)
+   at System.Windows.Threading.ExceptionWrapper.InternalRealCall(Delegate callback, Object args, Int32 numArgs)
+   at System.Windows.Threading.ExceptionWrapper.TryCatchWhen(Object source, Delegate callback, Object args, Int32 numArgs, Delegate catchHandler)
+   at MS.Win32.HwndSubclass.SubclassWndProc(IntPtr hwnd, Int32 msg, IntPtr wParam, IntPtr lParam)
+   at MS.Win32.UnsafeNativeMethods.DispatchMessage(MSG& msg)
+   at System.Windows.Threading.Dispatcher.PushFrameImpl(DispatcherFrame frame)
+   at System.Windows.Application.RunDispatcher(Object ignore)
+   at System.Windows.Application.RunInternal(Window window)
+   at search.App.Main()
+   at search.UnelevatedApp.Main(String[] args) in c:\repos\CoreProjects\search\UnelevatedApp.cs:line 147
+2026-07-02 16:22:00.053 Admin exiting

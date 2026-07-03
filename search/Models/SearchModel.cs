@@ -1,0 +1,812 @@
+﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Threading;
+
+namespace search.Models
+{
+    class SearchModel : INotifyPropertyChanged
+    {
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        public event Action UIRefreshRequested;
+
+        public string Status { get; set; }
+
+        /// <summary>
+        /// True while the filter update is running
+        /// </summary>
+        public bool Filtering { get; private set; }
+
+        /// <summary>
+        /// True while search in file contents is running
+        /// </summary>
+        public bool Searching { get; private set; }
+
+        /// <summary>
+        /// True while the file system is being (re)loaded from the NTFS MFT
+        /// </summary>
+        public bool Loading { get; private set; }
+
+        public string CountsInfo => Items.Count == files.Count ? $"{files.Count:# ### ###}" : $"{Items.Count:### ###}/{files.Count:# ### ###}";
+
+        public ObservableCollection<INode> Items { get; private set; } = new ObservableCollection<INode>();
+
+        static NonBlocking.ConcurrentDictionary<string, INode> files = new(StringComparer.OrdinalIgnoreCase);
+        static ConcurrentBag<ZipNode> zipNodes = new();
+        static ReadOnlyDictionary<string, INode> exes;
+        Dispatcher Dispatcher = Dispatcher.CurrentDispatcher; //Constructor is called from UI thread => get its dispatcher
+        SemaphoreSlim Updating = new SemaphoreSlim(1, 1);
+        string filter = null, sort = "+" + nameof(INode.LastChangeTime);
+        NodeFilter nodeFilter = new NodeFilter("");
+        volatile object lastUpdate = DateTime.MinValue;
+        volatile bool itemsComplete = true; //false => Items hold only a part of the filtered result (publishing was canceled)
+        int refreshQueued = 0; //1 => a data refresh is already queued and covers all changes arriving before it runs
+        const int MaxItems = 100000; //Publish just the first 100 000 filtered items
+
+        public Action BeforeItemsExchange = () => { };
+        public Action AfterItemsExchange = () => { };
+
+        public async Task Update(string newFilter = null, string newSort = null)
+        {
+            // Return immediately => do not slow down UI!!!
+            await Task.Run(async () =>
+            {
+                // null in both filter and sort means unchanged => pure data refresh
+                var dataRefresh = (newFilter ?? newSort) == null;
+                var created = DateTime.Now;
+                object update = created;
+                if (dataRefresh)
+                {
+                    //Coalesce data refreshes - the single queued one covers all changes arriving before it runs
+                    //and it never cancels a running update (a canceled publish would leave Items partial forever
+                    //under a steady stream of file system events)
+                    if (Interlocked.Exchange(ref refreshQueued, 1) == 1) return;
+                    await Task.Delay(1000); //Batch bursts of changes
+                }
+                else
+                {
+                    //User change - take over the pipeline immediately, the running update is canceled
+                    lastUpdate = update;
+                    Filtering = true;
+
+                    //Debounce typing - the new update starts after a short pause
+                    if (newFilter != null && filter != newFilter)
+                    {
+                        await Task.Delay(150);
+                        if (!ReferenceEquals(update, lastUpdate)) return;
+                    }
+                }
+
+                // Do not run for out dated filter/sort/files
+                bool IsCanceled() => !ReferenceEquals(update, lastUpdate);
+
+                await Updating.WaitAsync();
+                try
+                {
+                    if (dataRefresh)
+                    {
+                        refreshQueued = 0; //Changes from now on queue a new refresh
+                        if ((DateTime)lastUpdate > created) return; //A newer update runs against current data anyway
+                        lastUpdate = update;
+                        Filtering = true;
+                    }
+
+                    // null in filters and sorters means unchanged
+                    newFilter ??= filter;
+                    newSort ??= sort;
+                    var refresh = dataRefresh
+                        | filter != newFilter //refilter also on new filter
+                        | !itemsComplete; //previous publishing was canceled => Items are partial and can not be resorted in place
+
+                    // Set current filter/sorter before possible canceling
+                    filter = newFilter;
+                    sort = newSort;
+                    nodeFilter = new NodeFilter(filter);
+
+                    if (IsCanceled()) return;
+                    var items = GetItems(refresh, IsCanceled);
+                    if (items == null || IsCanceled() || items.IsIdentical(Items)) return;
+
+                    //Publish progressively in batches - the first results show immediately
+                    //and the UI thread is never blocked for long (input has higher priority)
+                    const int batchSize = 25000;
+                    var target = new RangeObservableCollection<INode>();
+                    var applied = false;
+                    itemsComplete = false;
+                    for (int i = 0; (i == 0 || i < items.Count) && !IsCanceled(); i += batchSize)
+                    {
+                        var batch = items.GetRange(i, Math.Min(batchSize, items.Count - i));
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (IsCanceled()) return; //Do not flash outdated results
+                            if (!applied)
+                            {
+                                BeforeItemsExchange();
+                                Items = target;
+                                applied = true;
+                            }
+                            target.AddRange(batch);
+                            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                        }, DispatcherPriority.Background);
+                    }
+                    itemsComplete = applied && !IsCanceled();
+                    if (applied) await Dispatcher.InvokeAsync(AfterItemsExchange);
+                }
+                catch (Exception e)
+                {
+                    await Log($"Exception: {e.Message}");
+                }
+                finally
+                {
+                    if (!IsCanceled()) Filtering = false; //When canceled the newer update owns the indicator
+                    Updating.Release(); //Allow next change
+                }
+            });
+        }
+
+        /// <summary>
+        /// Apply changed nodes to the UI - in place when possible, otherwise queue a full refresh
+        /// </summary>
+        /// <param name="nodes"></param>
+        /// <returns></returns>
+        public async Task UpdateFor(params INode[] nodes)
+        {
+            var changed = nodes.Where(x => x != null).ToArray();
+            if (changed.Length == 0) return;
+
+            //Maintain the published window in place - avoids refiltering and resorting millions of files per change
+            if (await TryIncrementalUpdate(changed)) return;
+
+            var nf = nodeFilter;
+            if (changed.Any(nf.Matches)) await Update();
+        }
+
+        /// <summary>
+        /// Update Items in place for a few changed nodes (remove + sorted insert)
+        /// instead of refiltering and resorting all files
+        /// </summary>
+        /// <param name="changed"></param>
+        /// <returns>false => the caller must run a full update</returns>
+        async Task<bool> TryIncrementalUpdate(INode[] changed)
+        {
+            var currentFilter = filter;
+            var currentSort = sort;
+            var nf = nodeFilter;
+            var compare = SortComparison(currentSort);
+            if (compare == null || !itemsComplete) return false;
+
+            return await Dispatcher.InvokeAsync(() =>
+            {
+                //Revalidate on the UI thread - Items are exchanged only here
+                if (!itemsComplete || currentFilter != filter || currentSort != sort) return false;
+                var items = Items;
+                var updated = false;
+                foreach (var node in changed)
+                {
+                    var index = items.IndexOf(node);
+                    //Present in files under its path and matching the filter => it belongs to the result
+                    var include = files.TryGetValue(node.FullName, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
+                    if (index >= 0)
+                    {
+                        items.RemoveAt(index);
+                        updated = true;
+                    }
+                    if (include)
+                    {
+                        var at = BinaryIndex(items, node, compare);
+                        if (at < items.Count || items.Count < MaxItems) //Beyond the published window => skip
+                        {
+                            items.Insert(at, node);
+                            updated = true;
+                        }
+                    }
+                }
+                while (items.Count > MaxItems) items.RemoveAt(items.Count - 1);
+                if (updated) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// First index at which node can be inserted keeping items sorted
+        /// </summary>
+        static int BinaryIndex(IList<INode> items, INode node, Comparison<INode> compare)
+        {
+            int lo = 0, hi = items.Count;
+            while (lo < hi)
+            {
+                var mid = (lo + hi) / 2;
+                if (compare(items[mid], node) <= 0) lo = mid + 1;
+                else hi = mid;
+            }
+            return lo;
+        }
+
+        /// <summary>
+        /// Comparison producing the same ordering as GetItems for the given sort
+        /// </summary>
+        Comparison<INode> SortComparison(string sort)
+        {
+            if (string.IsNullOrWhiteSpace(sort)) return null;
+            var up = sort[0] == '+';
+            Comparison<INode> key;
+            bool ascending;
+            switch (sort.Substring(1))
+            {
+                case "C": key = (a, b) => FoundRank(a).CompareTo(FoundRank(b)); ascending = up; break;
+                case nameof(INode.Name): key = (a, b) => string.Compare(a.Name, b.Name); ascending = up; break;
+                case nameof(INode.Size): key = (a, b) => a.Size.CompareTo(b.Size); ascending = !up; break;
+                case nameof(INode.LastChangeTime): key = (a, b) => a.LastChangeTime.CompareTo(b.LastChangeTime); ascending = !up; break;
+                case nameof(INode.LastAccessTime): key = (a, b) => a.LastAccessTime.CompareTo(b.LastAccessTime); ascending = !up; break;
+                case nameof(INode.FullName): key = (a, b) => string.Compare(a.FullName, b.FullName); ascending = up; break;
+                default: return null;
+            }
+            return ascending ? key : (a, b) => key(b, a);
+        }
+
+        int FoundRank(INode x) => FoundIn(x) switch { true => 1, false => 2, null => x.IsDirectory ? 4 : 3 };
+
+        /// <summary>
+        /// Get items according to current filter and sort
+        /// </summary>
+        /// <param name="refresh">refilter from files (false - use Items)</param>
+        /// <param name="IsCanceled">Check if to cancel</param>
+        /// <returns></returns>
+        List<INode> GetItems(bool refresh, Func<bool> IsCanceled)
+        {
+            //Cancel
+            var cts = new CancellationTokenSource();
+            T CancelOr<T>(T v)
+            {
+                if (IsCanceled()) cts.Cancel();
+                return v;
+            }
+            while (!IsCanceled())
+            {
+                try
+                {
+                    var src = (refresh ? files.Values.AsParallel() : Items.AsParallel()).WithCancellation(cts.Token);
+                    if (refresh && filter != null)
+                    {
+                        src = src.Where(x => CancelOr(nodeFilter.Matches(x)));
+                    }
+                    if (!string.IsNullOrWhiteSpace(sort))
+                    {
+                        bool up = sort[0] == '+';
+                        void addSort<T>(Func<INode, T> s, bool _up) => src = _up ?
+                            src.OrderBy(x => CancelOr(s(x))) :
+                            src.OrderByDescending(x => CancelOr(s(x)));
+                        switch (sort.Substring(1))
+                        {
+                            case "C": addSort(x => FoundRank(x), up); break;
+                            case nameof(INode.Name): addSort(x => x.Name, up); break;
+                            case nameof(INode.Size): addSort(x => x.Size, !up); break;
+                            case nameof(INode.LastChangeTime): addSort(x => x.LastChangeTime, !up); break;
+                            case nameof(INode.LastAccessTime): addSort(x => x.LastAccessTime, !up); break;
+                            case nameof(INode.FullName): addSort(x => x.FullName, up); break; //TODO: Sord without a need to have x.FullName i.e. by parentId chain
+                        }
+                    }
+                    return src.Take(MaxItems).ToList(); // Take just the first 100 000
+                }
+                catch (OperationCanceledException)
+                {
+                    return null;   //Discard and run new filter
+                }
+                catch (InvalidOperationException e)
+                {
+                    continue; //Enumeration changed => try again
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Remove node
+        /// </summary>
+        /// <param name="path"></param>
+        INode Remove(string path) => files.TryRemove(path, out var n) ? n : null;
+
+        /// <summary>
+        /// Refresh node
+        /// </summary>
+        /// <param name="path"></param>
+        INode Refresh(string path)
+        {
+            if (files.TryGetValue(path, out var n))
+            {
+                n.Refresh();
+                return n;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Checks if desired text was found in file
+        /// </summary>
+        /// <param name="n"></param>
+        /// <returns></returns>
+        public bool? FoundIn(INode n) => searched.TryGetValue(n.FullName, out var v) ? v : null;
+
+        NonBlocking.ConcurrentDictionary<string, bool?> searched = new();
+
+        // Update continualy the UI until canceled
+        async Task ContinualUpdate(CancellationToken ct, Action a)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                a();
+                UIRefreshRequested?.Invoke();
+                try
+                {
+                    await Task.Delay(1000, ct); // Wait for 1 second or until canceled
+                }
+                catch (TaskCanceledException)
+                {
+                    break; // Exit loop if canceled
+                }
+                catch (OperationCanceledException)
+                {
+                    break; // Exit loop if canceled
+                }
+            }
+        }
+
+        CancellationTokenSource lastFind = null;
+        public async Task Find(string text = null, bool caseInsensitive = false, string encoding = "UTF-8")
+        {
+            // Stop previous and start new find
+            var thisFind = new CancellationTokenSource();
+            Interlocked.Exchange(ref lastFind, thisFind)?.Cancel();
+            if (String.IsNullOrWhiteSpace(text))
+            {
+                searched.Clear();
+                Searching = false;
+                UIRefreshRequested?.Invoke();
+                return;
+            }
+            searched.Clear();
+            Searching = true;
+
+            // Search
+            var update = ContinualUpdate(thisFind.Token, () => Status = $"Searching for '{text}' - {searched.Count} files checked");
+            var searchText = caseInsensitive ? text.ToLowerInvariant() : text;
+
+            // Convert search text to bytes based on encoding
+            ReadOnlyMemory<byte> toFind;
+            try
+            {
+                toFind = ConvertSearchTextToBytes(searchText, encoding);
+            }
+            catch (Exception ex)
+            {
+                Status = $"Search failed: {ex.Message}";
+                Searching = false;
+                return;
+            }
+
+            // Snapshot on the calling (UI) thread - Items can be exchanged/appended during the search
+            var nodes = Items.Where(x => !x.IsDirectory).ToArray();
+            try
+            {
+                await Task.Run(() => nodes.AsParallel().WithCancellation(thisFind.Token)
+                    .ForAll(
+                    n => searched[n.FullName] = Find(n.FullName, toFind, caseInsensitive)
+                    ));
+            }
+            catch (OperationCanceledException) { }
+
+            // Show results
+            var result = thisFind.IsCancellationRequested ? "canceled" : "done";
+            var counts = searched.Values.GroupBy(x => x).ToDictionary(x => $"{x.Key}", x => x.Count()); // null can not be key in dictionary => string
+            thisFind.Cancel();
+            await update;
+            if (ReferenceEquals(thisFind, lastFind)) //Do not overwrite state of a newer search
+            {
+                Searching = false;
+                Status = $"Search of '{text}' {result} => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")}";
+                UIRefreshRequested?.Invoke();
+            }
+        }
+
+        bool? Find(string path, ReadOnlyMemory<byte> search, bool caseInsensitive = false)
+        {
+            try
+            {
+                if (search.Length == 0) return true;
+                Span<byte> buf = stackalloc byte[1 << 16]; //64KB fast buffer
+                Span<byte> lowerBuf = caseInsensitive ? stackalloc byte[1 << 16] : Span<byte>.Empty;
+                using var s = File.OpenRead(path);
+                int start = 0; //Overlap kept from the previous block
+                while (true)
+                {
+                    var read = s.Read(buf.Slice(start));
+                    var len = start + read;
+                    var bufSlice = buf.Slice(0, len);
+
+                    var haystack = bufSlice;
+                    if (caseInsensitive)
+                    {
+                        // Convert buffer to lowercase for case-insensitive search
+                        var lowerSlice = lowerBuf.Slice(0, len);
+                        for (int i = 0; i < len; i++)
+                        {
+                            var b = bufSlice[i];
+                            lowerSlice[i] = (b >= 65 && b <= 90) ? (byte)(b + 32) : b; // Convert A-Z to a-z
+                        }
+                        haystack = lowerSlice;
+                    }
+
+                    if (haystack.IndexOf(search.Span) != -1) return true;
+                    if (read == 0) return false; //End of file
+                    // Keep the tail that could contain the start of a match crossing the block boundary
+                    start = Math.Min(search.Length - 1, len);
+                    bufSlice.Slice(len - start).CopyTo(buf);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // Registrations are added on the UI thread and completed on the FS change processing thread => lock
+        Dictionary<string, List<TaskCompletionSource<INode>>> OnFileCreated =
+            new Dictionary<string, List<TaskCompletionSource<INode>>>(StringComparer.InvariantCultureIgnoreCase);
+        Task<INode> WaitForFileCreationIf(string path, Func<bool> p)
+        {
+            var t = new TaskCompletionSource<INode>();
+            lock (OnFileCreated)
+            {
+                if (!OnFileCreated.TryGetValue(path, out var l)) l = OnFileCreated[path] = new List<TaskCompletionSource<INode>>();
+                l.Add(t);
+            }
+            if (!p())
+            {
+                lock (OnFileCreated)
+                {
+                    if (OnFileCreated.TryGetValue(path, out var l))
+                    {
+                        l.Remove(t);
+                        if (l.Count == 0) OnFileCreated.Remove(path);
+                    }
+                }
+                t.SetCanceled();
+            }
+            return t.Task;
+        }
+
+        public SearchModel() => FSChangeProcessor.Run(async d => await InitFromNTFS()
+            , async e =>
+            {
+                try
+                {
+                    //Status = $"WATCHED {++watched}. changes => last {DateTime.Now.TimeOfDay} {e.FullPath}";
+                    switch (e.ChangeType)
+                    {
+                        case WatcherChangeTypes.Created:
+                            //Trace.WriteLine($"+{e.FullPath}");
+                            var node = files.GetOrAdd(e.FullPath, new FileNode(e.FullPath));
+                            await UpdateFor(node);
+                            List<TaskCompletionSource<INode>> tcs = null;
+                            lock (OnFileCreated)
+                            {
+                                if (OnFileCreated.TryGetValue(e.FullPath, out tcs)) OnFileCreated.Remove(e.FullPath);
+                            }
+                            if (tcs != null) foreach (var x in tcs) x.SetResult(node);
+                            break;
+                        case WatcherChangeTypes.Changed:
+                            //Change attributes and size
+                            await UpdateFor(Refresh(e.FullPath) ?? files.GetOrAdd(e.FullPath, new FileNode(e.FullPath)));
+                            break;
+                        case WatcherChangeTypes.Renamed:
+                            //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
+                            await UpdateFor(
+                                files.GetOrAdd(e.FullPath, new FileNode(e.FullPath)),
+                                Remove((e as RenamedEventArgs).OldFullPath));
+                            break;
+                        case WatcherChangeTypes.Deleted:
+                            //Trace.WriteLine($"-{e.FullPath}");
+                            await UpdateFor(Remove(e.FullPath));
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Windows.MessageBox.Show(ex.ToString(), $"FS change {e.FullPath} failed");
+                    await Log($"FS change {e} failed: {ex}");
+                }
+            });
+
+        /// <summary>
+        /// Find file by name
+        /// WARN: Slow implementation
+        /// </summary>
+        /// <param name="name"></param>
+        /// <returns></returns>
+        public static string FindFile(string name) => files.Values.AsParallel().FirstOrDefault(
+                  x => !x.IsDirectory &&
+                  x.Name.StartsWith(name, StringComparison.OrdinalIgnoreCase) && x.Name.Length == name.Length)?.FullName;
+
+        public static string FindFile(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var path = FindFile(name);
+                if (path != null) return path;
+            }
+            return null;
+        }
+
+        public static string FindExe(params string[] names)
+        {
+            foreach (var name in names.Select(x => Path.DirectorySeparatorChar + x))
+            {
+                var path = exes?.Keys.AsParallel().FirstOrDefault(x =>
+                x.EndsWith(name, StringComparison.OrdinalIgnoreCase) &&
+                // do not get development exes
+                !x.Contains(@"\debug\", StringComparison.OrdinalIgnoreCase) &&
+                !x.Contains(@"\obj\", StringComparison.OrdinalIgnoreCase));
+
+                if (path != null) return path;
+            }
+            return null;
+        }
+
+        int initRequests = 0;
+
+        /// <summary>
+        /// Refresh files
+        /// Concurrent requests (e.g. one per drive on startup) are coalesced into a single scan
+        /// </summary>
+        Task InitFromNTFS()
+        {
+            //The already queued/running scan covers this request too
+            if (Interlocked.Increment(ref initRequests) > 1) return Task.CompletedTask;
+            return Task.Run(async () =>
+            {
+                Loading = true;
+                var watch = Stopwatch.StartNew();
+                var progress = new CancellationTokenSource();
+                var progressTask = ContinualUpdate(progress.Token, () =>
+                    Status = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s");
+                try
+                {
+                    while (true)
+                    {
+                        await Task.Delay(500); //Give the remaining drives time to report in
+                        var requested = Volatile.Read(ref initRequests);
+                        try
+                        {
+                            //Add files from all NTFS drives - each drive loads in parallel into a shared dictionary
+                            var loaded = new NonBlocking.ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
+                            var publishPartial = files.Count == 0; //First load => show every finished drive immediately
+                            await Task.WhenAll(DriveInfo.GetDrives().Select(d => Task.Run(() =>
+                            {
+                                try
+                                {
+                                    foreach (var n in MftDriveEntries(d)) loaded[n.FullName] = n;
+                                    if (publishPartial)
+                                    {
+                                        files = loaded;
+                                        _ = Update(); //Do not await - the publish must not delay the remaining drives
+                                    }
+                                }
+                                catch { }
+                            })));
+                            files = loaded;
+
+                            // Add previously added zipNodes that still exist
+                            var zn = zipNodes.ToArray();
+                            zipNodes.Clear();
+                            zn.Select(x => x.ZIP.FullName).Distinct().OrderBy(x => x).ForEach(x =>
+                              {
+                                  if (files.TryGetValue(x, out var n)) AddArchive(n);
+                              });
+                            var exeNodes = new ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
+                            files.AsParallel().Where(x => !x.Value.IsDirectory && x.Key.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ForAll(x => exeNodes[x.Key] = x.Value);
+                            exes = new(exeNodes);
+
+                            // Clean freed memory
+                            GC.Collect(0);
+                        }
+                        catch { }
+                        //Update filtered files
+                        await Update();
+                        //Quit when no new request arrived during the scan
+                        if (Interlocked.CompareExchange(ref initRequests, 0, requested) == requested) return;
+                    }
+                }
+                finally
+                {
+                    progress.Cancel();
+                    await progressTask;
+                    Loading = false;
+                    Status = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s";
+                    UIRefreshRequested?.Invoke();
+                }
+            });
+        }
+
+        static SemaphoreSlim logging = new SemaphoreSlim(1, 1);
+        Task Log(string text)
+        {
+            var tid = Thread.CurrentThread.ManagedThreadId; //Save logging thread id
+            return Task.Run(async () =>
+            {
+                await logging.WaitAsync();
+                await File.AppendAllTextAsync("log.txt", $"{DateTime.Now} {tid} {text}\n");
+                logging.Release();
+            });
+        }
+
+        /// <summary>
+        /// Get all NTFS drive files
+        /// </summary>
+        /// <param name="drive"></param>
+        /// <returns></returns>
+        IEnumerable<INode> MftDriveEntries(DriveInfo drive) => MftDriveReader.GetNodes(drive);
+
+        /// <summary>
+        /// Add the content of the archive into the search
+        /// </summary>
+        /// <param name="path"></param>
+        public static bool AddArchive(INode n)
+        {
+            try
+            {
+                //Check if the zip is allready added
+                if (zipNodes.FirstOrDefault(z => z.ZIP == n) != null)
+                    return true; //Allready added
+
+                //Get archive that the node represents or throw
+                using var a = n.ToArchive();
+                if (a == null) return false;
+
+                //Add all entries from the archive to node tree
+                var src = a.Entries.AsParallel();
+                var keys = src.Select(e => e.Key.AsMemory()).Where(x => !x.IsEmpty);
+                src.Select(e => new ZipNode(n, e))
+                    //Add remaining dirs not included in archive
+                    .Concat(keys.Select(k => k.ParentFolder()).Where(x => !x.IsEmpty).Distinct()
+                    .Except(keys, MemoryCharComparer.IgnoreCase)
+                    .Select(d => new ZipNode(n, d.ToString()))
+                    ).ForEach(n =>
+                    {
+                        files.AddOrUpdate(n.FullName, x => n, (x, y) => n);
+                        zipNodes.Add(files[n.FullName] as ZipNode);
+                    });
+                return true;
+            }
+            catch (Exception e) { }
+            return false;
+        }
+
+        /// <summary>
+        /// Get the filter for given folders adding archives content as a folder
+        /// </summary>
+        /// <param name="nodes"></param>
+        /// <returns></returns>
+        public NodeFilter FilterFolders(params INode[] nodes) => new NodeFilter(string.Join(" ",
+            nodes.Where(n => n.IsDirectory || AddArchive(n))
+            .Select(n => $"\"{n.FullName}\"")));
+
+        /// <summary>
+        /// Get parent node TODO: Create if not exist?
+        /// </summary>
+        /// <param name="n"></param>
+        /// <returns></returns>
+        public INode GetParent(INode n) => files.TryGetValue(Path.GetDirectoryName(n.FullName), out var p) ? p : null;
+
+        /// <summary>
+        /// Unzip all zip nodes - each in separate directory
+        /// </summary>
+        /// <param name="nodes"></param>
+        /// <returns></returns>
+        public async IAsyncEnumerable<INode> UnZip(bool call7zip, params INode[] nodes)
+        {
+            // Start all unzips on the thread pool (Unzip runs synchronously inside WaitForFileCreationIf)
+            var tasks = nodes.Select(z => Task.Run(() =>
+             {
+                 var dir = (z.FullName + "_").NewOutDir();
+                 return WaitForFileCreationIf(dir, () => z.Unzip(dir));
+             })).ToArray();
+            foreach (var t in tasks)
+            {
+                INode item = null;
+                try { item = await t; } catch (OperationCanceledException) { } //Failed unzip => no node
+                if (item != null) yield return item;
+            }
+        }
+
+        /// <summary>
+        /// Zip all nodes into ziped file named after first node
+        /// </summary>
+        /// <param name="seven"></param>
+        /// <param name="nodes"></param>
+        /// <returns></returns>
+        public async Task<INode> Zip(bool call7zip, bool seven = false, params INode[] nodes)
+        {
+            if (nodes.FirstOrDefault() == null) return null;
+            var zip = (nodes[0].FullName + (seven || call7zip ? ".7z" : ".zip")).NewOutFile();
+            var t = WaitForFileCreationIf(zip, () => true);
+            zip.Zip(nodes.Select(n => n.FullName).ToArray());
+            return await t;
+        }
+
+        public IEnumerable<INode> ToTextNodes(params INode[] nodes)
+        {
+            foreach (var n in nodes)
+            {
+                switch (Path.GetExtension(n.Name).ToLower())
+                {
+                    case ".xlsx":
+                        {
+                            string dir = App.CreateTempFolder();
+                            foreach (var txt in n.GetExcelSheets())
+                            {
+                                var path = Path.Combine(dir, Path.GetRandomFileName());
+                                File.WriteAllText(path, txt, Encoding.UTF8);
+                                yield return new FileNode(path);
+                            }
+                        }
+                        continue;
+                }
+                yield return n;
+            }
+        }
+
+        private ReadOnlyMemory<byte> ConvertSearchTextToBytes(string searchText, string encoding)
+        {
+            return encoding switch
+            {
+                "UTF-8" => Encoding.UTF8.GetBytes(searchText).AsMemory(),
+                "UTF-16" => Encoding.Unicode.GetBytes(searchText).AsMemory(),
+                "HEX" => ConvertHexStringToBytes(searchText),
+                _ => Encoding.UTF8.GetBytes(searchText).AsMemory() // Default to UTF-8
+            };
+        }
+
+        private ReadOnlyMemory<byte> ConvertHexStringToBytes(string hexText)
+        {
+            try
+            {
+                // Parse hex string (space-separated bytes)
+                string[] hexBytes = hexText.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (hexBytes.Length == 0)
+                    throw new ArgumentException("No hex bytes found");
+
+                byte[] bytes = hexBytes.Select(hex => Convert.ToByte(hex, 16)).ToArray();
+                return bytes.AsMemory();
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException($"Invalid hexadecimal format: {ex.Message}. Use space-separated hex bytes (e.g., '48 65 6C 6C 6F')");
+            }
+        }
+    }
+
+    /// <summary>
+    /// ObservableCollection with cheap bulk Add raising a single Reset notification
+    /// </summary>
+    class RangeObservableCollection<T> : ObservableCollection<T>
+    {
+        public void AddRange(IEnumerable<T> items)
+        {
+            foreach (var x in items) Items.Add(x);
+            OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+            OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        }
+    }
+
+}

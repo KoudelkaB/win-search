@@ -1,0 +1,175 @@
+﻿<Window x:Class="search.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:search"
+        mc:Ignorable="d"
+        Title="Search files" Height="450" Width="800"
+        Loaded="Window_Loaded" PreviewKeyDown="Window_KeyDown">
+    <Window.Resources>
+        <local:Bool2VisibilityConverter x:Key="Bool2VisibilityConverter" />
+        <local:DirectoryConverter x:Key="DirectoryConverter" />
+        <local:IsDirectoryBooleanConverter x:Key="IsDirectoryBooleanConverter" />
+        <local:IsFoundBooleanConverter x:Key="IsFoundBooleanConverter" />
+        <!-- Green dot when idle, spinning blue dashed circle while running (bind the flag to Tag) -->
+        <Style x:Key="BusyIndicator" TargetType="Ellipse">
+            <Setter Property="Width" Value="11"/>
+            <Setter Property="Height" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Fill" Value="LimeGreen"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <RotateTransform Angle="0"/>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Fill" Value="Transparent"/>
+                    <Setter Property="Stroke" Value="DodgerBlue"/>
+                    <Setter Property="StrokeThickness" Value="2.5"/>
+                    <Setter Property="StrokeDashArray" Value="2 1.2"/>
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard x:Name="spin">
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="(Ellipse.RenderTransform).(RotateTransform.Angle)"
+                                                 From="0" To="360" Duration="0:0:1" RepeatBehavior="Forever"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <StopStoryboard BeginStoryboardName="spin"/>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal">
+            <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Loading}" Margin="5,0,0,0"/>
+            <Label  Content="{Binding CountsInfo}" Padding="5,0,5,0" />
+            <Label  Content="{Binding Status}" Padding="0" />
+        </StackPanel>
+        <StackPanel Name="help" DockPanel.Dock="Right" Orientation="Vertical" Margin="5">
+            <TextBlock FontWeight="DemiBold">Hints</TextBlock>
+            <TextBlock x:Name="filterTextBoxCmd" Visibility="{Binding ElementName=filterTextBox, Path=IsKeyboardFocusWithin, Converter={StaticResource Bool2VisibilityConverter}}"/>
+            <TextBlock x:Name="findCmd" Visibility="{Binding ElementName=findTextBox, Path=IsKeyboardFocusWithin, Converter={StaticResource Bool2VisibilityConverter}}"/>
+            <local:KeysCommander x:Name="filesViewCmd" Visibility=
+                                 "{Binding ElementName=filesView, Path=IsKeyboardFocusWithin, Converter={StaticResource Bool2VisibilityConverter}}" />
+        </StackPanel>
+        <Grid DockPanel.Dock="Top" Margin="5,5,5,2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            
+            <!-- Filter Row -->
+            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,1">
+                <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Filtering}"/>
+                <Label Content="Filter:" VerticalAlignment="Center"/>
+            </StackPanel>
+            <local:AutoCompleteTextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" x:Name="filterTextBox" 
+                                       TextChanged="TextBox_TextChanged" PreviewKeyDown="filterTextBox_PreviewKeyDown" 
+                                       Margin="0,0,0,1"/>
+            
+            <!-- Search Row -->
+            <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,0">
+                <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Searching}"/>
+                <Label Content="Search:" VerticalAlignment="Center"/>
+            </StackPanel>
+            <local:AutoCompleteTextBox Grid.Row="1" Grid.Column="1" x:Name="findTextBox" 
+                                       PreviewKeyDown="findTextBox_PreviewKeyDown" 
+                                       Margin="0"/>
+            <ComboBox Grid.Row="1" Grid.Column="2" x:Name="encodingComboBox" SelectedIndex="0" 
+                      VerticalAlignment="Stretch" Margin="3,0,0,0" MinWidth="60"
+                      Height="{Binding ActualHeight, ElementName=findTextBox}"
+                      SelectionChanged="EncodingComboBox_SelectionChanged">
+                <ComboBoxItem Content="UTF-8"/>
+                <ComboBoxItem Content="UTF-16"/>
+                <ComboBoxItem Content="HEX"/>
+            </ComboBox>
+            <CheckBox Grid.Row="1" Grid.Column="3" x:Name="caseInsensitive" Content="Case insensitive" 
+                      VerticalAlignment="Center" Margin="3,0,0,0"/>
+        </Grid>
+        <ListView x:Name="filesView" ItemsSource="{Binding Items}" GridViewColumnHeader.Click="ListViewColumnHeader_Click" SelectionMode="Extended"
+                  PreviewKeyDown="ListView_KeyDown" PreviewKeyUp="ListView_PreviewKeyUp"
+                  VirtualizingPanel.IsVirtualizing="True"
+                  VirtualizingPanel.VirtualizationMode="Recycling"
+                  VirtualizingPanel.CacheLength="1,1" VirtualizingPanel.CacheLengthUnit="Page">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="{x:Type ListViewItem}">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <EventSetter Event="PreviewMouseDoubleClick" Handler="ListViewItem_MouseDoubleClick" />
+                    <EventSetter Event="PreviewMouseRightButtonDown" Handler="ListViewItem_RightButtonDown" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Attributes, Converter={StaticResource IsDirectoryBooleanConverter}}" Value="True">
+                            <Setter Property="Foreground" Value="Blue"/>
+                        </DataTrigger>
+                        <DataTrigger Value="True">
+                            <DataTrigger.Binding>
+                                <MultiBinding Converter="{StaticResource IsFoundBooleanConverter}">
+                                    <Binding/>
+                                    <Binding Path="DataContext" RelativeSource="{RelativeSource Mode=FindAncestor, AncestorType={x:Type ListView}}" />
+                                </MultiBinding>
+                            </DataTrigger.Binding>
+                            <Setter Property="Foreground" Value="Green"/>
+                        </DataTrigger>
+                        <DataTrigger Value="False">
+                            <DataTrigger.Binding>
+                                <MultiBinding Converter="{StaticResource IsFoundBooleanConverter}">
+                                    <Binding/>
+                                    <Binding Path="DataContext" RelativeSource="{RelativeSource Mode=FindAncestor, AncestorType={x:Type ListView}}" />
+                                </MultiBinding>
+                            </DataTrigger.Binding>
+                            <Setter Property="Foreground" Value="Red"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.View>
+                <GridView AllowsColumnReorder="True">
+                    <GridViewColumn Header="C" Width="20">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Background="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Name" Width="Auto">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Name}"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}"
+                                           PreviewMouseLeftButtonDown="Name_PreviewMouseDoubleClick" />
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Size" Width="Auto">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Size, StringFormat={}{0:### ### ### ###}}" TextAlignment="Right" />
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Changed" DisplayMemberBinding="{Binding LastChangeTime, StringFormat={}{0:dd.MM.yyyy HH:mm:ss}}" Width="Auto"/>
+                    <GridViewColumn Header="Folder" Width="Auto">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding FullName, Converter={StaticResource DirectoryConverter}}"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}"
+                                           PreviewMouseLeftButtonDown="Folder_PreviewMouseDoubleClick"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </DockPanel>
+</Window>

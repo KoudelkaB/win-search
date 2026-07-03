@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "search": {
+      "commandName": "Project"
+    },
+    "search UI": {
+      "commandName": "Project",
+      "commandLineArgs": "ui"
+    }
+  }
+}

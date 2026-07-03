@@ -1,0 +1,12 @@
+﻿################################################################################
+# Tento soubor .gitignore byl automaticky vytvořen aplikací Microsoft(R) Visual Studio.
+################################################################################
+
+bin/
+obj/
+.vs/
+/search/Properties/PublishProfiles/ClickOnceProfile.pubxml
+/search/Properties/PublishProfiles/ClickOnceProfile.pubxml.user
+/LogReader/Properties/PublishProfiles/FolderProfile.pubxml.user
+/LogReader/LogReader.csproj.user
+/LogReader/UpgradeLog.htm
