@@ -4,7 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon />
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <StartupObject>search.Program</StartupObject>
     <NoWin32Manifest>true</NoWin32Manifest>
   </PropertyGroup>

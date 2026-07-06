@@ -1,0 +1,19 @@
+<Project>
+
+  <!-- Shared product metadata for all projects. The version comes from the git tag
+       (single source of truth): MinVer stamps Assembly/File/InformationalVersion from
+       the latest v* tag at build time; untagged commits get a pre-release version. -->
+  <PropertyGroup>
+    <Product>Win Search</Product>
+    <Authors>Bohdan Koudelka</Authors>
+    <Company>Bohdan Koudelka</Company>
+    <Copyright>Copyright (c) 2026 Bohdan Koudelka</Copyright>
+    <NeutralLanguage>en</NeutralLanguage>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>
