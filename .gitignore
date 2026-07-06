@@ -13,3 +13,7 @@ obj/
 
 # Visual Studio per-user files
 *.csproj.user
+
+# Build outputs of the installer pipeline
+/publish/
+/installer/Output/

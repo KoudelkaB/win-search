@@ -1,0 +1,48 @@
+name: release
+
+# Pushing a tag like v0.1.0 builds the installer and publishes a GitHub release.
+# The tag is the single source of truth for the version: MinVer stamps it into
+# the assemblies and the same tag names the installer artifact.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # MinVer needs the tag history
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version from the tag
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Publish app
+        run: dotnet publish search/search.csproj -c Release -r win-x64 --self-contained true -o publish/app
+
+      - name: Publish service
+        run: dotnet publish search.service/search.service.csproj -c Release -r win-x64 --self-contained true -o publish/service
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /DMyAppVersion=$env:VERSION installer\setup.iss
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/WinSearch-Setup-${{ env.VERSION }}.exe
+          generate_release_notes: true
