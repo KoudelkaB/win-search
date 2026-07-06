@@ -5,12 +5,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
+using search.Core;
 
 namespace search.Models
 {
+    /// <summary>
+    /// Parses a raw $MFT (already acquired into an MftBuffer by MftSource) into INodes.
+    /// All parsing lives here in the app - the service and broker only ship bytes.
+    /// </summary>
     static class MftDriveReader
     {
         const uint RootEntryNumber = 5;
@@ -23,16 +26,9 @@ namespace search.Models
         const ulong FileReferenceMask = 0xffffffffffff;
         const ulong MaxFileTime = 2650467743999999999; // DateTime.MaxValue.ToFileTimeUtc()
 
-        public static IEnumerable<INode> GetNodes(DriveInfo drive)
+        public static IEnumerable<INode> GetNodes(MftBuffer mft, DriveInfo drive)
         {
-            if (drive?.IsReady != true || !string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
-                return Enumerable.Empty<INode>();
-
-            MftBuffer mft;
-            using (var volume = NativeVolume.Open(drive))
-                mft = ReadMft(volume);
-
-            if (mft.RecordCount == 0)
+            if (mft == null || mft.RecordCount == 0)
                 return Enumerable.Empty<INode>();
 
             var driveRoot = drive.RootDirectory.FullName;
@@ -46,7 +42,7 @@ namespace search.Models
             Parallel.ForEach(Partitioner.Create(0, mft.RecordCount), range =>
             {
                 for (var i = range.Item1; i < range.Item2; i++)
-                    valid[i] = ApplyFixup(mft.Record(i));
+                    valid[i] = MftFixup.Apply(mft.Record(i));
             });
 
             Parallel.ForEach(Partitioner.Create(0, mft.RecordCount), range =>
@@ -76,140 +72,6 @@ namespace search.Models
 
             CalculateFolderSizes(nodes.Values);
             return nodes.Values;
-        }
-
-        static MftBuffer ReadMft(NativeVolume volume)
-        {
-            var record = new byte[volume.BytesPerMftRecord];
-            volume.Read(checked(volume.MftStartLcn * volume.BytesPerCluster), record, 0, record.Length);
-            if (!ApplyFixup(record))
-                throw new InvalidDataException("The $MFT file record is corrupt.");
-
-            var (runs, dataSize) = MftDataRuns(record);
-            var buffer = new MftBuffer(volume.BytesPerMftRecord, checked((long)dataSize));
-
-            var position = 0L;
-            foreach (var run in runs)
-            {
-                var runBytes = checked((long)(run.Clusters * volume.BytesPerCluster));
-                var runPosition = 0L;
-                while (runPosition < runBytes && position < buffer.Length)
-                {
-                    var (segment, segmentOffset) = buffer.Locate(position);
-                    var chunk = (int)Math.Min(Math.Min(segment.Length - segmentOffset, runBytes - runPosition), buffer.Length - position);
-                    if (!run.IsSparse)
-                        volume.Read(checked((ulong)(run.Lcn * (long)volume.BytesPerCluster + runPosition)), segment, segmentOffset, chunk);
-                    position += chunk;
-                    runPosition += chunk;
-                }
-            }
-
-            if (position < buffer.Length)
-                throw new InvalidDataException("The $MFT data runs do not cover the whole $MFT.");
-
-            return buffer;
-        }
-
-        static (List<DataRun> Runs, ulong DataSize) MftDataRuns(ReadOnlySpan<byte> record)
-        {
-            var offset = (int)U16(record[20..]);
-            while (offset + 24 <= record.Length)
-            {
-                var type = U32(record[offset..]);
-                if (type == AttributeTerminator)
-                    break;
-
-                var length = (int)U32(record[(offset + 4)..]);
-                if (length < 24 || offset + length > record.Length)
-                    break;
-
-                if (type == AttributeData && record[offset + 9] == 0)
-                {
-                    if (record[offset + 8] == 0 || length < 64)
-                        break;
-
-                    var runOffset = (int)U16(record[(offset + 32)..]);
-                    if (runOffset >= length)
-                        break;
-
-                    return (DecodeDataRuns(record.Slice(offset + runOffset, length - runOffset)), U64(record[(offset + 48)..]));
-                }
-
-                offset += length;
-            }
-
-            throw new InvalidDataException("Unable to locate the $MFT data runs.");
-        }
-
-        static List<DataRun> DecodeDataRuns(ReadOnlySpan<byte> runs)
-        {
-            var result = new List<DataRun>();
-            var lcn = 0L;
-            var offset = 0;
-            while (offset < runs.Length && runs[offset] != 0)
-            {
-                var lengthSize = runs[offset] & 0xf;
-                var offsetSize = runs[offset] >> 4;
-                offset++;
-                if (lengthSize == 0 || offset + lengthSize + offsetSize > runs.Length)
-                    break;
-
-                var clusters = ReadUnsigned(runs.Slice(offset, lengthSize));
-                offset += lengthSize;
-
-                if (offsetSize == 0)
-                {
-                    result.Add(new DataRun(0, clusters, true));
-                }
-                else
-                {
-                    lcn = checked(lcn + ReadSigned(runs.Slice(offset, offsetSize)));
-                    offset += offsetSize;
-                    result.Add(new DataRun(lcn, clusters, false));
-                }
-            }
-
-            return result;
-        }
-
-        static ulong ReadUnsigned(ReadOnlySpan<byte> bytes)
-        {
-            var value = 0UL;
-            for (var i = bytes.Length - 1; i >= 0; i--)
-                value = (value << 8) | bytes[i];
-            return value;
-        }
-
-        static long ReadSigned(ReadOnlySpan<byte> bytes)
-        {
-            var value = (long)(sbyte)bytes[^1];
-            for (var i = bytes.Length - 2; i >= 0; i--)
-                value = (value << 8) | bytes[i];
-            return value;
-        }
-
-        static bool ApplyFixup(Span<byte> record)
-        {
-            if (record.Length < 8 || record[0] != (byte)'F' || record[1] != (byte)'I' || record[2] != (byte)'L' || record[3] != (byte)'E')
-                return false;
-
-            var usaOffset = (int)U16(record[4..]);
-            var usaCount = (int)U16(record[6..]);
-            if (usaCount < 2 || usaOffset < 8 || usaOffset + usaCount * 2 > record.Length || record.Length % (usaCount - 1) != 0)
-                return false;
-
-            var stride = record.Length / (usaCount - 1);
-            for (var i = 1; i < usaCount; i++)
-            {
-                var sectorEnd = i * stride - 2;
-                if (record[sectorEnd] != record[usaOffset] || record[sectorEnd + 1] != record[usaOffset + 1])
-                    return false;
-
-                record[sectorEnd] = record[usaOffset + 2 * i];
-                record[sectorEnd + 1] = record[usaOffset + 2 * i + 1];
-            }
-
-            return true;
         }
 
         static MftNode ParseRecord(MftBuffer mft, bool[] valid, int index, string driveRoot, string rootName)
@@ -405,42 +267,6 @@ namespace search.Models
             }
         }
 
-        sealed record DataRun(long Lcn, ulong Clusters, bool IsSparse);
-
-        sealed class MftBuffer
-        {
-            const int SegmentShift = 24;
-            const int SegmentSize = 1 << SegmentShift; // 16 MB: multiple of any record size, no single huge allocation
-
-            readonly byte[][] segments;
-            readonly int bytesPerRecord;
-
-            public MftBuffer(int bytesPerRecord, long length)
-            {
-                if (bytesPerRecord <= 0 || SegmentSize % bytesPerRecord != 0)
-                    throw new InvalidDataException($"Unsupported MFT record size: {bytesPerRecord}.");
-
-                this.bytesPerRecord = bytesPerRecord;
-                Length = length / bytesPerRecord * bytesPerRecord;
-                RecordCount = checked((int)(Length / bytesPerRecord));
-                segments = new byte[(int)((Length + SegmentSize - 1) >> SegmentShift)][];
-                for (var i = 0; i < segments.Length; i++)
-                    segments[i] = new byte[SegmentSize];
-            }
-
-            public long Length { get; }
-            public int RecordCount { get; }
-
-            public Span<byte> Record(int index)
-            {
-                var (segment, offset) = Locate((long)index * bytesPerRecord);
-                return segment.AsSpan(offset, bytesPerRecord);
-            }
-
-            public (byte[] Segment, int Offset) Locate(long position)
-                => (segments[position >> SegmentShift], (int)(position & (SegmentSize - 1)));
-        }
-
         sealed class MftNode : INode
         {
             readonly string driveRoot;
@@ -484,139 +310,6 @@ namespace search.Models
                     return driveRoot;
 
                 return fullName = Path.Combine(Parent.BuildFullName(depth + 1), Name);
-            }
-        }
-
-        sealed class NativeVolume : IDisposable
-        {
-            readonly SafeFileHandle handle;
-            byte[] scratch = Array.Empty<byte>();
-
-            NativeVolume(SafeFileHandle handle, ushort bytesPerSector, ulong bytesPerCluster, ulong mftStartLcn, int bytesPerMftRecord)
-            {
-                this.handle = handle;
-                BytesPerSector = bytesPerSector;
-                BytesPerCluster = bytesPerCluster;
-                MftStartLcn = mftStartLcn;
-                BytesPerMftRecord = bytesPerMftRecord;
-            }
-
-            public ushort BytesPerSector { get; }
-            public ulong BytesPerCluster { get; }
-            public ulong MftStartLcn { get; }
-            public int BytesPerMftRecord { get; }
-
-            public static NativeVolume Open(DriveInfo drive)
-            {
-                var volumeName = new StringBuilder(1024);
-                if (!GetVolumeNameForVolumeMountPoint(drive.RootDirectory.FullName, volumeName, volumeName.Capacity))
-                    throw new IOException($"Unable to resolve volume name for {drive.RootDirectory.FullName}.");
-
-                var volume = volumeName.ToString().TrimEnd('\\');
-                var handle = CreateFile(volume, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete, IntPtr.Zero, FileMode.Open, 0, IntPtr.Zero);
-                if (handle == null || handle.IsInvalid)
-                    throw new IOException($"Unable to open volume {drive.Name}. Make sure the application has administrator privileges.");
-
-                try
-                {
-                    var boot = new byte[512];
-                    ReadAligned(handle, 0, boot, 0, boot.Length);
-                    return FromBootSector(handle, boot);
-                }
-                catch
-                {
-                    handle.Dispose();
-                    throw;
-                }
-            }
-
-            public void Read(ulong absolutePosition, byte[] buffer, int offset, int count)
-            {
-                if (count == 0) return;
-
-                var sector = BytesPerSector;
-                var alignedStart = absolutePosition / sector * sector;
-                var skip = checked((int)(absolutePosition - alignedStart));
-                var alignedLength = Align(skip + count, sector);
-                if (scratch.Length < alignedLength)
-                    scratch = new byte[alignedLength];
-                ReadAligned(handle, alignedStart, scratch, 0, alignedLength);
-                Buffer.BlockCopy(scratch, skip, buffer, offset, count);
-            }
-
-            public void Dispose() => handle.Dispose();
-
-            static NativeVolume FromBootSector(SafeFileHandle handle, byte[] boot)
-            {
-                if (BinaryPrimitives.ReadUInt64LittleEndian(boot.AsSpan(3)) != 0x202020205346544e)
-                    throw new InvalidDataException("This is not an NTFS disk.");
-
-                var bytesPerSector = BinaryPrimitives.ReadUInt16LittleEndian(boot.AsSpan(11));
-                var sectorsPerCluster = boot[13];
-                var bytesPerCluster = checked((ulong)bytesPerSector * sectorsPerCluster);
-                var mftStartLcn = BinaryPrimitives.ReadUInt64LittleEndian(boot.AsSpan(48));
-                var clustersPerMftRecord = boot[64];
-                var bytesPerMftRecord = clustersPerMftRecord >= 128
-                    ? 1 << (256 - clustersPerMftRecord)
-                    : checked(clustersPerMftRecord * bytesPerSector * sectorsPerCluster);
-
-                return new NativeVolume(handle, bytesPerSector, bytesPerCluster, mftStartLcn, bytesPerMftRecord);
-            }
-
-            static int Align(int value, int alignment)
-                => checked(((value + alignment - 1) / alignment) * alignment);
-
-            static void ReadAligned(SafeFileHandle handle, ulong absolutePosition, byte[] buffer, int offset, int count)
-            {
-                var read = 0;
-                while (read < count)
-                {
-                    var chunk = count - read;
-                    var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-                    try
-                    {
-                        var address = pinned.AddrOfPinnedObject() + offset + read;
-                        var overlapped = new NativeOverlapped(checked(absolutePosition + (ulong)read));
-                        if (!ReadFile(handle, address, checked((uint)chunk), out var bytesRead, ref overlapped) || bytesRead == 0)
-                            throw new IOException("Unable to read volume information.");
-                        read += checked((int)bytesRead);
-                    }
-                    finally
-                    {
-                        pinned.Free();
-                    }
-                }
-            }
-        }
-
-        [DllImport("kernel32", CharSet = CharSet.Auto, BestFitMapping = false)]
-        static extern bool GetVolumeNameForVolumeMountPoint(string volumeName, StringBuilder uniqueVolumeName, int uniqueNameBufferCapacity);
-
-        [DllImport("kernel32", CharSet = CharSet.Auto, BestFitMapping = false)]
-        static extern SafeFileHandle CreateFile(string lpFileName, System.IO.FileAccess fileAccess, System.IO.FileShare fileShare, IntPtr lpSecurityAttributes, FileMode fileMode, int dwFlagsAndAttributes, IntPtr hTemplateFile);
-
-        [DllImport("kernel32", CharSet = CharSet.Auto)]
-        static extern bool ReadFile(SafeFileHandle hFile, IntPtr lpBuffer, uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, ref NativeOverlapped lpOverlapped);
-
-        enum FileMode : int
-        {
-            Open = 3
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct NativeOverlapped
-        {
-            IntPtr privateLow;
-            IntPtr privateHigh;
-            ulong offset;
-            IntPtr eventHandle;
-
-            public NativeOverlapped(ulong offset)
-            {
-                privateLow = IntPtr.Zero;
-                privateHigh = IntPtr.Zero;
-                this.offset = offset;
-                eventHandle = IntPtr.Zero;
             }
         }
     }

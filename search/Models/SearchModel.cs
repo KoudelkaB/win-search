@@ -654,7 +654,14 @@ namespace search.Models
         /// </summary>
         /// <param name="drive"></param>
         /// <returns></returns>
-        IEnumerable<INode> MftDriveEntries(DriveInfo drive) => MftDriveReader.GetNodes(drive);
+        IEnumerable<INode> MftDriveEntries(DriveInfo drive)
+        {
+            if (drive?.IsReady != true || !string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
+                return Enumerable.Empty<INode>();
+
+            using var raw = search.Core.RawMft.Open(drive.RootDirectory.FullName);
+            return MftDriveReader.GetNodes(MftBuffer.From(raw), drive);
+        }
 
         /// <summary>
         /// Add the content of the archive into the search
