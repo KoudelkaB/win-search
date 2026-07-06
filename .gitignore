@@ -10,3 +10,6 @@ obj/
 /LogReader/Properties/PublishProfiles/FolderProfile.pubxml.user
 /LogReader/LogReader.csproj.user
 /LogReader/UpgradeLog.htm
+
+# Visual Studio per-user files
+*.csproj.user
