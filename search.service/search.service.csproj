@@ -7,11 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.9" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\search.core\search.core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Update="MinVer" Version="7.0.0" />
   </ItemGroup>
 
 </Project>

@@ -34,4 +34,8 @@
     <PackageReference Include="SharpCompress" Version="0.49.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Update="MinVer" Version="7.0.0" />
+  </ItemGroup>
+
 </Project>
