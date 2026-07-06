@@ -33,7 +33,7 @@ namespace search
 #if DEBUG
             try
             {
-                text = (UnelevatedApp.IsElevated ? "Admin " : "User  ") + text;
+                text = $"{Program.Role,-6} " + text;
                 var log = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ") + text;
                 System.Diagnostics.Debug.WriteLine(log);
                 File.AppendAllText("search.run.log", log + "\n");
@@ -50,14 +50,36 @@ namespace search
         }
 
         /// <summary>
-        /// Open file by shell or run process
+        /// Open file by shell or run process.
+        /// Elevated opens go through the broker when it is available (no prompt);
+        /// otherwise each one shows its own UAC prompt.
         /// </summary>
         /// <param name="name"></param>
         /// <param name="args"></param>
         /// <returns></returns>
         public static Process Open(this string name, string args = "", string workDir = "", bool elevated = false)
-            => !elevated && UnelevatedApp.IsElevated ? UnelevatedApp.OpenFromUnelevated(name, args, workDir) :
-            Process.Start(new ProcessStartInfo
+        {
+            if (elevated && !Program.IsProcessElevated)
+            {
+                if (Broker.Available) return Broker.OpenElevated(name, args, workDir);
+                try
+                {
+                    return Process.Start(new ProcessStartInfo
+                    {
+                        FileName = name,
+                        Arguments = args,
+                        WorkingDirectory = workDir,
+                        UseShellExecute = true,
+                        Verb = "runas" // Per-open UAC prompt when the broker was declined
+                    });
+                }
+                catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223) // ERROR_CANCELLED
+                {
+                    return null; // User declined this one
+                }
+            }
+
+            return Process.Start(new ProcessStartInfo
             {
                 FileName = name,
                 Arguments = args,
@@ -65,6 +87,7 @@ namespace search
                 CreateNoWindow = true,
                 WorkingDirectory = workDir
             });
+        }
 
         /// <summary>
         /// Returns Visual parent control of events sender

@@ -576,6 +576,7 @@ namespace search.Models
             {
                 Loading = true;
                 var watch = Stopwatch.StartNew();
+                var origins = new ConcurrentDictionary<string, MftOrigin>();
                 var progress = new CancellationTokenSource();
                 var progressTask = ContinualUpdate(progress.Token, () =>
                     Status = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s");
@@ -585,6 +586,8 @@ namespace search.Models
                     {
                         await Task.Delay(500); //Give the remaining drives time to report in
                         var requested = Volatile.Read(ref initRequests);
+                        origins.Clear();
+                        ntfsWalked = false;
                         try
                         {
                             //Add files from all NTFS drives - each drive loads in parallel into a shared dictionary
@@ -594,7 +597,9 @@ namespace search.Models
                             {
                                 try
                                 {
-                                    foreach (var n in MftDriveEntries(d)) loaded[n.FullName] = n;
+                                    var entries = DriveEntries(d, out var origin);
+                                    if (d.IsReady) origins[d.Name.TrimEnd(Path.DirectorySeparatorChar)] = origin;
+                                    foreach (var n in entries) loaded[n.FullName] = n;
                                     if (publishPartial)
                                     {
                                         files = loaded;
@@ -631,7 +636,7 @@ namespace search.Models
                     progress.Cancel();
                     await progressTask;
                     Loading = false;
-                    Status = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s";
+                    Status = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s" + OriginsInfo(origins);
                     UIRefreshRequested?.Invoke();
                 }
             });
@@ -649,18 +654,48 @@ namespace search.Models
             });
         }
 
+        volatile bool ntfsWalked; //An NTFS drive had to fall back to the walk => hint how to get MFT indexing
+
         /// <summary>
-        /// Get all NTFS drive files
+        /// Get all files of the drive: NTFS via the raw $MFT (service -> direct -> broker),
+        /// anything else - or NTFS with no MFT source available - via the directory walk
         /// </summary>
         /// <param name="drive"></param>
         /// <returns></returns>
-        IEnumerable<INode> MftDriveEntries(DriveInfo drive)
+        IEnumerable<INode> DriveEntries(DriveInfo drive, out MftOrigin origin)
         {
-            if (drive?.IsReady != true || !string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
-                return Enumerable.Empty<INode>();
+            origin = MftOrigin.Walk;
+            if (drive?.IsReady != true) return Enumerable.Empty<INode>();
 
-            using var raw = search.Core.RawMft.Open(drive.RootDirectory.FullName);
-            return MftDriveReader.GetNodes(MftBuffer.From(raw), drive);
+            if (string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
+            {
+                var mft = MftSource.TryAcquire(drive, out origin);
+                if (mft != null) return MftDriveReader.GetNodes(mft, drive);
+                ntfsWalked = true;
+            }
+
+            origin = MftOrigin.Walk;
+            return DirectoryWalker.Walk(drive);
+        }
+
+        /// <summary>
+        /// " (C: service, D: folder walk)" suffix for the load status, with a hint
+        /// when an NTFS drive had to be walked
+        /// </summary>
+        string OriginsInfo(ConcurrentDictionary<string, MftOrigin> origins)
+        {
+            if (origins.IsEmpty) return "";
+            var parts = string.Join(", ", origins.OrderBy(x => x.Key).Select(x => $"{x.Key} " + x.Value switch
+            {
+                MftOrigin.Service => "service",
+                MftOrigin.Direct => "direct",
+                MftOrigin.Broker => "admin helper",
+                _ => "folder walk"
+            }));
+            var hint = ntfsWalked
+                ? " - install the Win Search service or accept the admin prompt for instant NTFS indexing"
+                : "";
+            return $" ({parts}){hint}";
         }
 
         /// <summary>

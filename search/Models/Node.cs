@@ -175,6 +175,25 @@ namespace search.Models
             catch { }
         }
 
+        /// <summary>
+        /// From an already enumerated entry - no extra stat call (used by the directory walk)
+        /// </summary>
+        public FileNode(FileSystemInfo info)
+        {
+            path = info.FullName;
+            try
+            {
+                Attributes = info.Attributes;
+                if (info is FileInfo f) Size = (ulong)f.Length;
+                CreationTime = info.CreationTime;
+                LastChangeTime = info.LastWriteTime;
+                LastAccessTime = info.LastAccessTime;
+            }
+            catch { }
+        }
+
+        public void AddSize(ulong size) => Size += size;
+
         override public FileAttributes Attributes { get; protected set; } = 0;
         override public string Name => Path.GetFileName(path);
         override public ulong Size { get; protected set; }

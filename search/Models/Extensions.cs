@@ -172,19 +172,19 @@ namespace search.Models
             {
                 a = File.GetAttributes(file);
             }
-            catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
+            catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException || e is UnauthorizedAccessException)
             {
-                // Try copy from unelevated (the file can exist in unelevated app only!)
+                // The source is not visible to this unelevated process (ACL-protected shows
+                // as access denied) => pull it through the elevated broker
                 try
                 {
-                    // TODO:  If the destination is not seen on elevated => do everything on unelevated only! (rename, move, copy)
-                    // file.CopyInUnevevated(dest, overwrite, move);
-                    // For now we gan only copy from unelevated drive
-                    file.CopyFromUnevevated(dest, overwrite, move);
+                    if (!Broker.Available)
+                        throw new UnauthorizedAccessException($"Access denied to '{file}' - the elevated helper is not running (it was declined at startup).");
+                    Broker.CopyFromElevated(file, dest, overwrite, move);
                 }
                 catch (Exception ex)
                 {
-                    $"CopyFromUnevevated threw {ex}".Debug();
+                    $"CopyFromElevated threw {ex}".Debug();
                     errors.Add(ex.Message);
 
                 }
