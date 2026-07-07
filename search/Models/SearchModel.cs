@@ -318,7 +318,7 @@ namespace search.Models
                 {
                     return null;   //Discard and run new filter
                 }
-                catch (InvalidOperationException e)
+                catch (InvalidOperationException)
                 {
                     continue; //Enumeration changed => try again
                 }
@@ -776,7 +776,7 @@ namespace search.Models
                     });
                 return true;
             }
-            catch (Exception e) { }
+            catch (Exception) { }
             return false;
         }
 

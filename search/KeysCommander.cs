@@ -24,7 +24,6 @@ namespace search
 
         public bool IsReceivingCommandKeys => keysDown.Count > 0;
 
-        DateTime start;
         HashSet<Key> keysDown = new();
         List<Key> commandKeys = new(); //All kayes pressed druring this command in time order
 

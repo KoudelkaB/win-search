@@ -14,11 +14,11 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # MinVer needs the tag history
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -42,7 +42,7 @@ jobs:
           & $iscc /DMyAppVersion=$env:VERSION installer\setup.iss
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: installer/Output/WinSearch-Setup-${{ env.VERSION }}.exe
           generate_release_notes: true

@@ -63,7 +63,8 @@ namespace search.Models
                          Pos.CONTAINS => miContains,
                          Pos.STARTS => miStartsWith,
                          Pos.ENDS => miEndsWith,
-                         Pos.EQUALS => miEquals
+                         Pos.EQUALS => miEquals,
+                         _ => throw new InvalidOperationException("Unknown pattern position")
                      }, Ex.Constant(x.Trim(':')), cmp)).Aggregate((s, n) => Ex.OrElse(s, n)), text);
                 Matches = (Func<string, bool>)ex.Compile();
             }

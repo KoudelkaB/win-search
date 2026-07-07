@@ -113,7 +113,7 @@ namespace search.Models
                 while (!watchers.TryAdd(path, w)) path.DisposeWatcher(); // Remove the old in case of raise condition
                 Started(path);
             }
-            catch (Exception e) { }
+            catch (Exception) { }
         }
     }
 }

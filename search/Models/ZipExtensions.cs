@@ -29,7 +29,7 @@ namespace search.Models
                 mza.Position = 0;
                 return mza;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 mza?.Dispose();
             }
@@ -105,7 +105,7 @@ namespace search.Models
                 a.WriteToDirectory(dir, new ExtractionOptions { ExtractFullPath = true, PreserveFileTime = true });
                 return true;
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return false;
             }

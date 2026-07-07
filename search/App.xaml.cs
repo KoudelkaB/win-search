@@ -18,7 +18,6 @@ namespace search
     public partial class App : Application
     {
         //To be deleted on App closeup
-#warning TODO: do not use static => inversion of control
         static readonly int pid = Process.GetCurrentProcess().Id;
         static readonly string dirName = "search.";
         public static readonly string TempFolder = Path.Combine(Path.GetTempPath(), dirName + pid);
