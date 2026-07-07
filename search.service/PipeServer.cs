@@ -60,10 +60,15 @@ namespace search.Service
         static PipeSecurity CreatePipeSecurity()
         {
             var security = new PipeSecurity();
-            // Any local authenticated user may request MFT data
+            // Any local authenticated user may request MFT data.
+            // Synchronize is REQUIRED: a NamedPipeClientStream opened for PipeDirection.InOut
+            // requests FILE_GENERIC_READ | FILE_GENERIC_WRITE, both of which include SYNCHRONIZE.
+            // Granting only ReadWrite (which omits Synchronize) makes every unelevated client
+            // connect fail with UnauthorizedAccessException, so the app silently falls back to
+            // the slow folder walk.
             security.AddAccessRule(new PipeAccessRule(
                 new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
-                PipeAccessRights.ReadWrite, AccessControlType.Allow));
+                PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize, AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(
                 new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
                 PipeAccessRights.FullControl, AccessControlType.Allow));

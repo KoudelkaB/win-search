@@ -21,7 +21,8 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyPublisher}
 DefaultDirName={autopf}\Win Search
-; Admin is required once here to install the service; the app itself then runs unelevated
+; Admin is required once for the Program Files install (and to register the optional
+; service); the app itself then runs unelevated
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -42,6 +43,12 @@ Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversio
 Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"
+
+[Tasks]
+; Off by default - most users never need it. The service lets Win Search index NTFS
+; drives instantly without any admin prompt; without it the app still works (accept the
+; startup admin prompt for instant indexing, or it falls back to a slower folder walk).
+Name: "installservice"; Description: "Install the background service for prompt-free NTFS indexing (advanced; most users can skip this)"; Flags: unchecked
 
 [Icons]
 Name: "{autoprograms}\Win Search"; Filename: "{app}\search.exe"
@@ -90,7 +97,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
 begin
-  if CurStep = ssPostInstall then
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('installservice') then
   begin
     { sc.exe REQUIRES the space after each option= }
     Code := Exec2(ExpandConstant('{sys}\sc.exe'),

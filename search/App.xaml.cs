@@ -69,6 +69,15 @@ namespace search
             //    // The minimum number of threads was not changed.
             //}
 
+            //Commands run as async void handlers - an exception there bypasses every local
+            //try/catch and would kill the whole app; report it and keep running instead
+            DispatcherUnhandledException += (o, e) =>
+            {
+                $"UI exception: {e.Exception}".Debug();
+                MessageBox.Show(e.Exception.Message, "Command failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                e.Handled = true;
+            };
+
             Exit += (o, e) =>
             {
                 $"App exiting with {e.ApplicationExitCode}".Debug();

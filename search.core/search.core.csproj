@@ -5,8 +5,4 @@
     <RootNamespace>search.Core</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Update="MinVer" Version="7.0.0" />
-  </ItemGroup>
-
 </Project>

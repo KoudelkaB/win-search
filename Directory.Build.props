@@ -13,7 +13,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="All" />
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
   </ItemGroup>
+
+  <!-- Keep the assembly identity fixed: the WPF markup compiler bakes AssemblyVersion
+       into pack URIs (";V1.0.0.0;component/...") before MinVer's target runs, so a
+       tag-derived AssemblyVersion makes every LoadComponent throw FileNotFoundException
+       at startup. MinVer overwrites the AssemblyVersion property, hence a target after
+       it. File/InformationalVersion still carry the real tag version. -->
+  <Target Name="PinAssemblyVersion" AfterTargets="MinVer">
+    <PropertyGroup>
+      <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    </PropertyGroup>
+  </Target>
 
 </Project>

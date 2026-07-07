@@ -15,10 +15,10 @@ namespace search.Models
         static NonBlocking.ConcurrentDictionary<string, FileSystemWatcher> watchers = new(); // To keep watchers alive
         static AutoResetEvent newFSChanges = new AutoResetEvent(false);
         static Action<string> Started;
-        static Action<FileSystemEventArgs> Changed;
+        static Func<FileSystemEventArgs, Task> Changed;
         static int started = 0;
 
-        public static bool Run(Action<string> Started, Action<FileSystemEventArgs> Changed)
+        public static bool Run(Action<string> Started, Func<FileSystemEventArgs, Task> Changed)
         {
             // Ensure the following code is run only once
             if (Interlocked.CompareExchange(ref started, 1, 0) != 0) return false;
@@ -33,8 +33,14 @@ namespace search.Models
                 while (true)
                 {
                     newFSChanges.WaitOne();
-                    //Process all events in the queue
-                    while (fsChanges.TryDequeue(out var e)) Changed(e);
+                    //Process events one at a time - awaiting each keeps ordering (a rename must not
+                    //race its own delete) and gives backpressure: an unawaited async handler would
+                    //spawn thousands of concurrent updates during a change storm, starving the
+                    //thread pool and the UI dispatcher. Bursts are absorbed by fsChanges instead.
+                    while (fsChanges.TryDequeue(out var e))
+                    {
+                        try { Changed(e).Wait(); } catch { }
+                    }
                 }
             }, TaskCreationOptions.LongRunning).Start();
 
@@ -95,9 +101,10 @@ namespace search.Models
                     if (ex is InternalBufferOverflowException ie)
                     {
                         //Too many changes at once => need to restart watching on the drive given by exception message
+                        $"watcher buffer overflow on {path} => restart watcher + rescan".Debug();
                         AddFolder(path);
                     }
-                    Console.WriteLine(e.GetException().Message);
+                    else $"watcher error on {path}: {ex.Message}".Debug();
                 };
                 w.InternalBufferSize = 1 << 16; //Max value
 

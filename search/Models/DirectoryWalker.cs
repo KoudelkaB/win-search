@@ -16,7 +16,15 @@ namespace search.Models
     /// </summary>
     internal static class DirectoryWalker
     {
-        public static IEnumerable<INode> Walk(DriveInfo drive)
+        // Give up on a walk that has not produced a single new entry for this long. A live
+        // drive keeps making progress so it walks to completion however large it is; a dead
+        // or hung one (e.g. a disconnected network share whose EnumerateFileSystemInfos blocks
+        // in an uninterruptible syscall) stalls and is abandoned so it can never wedge the load.
+        static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(15);
+
+        public static IEnumerable<INode> Walk(DriveInfo drive) => Walk(drive, StallTimeout);
+
+        public static IEnumerable<INode> Walk(DriveInfo drive, TimeSpan stallTimeout)
         {
             var options = new EnumerationOptions
             {
@@ -31,22 +39,30 @@ namespace search.Models
             result.Add(root);
             queue.Enqueue(drive.RootDirectory.FullName);
             var pending = 1;
+            var lastProgress = Environment.TickCount64;
+
+            // Not disposed: a worker abandoned inside an uninterruptible syscall may still
+            // reference the token after Walk returns; let the GC reclaim it with that thread.
+            var cts = new CancellationTokenSource();
+            var token = cts.Token;
 
             var workers = Enumerable.Range(0, Math.Max(2, Environment.ProcessorCount)).Select(_ => Task.Run(() =>
             {
-                while (Volatile.Read(ref pending) > 0)
+                while (Volatile.Read(ref pending) > 0 && !token.IsCancellationRequested)
                 {
                     if (!queue.TryDequeue(out var dir))
                     {
-                        Thread.Yield(); // Another worker still fills the queue
+                        token.WaitHandle.WaitOne(1); // Brief blocking wait - not a busy spin - while another worker fills the queue
                         continue;
                     }
                     try
                     {
                         foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
                         {
+                            if (token.IsCancellationRequested) break;
                             var node = new FileNode(info);
                             result.Add(node);
+                            Volatile.Write(ref lastProgress, Environment.TickCount64);
                             if (node.IsDirectory && !info.Attributes.HasFlag(FileAttributes.ReparsePoint))
                             {
                                 Interlocked.Increment(ref pending);
@@ -61,7 +77,18 @@ namespace search.Models
                     }
                 }
             })).ToArray();
-            Task.WaitAll(workers);
+
+            // Stall watchdog: cancel once the walk stops producing entries for stallTimeout.
+            var done = Task.WhenAll(workers);
+            while (!done.Wait(1000))
+            {
+                if (Environment.TickCount64 - Volatile.Read(ref lastProgress) > stallTimeout.TotalMilliseconds)
+                {
+                    cts.Cancel();               // Workers not stuck in a syscall exit at once
+                    done.Wait(TimeSpan.FromSeconds(3)); // Brief grace, then abandon any stuck in an uninterruptible read
+                    break;
+                }
+            }
 
             AggregateFolderSizes(result);
             return result;

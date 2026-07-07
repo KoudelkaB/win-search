@@ -58,6 +58,10 @@ namespace search.Models
 
         public async Task Update(string newFilter = null, string newSort = null)
         {
+            // A data refresh is already queued and covers this change too => skip the Task.Run
+            // (change storms during a load would otherwise spawn thousands of tasks per second)
+            if ((newFilter ?? newSort) == null && Volatile.Read(ref refreshQueued) == 1) return;
+
             // Return immediately => do not slow down UI!!!
             await Task.Run(async () =>
             {
@@ -115,7 +119,10 @@ namespace search.Models
 
                     if (IsCanceled()) return;
                     var items = GetItems(refresh, IsCanceled);
-                    if (items == null || IsCanceled() || items.IsIdentical(Items)) return;
+                    if (items == null || IsCanceled()) return;
+                    //Items is mutated on the UI thread (incremental updates) => the comparison may
+                    //see a torn list; publish on any doubt instead of dropping the refresh
+                    try { if (items.IsIdentical(Items)) return; } catch { }
 
                     //Publish progressively in batches - the first results show immediately
                     //and the UI thread is never blocked for long (input has higher priority)
@@ -183,7 +190,11 @@ namespace search.Models
             var currentSort = sort;
             var nf = nodeFilter;
             var compare = SortComparison(currentSort);
-            if (compare == null || !itemsComplete) return false;
+            //While a scan runs, changes arrive in storms and each in-place insert costs an
+            //O(Items.Count) IndexOf on the UI thread - that saturates the dispatcher and starves
+            //the batch publish holding the Updating semaphore (frozen filter, endless Loading).
+            //The coalesced full refresh covers these changes instead.
+            if (Loading || compare == null || !itemsComplete) return false;
 
             return await Dispatcher.InvokeAsync(() =>
             {
@@ -191,6 +202,10 @@ namespace search.Models
                 if (!itemsComplete || currentFilter != filter || currentSort != sort) return false;
                 var items = Items;
                 var updated = false;
+                //Remove+Insert silently drops the row from the view's selection => snapshot it
+                //and restore after (same INode instances get re-inserted), so a selected file
+                //stays selected while it keeps changing on disk
+                BeforeItemsExchange();
                 foreach (var node in changed)
                 {
                     var index = items.IndexOf(node);
@@ -212,6 +227,7 @@ namespace search.Models
                     }
                 }
                 while (items.Count > MaxItems) items.RemoveAt(items.Count - 1);
+                AfterItemsExchange();
                 if (updated) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
                 return true;
             });
@@ -340,12 +356,14 @@ namespace search.Models
         NonBlocking.ConcurrentDictionary<string, bool?> searched = new();
 
         // Update continualy the UI until canceled
-        async Task ContinualUpdate(CancellationToken ct, Action a)
+        // refreshUI: false => only run the action (Status binds via INPC); a full list refresh
+        // every second is only needed when row content changes outside the binding (Find results)
+        async Task ContinualUpdate(CancellationToken ct, Action a, bool refreshUI = true)
         {
             while (!ct.IsCancellationRequested)
             {
                 a();
-                UIRefreshRequested?.Invoke();
+                if (refreshUI) UIRefreshRequested?.Invoke();
                 try
                 {
                     await Task.Delay(1000, ct); // Wait for 1 second or until canceled
@@ -563,6 +581,7 @@ namespace search.Models
         }
 
         int initRequests = 0;
+        bool firstLoadPublished; //false until the first scan has shown results => publish each finished drive as it lands
 
         /// <summary>
         /// Refresh files
@@ -579,26 +598,40 @@ namespace search.Models
                 var origins = new ConcurrentDictionary<string, MftOrigin>();
                 var progress = new CancellationTokenSource();
                 var progressTask = ContinualUpdate(progress.Token, () =>
-                    Status = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s");
+                    Status = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s",
+                    refreshUI: false);
                 try
                 {
                     while (true)
                     {
                         await Task.Delay(500); //Give the remaining drives time to report in
                         var requested = Volatile.Read(ref initRequests);
+                        $"drive scan started (covering {requested} requests)".Debug();
                         origins.Clear();
                         ntfsWalked = false;
                         try
                         {
                             //Add files from all NTFS drives - each drive loads in parallel into a shared dictionary
                             var loaded = new NonBlocking.ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
-                            var publishPartial = files.Count == 0; //First load => show every finished drive immediately
+                            // First load => publish every finished drive immediately, so a fast MFT drive
+                            // shows at once instead of waiting on the slowest drive's walk (which may hang).
+                            // Must NOT key off files.Count: the FileSystemWatcher pre-populates files on any
+                            // startup churn, which would silently disable the progressive publish.
+                            var publishPartial = !firstLoadPublished;
                             await Task.WhenAll(DriveInfo.GetDrives().Select(d => Task.Run(() =>
                             {
                                 try
                                 {
+                                    //IsReady of an unreachable network drive blocks in SMB timeouts
+                                    //for tens of seconds - probe once with a deadline so a dead
+                                    //mapping can never stall the whole scan
+                                    if (!IsReadyFast(d))
+                                    {
+                                        $"drive {d.Name} not ready => skipped".Debug();
+                                        return;
+                                    }
                                     var entries = DriveEntries(d, out var origin);
-                                    if (d.IsReady) origins[d.Name.TrimEnd(Path.DirectorySeparatorChar)] = origin;
+                                    origins[d.Name.TrimEnd(Path.DirectorySeparatorChar)] = origin;
                                     foreach (var n in entries) loaded[n.FullName] = n;
                                     if (publishPartial)
                                     {
@@ -627,8 +660,11 @@ namespace search.Models
                         catch { }
                         //Update filtered files
                         await Update();
+                        //Results are on screen now => later scans rebuild silently and swap at the end
+                        firstLoadPublished = true;
                         //Quit when no new request arrived during the scan
                         if (Interlocked.CompareExchange(ref initRequests, 0, requested) == requested) return;
+                        $"drive scan rerun: {Volatile.Read(ref initRequests) - requested} new requests arrived during the scan".Debug();
                     }
                 }
                 finally
@@ -637,6 +673,7 @@ namespace search.Models
                     await progressTask;
                     Loading = false;
                     Status = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s" + OriginsInfo(origins);
+                    Status.Debug();
                     UIRefreshRequested?.Invoke();
                 }
             });
@@ -654,10 +691,20 @@ namespace search.Models
             });
         }
 
+        /// <summary>
+        /// DriveInfo.IsReady with a deadline: an unreachable network drive blocks the query
+        /// in SMB timeouts for tens of seconds - abandon the probe and report not ready
+        /// </summary>
+        static bool IsReadyFast(DriveInfo d)
+        {
+            var probe = Task.Run(() => { try { return d.IsReady; } catch { return false; } });
+            return probe.Wait(TimeSpan.FromSeconds(5)) && probe.Result;
+        }
+
         volatile bool ntfsWalked; //An NTFS drive had to fall back to the walk => hint how to get MFT indexing
 
         /// <summary>
-        /// Get all files of the drive: NTFS via the raw $MFT (service -> direct -> broker),
+        /// Get all files of the drive: NTFS via the raw $MFT (direct when elevated -> broker -> service),
         /// anything else - or NTFS with no MFT source available - via the directory walk
         /// </summary>
         /// <param name="drive"></param>

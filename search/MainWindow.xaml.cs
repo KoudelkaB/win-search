@@ -100,7 +100,7 @@ namespace search
                 (Key.O, "Open in", async (n,a)=> await OpenIn(n,a), openIn),
                 (Key.A, "Open in (as admin)", async (n,a)=> await OpenIn(n,a,true), openIn),
                 (Key.F2, "Rename / Change", Rename, new CommandTree[] {(Key.O, "Overwrite", f2)}.Concat(f2).ToArray()),
-                (Key.F3, "View node", async (n,a)=>await Open(Apps.ViewerFor(n.First().GetFileOrTempPath()), Model.ToTextNodes(n.ToArray()).ToArray())),
+                (Key.F3, "View node", async (n,a)=>{ if (n.Any()) await Open(Apps.ViewerFor(n.First().GetFileOrTempPath()), Model.ToTextNodes(n.ToArray()).ToArray()); }),
                 (Key.F4, "Edit",async (n,a)=> await Open(Apps.TextEditor, n.ToArray())),
                 (Key.N, "Copy name", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => n.Name)))),
                 (Key.P, "Copy path", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => n.FullName)))),
@@ -383,6 +383,11 @@ namespace search
         /// <returns></returns>
         async Task Open(string path, INode[] nodes, bool asAdmin = false)
         {
+            if (nodes.Length == 0)
+            {
+                Model.Status = "Nothing selected";
+                return;
+            }
             if (path == null) nodes.ForEach(n => n.GetFileOrTempPath().Open("", elevated: asAdmin)); //Open the files directly
             else
             {
@@ -454,6 +459,13 @@ namespace search
                 case Key.PageUp:
                     // Skip list view control keys
                     return;
+            }
+            // Auto-repeats of a held key carry no new command information - processing them
+            // would just spam the log (and watching one's own log file then loops forever)
+            if (e.IsRepeat)
+            {
+                e.Handled = true;
+                return;
             }
             // Receive another command
             filesViewCmd.KeyPressed(e.Key);
@@ -555,6 +567,11 @@ namespace search
 
         async Task OpenIn(IEnumerable<INode> nodes, IEnumerable<Key> arg, bool asAdmin = false)
         {
+            if (!nodes.Any())
+            {
+                Model.Status = "Nothing selected";
+                return;
+            }
             var a = arg.FirstOrDefault();
             if (a == Key.T) nodes = Model.ToTextNodes(nodes.ToArray());
             await Open(a switch
