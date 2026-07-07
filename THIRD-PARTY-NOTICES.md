@@ -28,7 +28,7 @@ Note: Fody and PropertyChanged.Fody are build-time IL weavers - the tools
 themselves are not redistributed, but code woven by them ships in the
 application binaries, so their attribution is kept here.
 
-## MinVer 6.0.0
+## MinVer 7.0.0
 
 - Project: https://github.com/adamralph/minver
 - Copyright (c) Adam Ralph and contributors
