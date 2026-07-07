@@ -20,6 +20,9 @@ AppId={{D9AE5E34-602D-49AF-9263-89E7B851B8D4}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyPublisher}
+AppPublisherURL=https://github.com/KoudelkaB/win-search
+AppSupportURL=https://github.com/KoudelkaB/win-search/issues
+AppUpdatesURL=https://github.com/KoudelkaB/win-search/releases
 DefaultDirName={autopf}\Win Search
 ; Admin is required once for the Program Files install (and to register the optional
 ; service); the app itself then runs unelevated
@@ -43,6 +46,9 @@ Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversio
 Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"
+Source: "..\README.md"; DestDir: "{app}"
+Source: "..\docs\HELP.md"; DestDir: "{app}\Docs"
+Source: "..\docs\WINGET.md"; DestDir: "{app}\Docs"
 
 [Tasks]
 ; Off by default - most users never need it. The service lets Win Search index NTFS
@@ -52,6 +58,7 @@ Name: "installservice"; Description: "Install the background service for prompt-
 
 [Icons]
 Name: "{autoprograms}\Win Search"; Filename: "{app}\search.exe"
+Name: "{autoprograms}\Win Search Help"; Filename: "{win}\notepad.exe"; Parameters: """{app}\Docs\HELP.md"""
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcStop"
