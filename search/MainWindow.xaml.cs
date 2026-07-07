@@ -30,10 +30,17 @@ namespace search
     {
         Filters filters = new Filters();
         SearchTerms searchTerms = new SearchTerms();
+        bool updatingFolderWidth;
+        bool columnWidthHandlersAttached;
+        WindowLayout pendingLayout;
 
         public MainWindow()
         {
             InitializeComponent();
+            ApplyWindowLayout();
+            AttachColumnWidthHandlers();
+            SizeChanged += (_, __) => UpdateFolderColumnWidth();
+            Closing += (_, __) => WindowLayoutStore.Save(this, CaptureColumnWidths());
 
             DataContext = new Models.SearchModel();
             filterTextBox.SuggestionList = () => Keyboard.Modifiers == ModifierKeys.Control ? filters.LastUsed : filters.MostUsed;
@@ -144,8 +151,124 @@ namespace search
             {
                 if (selected != null && selected.Length > 0) filesView.Select(selected);
                 selected = null;
+                UpdateFolderColumnWidth();
             };
-            Model.UIRefreshRequested += () => Dispatcher.Invoke(() => filesView.Items.Refresh());
+            Model.UIRefreshRequested += () => Dispatcher.Invoke(() =>
+            {
+                filesView.Items.Refresh();
+                UpdateFolderColumnWidth();
+            });
+        }
+
+        private void ApplyWindowLayout()
+        {
+            pendingLayout = WindowLayoutStore.Load();
+            if (pendingLayout == null)
+                return;
+
+            if (!IsVisibleOnAnyScreen(pendingLayout))
+            {
+                pendingLayout = null;
+                return;
+            }
+
+            if (pendingLayout.Width > 0 && pendingLayout.Height > 0)
+            {
+                Width = pendingLayout.Width;
+                Height = pendingLayout.Height;
+            }
+
+            if (!double.IsNaN(pendingLayout.Left) && !double.IsNaN(pendingLayout.Top))
+            {
+                Left = pendingLayout.Left;
+                Top = pendingLayout.Top;
+            }
+
+            WindowState = pendingLayout.WindowState;
+        }
+
+        private static bool IsVisibleOnAnyScreen(WindowLayout layout)
+        {
+            if (layout.Width <= 0 || layout.Height <= 0)
+                return false;
+
+            var windowBounds = new Rect(layout.Left, layout.Top, layout.Width, layout.Height);
+            var virtualScreen = new Rect(
+                SystemParameters.VirtualScreenLeft,
+                SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenWidth,
+                SystemParameters.VirtualScreenHeight);
+
+            return virtualScreen.IntersectsWith(windowBounds);
+        }
+
+        private void AttachColumnWidthHandlers()
+        {
+            if (columnWidthHandlersAttached || filesView.View is not GridView gridView)
+                return;
+
+            var descriptor = DependencyPropertyDescriptor.FromProperty(GridViewColumn.WidthProperty, typeof(GridViewColumn));
+            foreach (var column in gridView.Columns)
+            {
+                descriptor.AddValueChanged(column, (_, __) => UpdateFolderColumnWidth());
+            }
+
+            columnWidthHandlersAttached = true;
+        }
+
+        private void ApplyColumnWidths(IReadOnlyList<double> widths)
+        {
+            if (filesView.View is not GridView gridView)
+                return;
+
+            for (var i = 0; i < gridView.Columns.Count && i < widths.Count; i++)
+            {
+                var width = widths[i];
+                if (width > 0)
+                {
+                    gridView.Columns[i].Width = width;
+                }
+            }
+
+            UpdateFolderColumnWidth();
+        }
+
+        private IReadOnlyList<double> CaptureColumnWidths()
+        {
+            if (filesView.View is not GridView gridView)
+                return Array.Empty<double>();
+
+            return gridView.Columns.Cast<GridViewColumn>().Select(c => c.ActualWidth).ToArray();
+        }
+
+        private void UpdateFolderColumnWidth()
+        {
+            if (updatingFolderWidth || filesView.View is not GridView gridView || gridView.Columns.Count < 5)
+                return;
+
+            var folderColumn = gridView.Columns[4];
+            var available = filesView.ActualWidth - SystemParameters.VerticalScrollBarWidth - 8;
+            if (available <= 0)
+                return;
+
+            var fixedWidth = gridView.Columns
+                .Cast<GridViewColumn>()
+                .Where((_, index) => index != 4)
+                .Sum(column => column.ActualWidth);
+
+            var width = Math.Max(80, available - fixedWidth);
+            if (Math.Abs(folderColumn.Width - width) < 0.5)
+                return;
+
+            try
+            {
+                updatingFolderWidth = true;
+                folderColumn.Width = width;
+            }
+            finally
+            {
+                updatingFolderWidth = false;
+            }
         }
 
         /// <summary>
@@ -159,6 +282,17 @@ namespace search
         {
             filterTextBox.Focus();
             await Model.Update("");
+            ApplySavedColumnWidths();
+            UpdateFolderColumnWidth();
+        }
+
+        private void ApplySavedColumnWidths()
+        {
+            if (pendingLayout?.ColumnWidths == null || pendingLayout.ColumnWidths.Count == 0)
+                return;
+
+            ApplyColumnWidths(pendingLayout.ColumnWidths);
+            pendingLayout = null;
         }
 
         async private void TextBox_TextChanged(object sender, TextChangedEventArgs e)

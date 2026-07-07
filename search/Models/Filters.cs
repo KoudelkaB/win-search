@@ -13,7 +13,7 @@ namespace search.Models
             public DateTime LastUsed = DateTime.Now;
         }
 
-        static string path = "Filters";
+        static readonly string path = UserDataPaths.For("Filters");
         Dictionary<string, Info> items;
 
         /// <summary>
@@ -32,6 +32,7 @@ namespace search.Models
         /// <param name="filters"></param>
         public Filters()
         {
+            MigrateLegacyStore();
             if (File.Exists(path))
             {
                 try
@@ -43,8 +44,24 @@ namespace search.Models
             }
             if (items == null)
             {
-                $"New '{Path.GetFullPath(path)}' will be created".Debug();
+                $"New '{path}' will be created".Debug();
                 items = new Dictionary<string, Info>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        private static void MigrateLegacyStore()
+        {
+            var legacyPath = Path.Combine(AppContext.BaseDirectory, "Filters");
+            if (File.Exists(path) || !File.Exists(legacyPath))
+                return;
+
+            try
+            {
+                File.Copy(legacyPath, path, overwrite: false);
+            }
+            catch
+            {
+                // Ignore migration failures and fall back to a fresh store.
             }
         }
 

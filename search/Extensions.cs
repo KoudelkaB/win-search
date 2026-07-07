@@ -36,8 +36,8 @@ namespace search
                 text = $"{Program.Role,-6} " + text;
                 var log = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ") + text;
                 System.Diagnostics.Debug.WriteLine(log);
-                //Next to the exe, not the working directory - VS and shell launches then log to one place
-                File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "search.run.log"), log + "\n");
+                //Write to user data so unelevated runs never depend on install-folder access.
+                File.AppendAllText(UserDataPaths.For("search.run.log"), log + "\n");
                 if (msgBox) MessageBox.Show(text, "Debug", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch { } //Do not break application
