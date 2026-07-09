@@ -442,6 +442,11 @@ namespace search.Models
                 Searching = false;
                 Status = $"Search of '{text}' {result} => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")}";
                 UIRefreshRequested?.Invoke();
+
+                // The parallel search and its result aggregation can leave substantial
+                // short-lived data in Gen2/LOH. Compact it once the current search has
+                // published its final state, never for a search superseded by a newer one.
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             }
         }
 
@@ -661,14 +666,16 @@ namespace search.Models
                               });
                             var exeNodes = new ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
                             files.AsParallel().Where(x => !x.Value.IsDirectory && x.Key.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ForAll(x => exeNodes[x.Key] = x.Value);
-                            exes = new(exeNodes);
-
-                            // Clean freed memory
-                            GC.Collect(0);
+                            exes = new(exeNodes);                            
                         }
                         catch { }
+                        
                         //Update filtered files
                         await Update();
+
+                        // Clean freed memory
+                        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+
                         //Results are on screen now => later scans rebuild silently and swap at the end
                         firstLoadPublished = true;
                         //Quit when no new request arrived during the scan
