@@ -12,6 +12,10 @@ namespace search
     /// </summary>
     public partial class AutoCompleteTextBox : UserControl
     {
+        // Keeping a popup short prevents WPF from spending the typing path creating
+        // containers for an unbounded history.
+        const int MaxSuggestions = 50;
+
         public AutoCompleteTextBox() => InitializeComponent();
 
         new public bool Focus() => TextBox.Focus();
@@ -83,20 +87,23 @@ namespace search
             }
         }
 
+        IReadOnlyList<string> GetSuggestions()
+        {
+            if (SuggestionList == null) return Array.Empty<string>();
+
+            var text = TextBox.Text.Substring(0, TextBox.CaretIndex);
+            return SuggestionList()
+                .Where(p => string.IsNullOrWhiteSpace(text) || p.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Take(MaxSuggestions)
+                .ToArray();
+        }
+
         /// <summary>
         /// Update suggestions based on current text
         /// </summary>
         void UpdateSuggestions()
         {
-            if (SuggestionList == null) return;
-            
-            try
-            {
-                var text = TextBox.Text.Substring(0, TextBox.CaretIndex);
-                var suggestions = (string.IsNullOrWhiteSpace(text) ? SuggestionList() :
-                    SuggestionList().Where(p => p.Contains(text, StringComparison.OrdinalIgnoreCase))).ToList();
-                autoList.ItemsSource = suggestions;
-            }
+            try { autoList.ItemsSource = GetSuggestions(); }
             catch (Exception ex)
             {
                 $"AutoCompleteTextBox.UpdateSuggestions exception {ex}".Debug();
@@ -151,7 +158,7 @@ namespace search
             {
                 try
                 {
-                    var suggestions = SuggestionList().ToList();
+                    var suggestions = GetSuggestions();
                     if (suggestions.Count > 0)
                     {
                         autoList.ItemsSource = suggestions;
@@ -199,7 +206,7 @@ namespace search
                     // Show all suggestions if text is empty and dropdown not visible
                     if (TextBox.Text.Length == 0 && !autoList.IsVisible)
                     {
-                        autoList.ItemsSource = SuggestionList();
+                        autoList.ItemsSource = GetSuggestions();
                         if (autoList.Items.Count > 0)
                         {
                             autoList.SelectedIndex = 0;

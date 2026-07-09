@@ -17,14 +17,14 @@ namespace search.Models
         Dictionary<string, Info> items;
 
         /// <summary>
-        /// 100 most used filters
+        /// 1000 most used filters
         /// </summary>
-        public IEnumerable<string> MostUsed => items.OrderByDescending(x => x.Value.TimesUsed).Select(x => x.Key);
+        public IEnumerable<string> MostUsed => items.OrderByDescending(x => x.Value.TimesUsed).Take(1000).Select(x => x.Key);
 
         /// <summary>
-        /// 100 last used filters
+        /// 1000 last used filters
         /// </summary>
-        public IEnumerable<string> LastUsed => items.OrderByDescending(x => x.Value.LastUsed).Select(x => x.Key);
+        public IEnumerable<string> LastUsed => items.OrderByDescending(x => x.Value.LastUsed).Take(1000).Select(x => x.Key);
 
         /// <summary>
         /// Load filters from persistent storage

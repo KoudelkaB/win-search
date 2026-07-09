@@ -18,7 +18,10 @@
                    StaysOpen="False"  
                    Placement="Bottom">
                 <ListBox x:Name="autoList"    
-                         Visibility="Collapsed"
+                         Visibility="Collapsed" MaxHeight="300"
+                         ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling"
                          PreviewMouseUp="autoList_Clicked"/>
             </Popup>
         </StackPanel>

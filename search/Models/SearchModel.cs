@@ -23,6 +23,17 @@ namespace search.Models
         public string Status { get; set; }
 
         /// <summary>
+        /// Background drive-loading progress. Kept separate from Status so it does not
+        /// replace feedback for actions initiated by the user.
+        /// </summary>
+        public string LoadStatus { get; private set; }
+
+        /// <summary>
+        /// Supplementary drive-loading details shown when hovering LoadStatus.
+        /// </summary>
+        public string LoadStatusTooltip { get; private set; }
+
+        /// <summary>
         /// True while the filter update is running
         /// </summary>
         public bool Filtering { get; private set; }
@@ -391,18 +402,25 @@ namespace search.Models
         CancellationTokenSource lastFind = null;
         public async Task Find(string text = null, bool caseInsensitive = false, string encoding = "UTF-8")
         {
-            // Stop previous and start new find
-            var thisFind = new CancellationTokenSource();
-            Interlocked.Exchange(ref lastFind, thisFind)?.Cancel();
             if (String.IsNullOrWhiteSpace(text))
             {
+                // Typing in the Search box cancels a previous content search. Once its
+                // markings are already gone, doing it again must not refresh the whole
+                // result list for every keystroke.
+                Interlocked.Exchange(ref lastFind, null)?.Cancel();
+                if (searched.IsEmpty && !Searching) return;
                 searched.Clear();
                 Searching = false;
                 UIRefreshRequested?.Invoke();
                 return;
             }
+
+            // Stop previous and start new find
+            var thisFind = new CancellationTokenSource();
+            Interlocked.Exchange(ref lastFind, thisFind)?.Cancel();
             searched.Clear();
             Searching = true;
+            var watch = Stopwatch.StartNew();
 
             // Search
             var update = ContinualUpdate(thisFind.Token, () => Status = $"Searching for '{text}' - {searched.Count} files checked");
@@ -440,7 +458,7 @@ namespace search.Models
             if (ReferenceEquals(thisFind, lastFind)) //Do not overwrite state of a newer search
             {
                 Searching = false;
-                Status = $"Search of '{text}' {result} => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")}";
+                Status = $"Search of '{text}' {result} in {watch.Elapsed.TotalSeconds:0.0}s => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")}";
                 UIRefreshRequested?.Invoke();
 
                 // The parallel search and its result aggregation can leave substantial
@@ -608,11 +626,12 @@ namespace search.Models
             return Task.Run(async () =>
             {
                 Loading = true;
+                LoadStatusTooltip = null;
                 var watch = Stopwatch.StartNew();
                 var origins = new ConcurrentDictionary<string, MftOrigin>();
                 var progress = new CancellationTokenSource();
                 var progressTask = ContinualUpdate(progress.Token, () =>
-                    Status = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s",
+                    LoadStatus = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s",
                     refreshUI: false);
                 try
                 {
@@ -688,8 +707,9 @@ namespace search.Models
                     progress.Cancel();
                     await progressTask;
                     Loading = false;
-                    Status = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s" + OriginsInfo(origins);
-                    Status.Debug();
+                    LoadStatus = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s";
+                    LoadStatusTooltip = OriginsInfo(origins).Trim();
+                    LoadStatus.Debug();
                     UIRefreshRequested?.Invoke();
                 }
             });
@@ -742,7 +762,7 @@ namespace search.Models
         }
 
         /// <summary>
-        /// " (C: service, D: folder walk)" suffix for the load status, with a hint
+        /// "(C: service, D: folder walk)" tooltip text for the load status, with a hint
         /// when an NTFS drive had to be walked
         /// </summary>
         string OriginsInfo(ConcurrentDictionary<string, MftOrigin> origins)
