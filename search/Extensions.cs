@@ -80,11 +80,17 @@ namespace search
                 }
             }
 
+            var extension = Path.GetExtension(name);
+            var directExecutable = File.Exists(name) &&
+                (extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                 extension.Equals(".com", StringComparison.OrdinalIgnoreCase));
             return Process.Start(new ProcessStartInfo
             {
                 FileName = name,
                 Arguments = args,
-                UseShellExecute = true,
+                // Explicit application paths should bypass shell association and
+                // compatibility elevation. Document paths still use the shell.
+                UseShellExecute = !directExecutable,
                 CreateNoWindow = true,
                 WorkingDirectory = workDir
             });

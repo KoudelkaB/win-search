@@ -1,40 +1,48 @@
-# Win Search
+# File Search Manager
 
-Win Search is a fast Windows file search tool for people who prefer a keyboard-first workflow. It loads local drives, filters file and folder names as you type, searches inside matching files, and can perform common file operations directly from the result list.
+File Search Manager is a fast Windows desktop search and file-management application. It indexes local drives, filters millions of file-system entries as you type, searches file contents, and performs common file operations directly from the result list.
 
-The app is built as a WPF desktop application with an optional Windows service for prompt-free NTFS Master File Table indexing. Without the service, Win Search still works by using an elevated helper when allowed or by falling back to a normal folder walk.
+The WPF desktop app can read the NTFS Master File Table through an optional Windows service or an elevated helper. When neither is available, it falls back to a normal directory walk.
 
 ## Features
 
-- Fast indexing of NTFS drives through the MFT when the app is elevated, the broker is approved, or the optional service is installed.
-- Zero-service fallback for non-NTFS drives and locked-down environments.
-- Live filtering by file name, parent folder, path, or exact directory.
-- Content search across the filtered result set with UTF-8, UTF-16, and space-separated HEX input.
-- Keyboard-command panel for opening, copying, moving, deleting, renaming, zipping, unzipping, and selecting results.
-- Result colors for content search status: green for found, red for not found, black for not searched, blue for folders.
+- Fast NTFS indexing with live file-system updates and safe fallback scanning.
+- Filtering by name, immediate parent folder, full path, or exact directory.
+- UTF-8, UTF-16, case-insensitive, and hexadecimal content search.
+- Sortable Name, Size, Changed, Folder, and content-result columns.
+- Extended mouse selection plus keyboard-driven selection commands.
+- Drag files and directories to other applications from the Name or Folder column.
+- Drop files onto selected directories to copy, move, create symbolic links, or create hard links.
+- Drop files onto executables and scripts to pass them as arguments.
+- Standard `Ctrl+C`, `Ctrl+X`, and `Ctrl+V` shell-compatible clipboard operations.
+- Collision handling with overwrite, skip, rename, and apply-to-all choices.
+- Transfer progress, cancellation, and normal deletion through the Recycle Bin.
+- Dynamic **Open with** menu for installed compatible applications, including diff tools, 7-Zip, browsers, editors, and Ghostscript-family viewers.
+- ZIP and 7z creation, archive extraction, and browsing of supported archive contents.
 - Persistent filter/search history and window layout under `%LOCALAPPDATA%\win-search`.
 
 ## Install
 
 Download the latest installer from [GitHub Releases](https://github.com/KoudelkaB/win-search/releases).
 
-The installer is named `WinSearch-Setup-<version>.exe`. It installs the app to `Program Files`, adds a Start Menu shortcut, and offers an optional background service for faster NTFS indexing without a UAC prompt.
+The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and optionally installs the read-only `WinSearchService` for prompt-free NTFS indexing.
 
-After Win Search is accepted into the Windows Package Manager community repository, it will install with:
+After the package is accepted into the Windows Package Manager community repository:
 
 ```powershell
-winget install BohdanKoudelka.WinSearch
+winget install BohdanKoudelka.FileSearchManager
 ```
 
 ## Quick Start
 
-1. Start **Win Search**.
-2. If Windows asks for elevation, approve it for instant NTFS indexing or decline it to use service/folder-walk fallback.
-3. Type in **Filter** to reduce the result list.
-4. Type in **Search** and press `Enter` to search file contents inside the filtered results.
-5. Focus the result list and press a command key. The right-side **Hints** panel shows the available next keys.
+1. Start **File Search Manager**.
+2. Approve the optional startup elevation prompt for immediate MFT access, or decline it to use the installed service or folder-walk fallback.
+3. Type in **Filter** to narrow the result list.
+4. Type in **Search** and press `Enter` to search contents within the filtered files.
+5. Select results with the mouse or keyboard.
+6. Use the right-click menu, drag-and-drop, standard clipboard shortcuts, or commands shown in the **Hints** panel.
 
-See [docs/HELP.md](docs/HELP.md) for filter syntax, content search details, mouse actions, and the command map.
+See [docs/HELP.md](docs/HELP.md) for filter syntax and detailed controls.
 
 ## Build
 
@@ -44,7 +52,7 @@ Prerequisites:
 - .NET 10 SDK
 - Inno Setup 6 for installer builds
 
-Build the app:
+Build:
 
 ```powershell
 dotnet build search/search.sln
@@ -57,35 +65,39 @@ dotnet publish search/search.csproj -c Release -r win-x64 --self-contained true 
 dotnet publish search.service/search.service.csproj -c Release -r win-x64 --self-contained true -o publish/service
 ```
 
+The main publish output is `File Search Manager.exe`.
+
 Build the installer:
 
 ```powershell
 iscc installer/setup.iss
 ```
 
-Release versions come from git tags such as `v0.1.0`. The release workflow builds the installer and publishes a GitHub release when a `v*` tag is pushed.
+Release versions come from `v*` git tags. The release workflow publishes the installer and SHA-256 checksum.
 
 ## winget Publishing
 
 The winget package identifier is:
 
 ```text
-BohdanKoudelka.WinSearch
+BohdanKoudelka.FileSearchManager
 ```
 
-This repository includes a manifest generator:
+Generate manifests with:
 
 ```powershell
 .\tools\New-WingetManifest.ps1 `
   -Version 0.1.0 `
-  -InstallerUrl https://github.com/KoudelkaB/win-search/releases/download/v0.1.0/WinSearch-Setup-0.1.0.exe `
-  -InstallerPath .\installer\Output\WinSearch-Setup-0.1.0.exe
+  -InstallerUrl https://github.com/KoudelkaB/win-search/releases/download/v0.1.0/FileSearchManager-Setup-0.1.0.exe `
+  -InstallerPath .\installer\Output\FileSearchManager-Setup-0.1.0.exe
 ```
 
-The generated files are meant to be copied into a fork of [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) and submitted as a pull request. See [docs/WINGET.md](docs/WINGET.md) for the release and submission checklist.
+See [docs/WINGET.md](docs/WINGET.md) for the complete release checklist.
+
+## Compatibility Notes
+
+The repository name, internal `search` namespace, optional service name `WinSearchService`, installer AppId, and `%LOCALAPPDATA%\win-search` data directory remain unchanged so existing installations and settings continue to upgrade cleanly.
 
 ## License
 
-Win Search is licensed under the [MIT License](LICENSE).
-
-Third-party dependency notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+File Search Manager is licensed under the [MIT License](LICENSE). Third-party dependency notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

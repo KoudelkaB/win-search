@@ -55,7 +55,7 @@ namespace search
 
         public static string Safari => GetPath("safari.exe");
 
-        public static string AdobeReader => "AcroRd32.exe";
+        public static string AdobeReader => GetPath("AcroRd32.exe", "Acrobat.exe");
 
         public static string WebBrowser => GetPath("firefox.exe", "chrome.exe", "msedge.exe", "iexplore.exe", "opera.exe", "safari.exe") ?? TextViever;
 
@@ -67,6 +67,10 @@ namespace search
         public static string GhostScript => GetPath("gswin64c.exe", "gswin32c.exe");
 
         public static string GhostXps => GetPath("gxpswin64.exe", "gxpswin32.exe");
+
+        public static string SevenZip => GetPath("7z.exe", "7zz.exe");
+
+        public static string SevenZipFileManager => GetPath("7zFM.exe");
 
         /// <summary>
         /// Command line for displaying poscript file
@@ -110,13 +114,20 @@ namespace search
         /// </summary>
         /// <param name="path"></param>
         /// <returns></returns>
-        public static string ViewerFor(string path) =>
-            Path.GetExtension(path).ToLower() switch
+        public static string ViewerFor(string path)
+        {
+            var extension = Path.GetExtension(path).ToLowerInvariant();
+            if (extension == ".prn")
+            {
+                try { return path.PrnViewerFor() ?? TextViever; }
+                catch { return TextViever; }
+            }
+            return extension switch
             {
                 ".ps" => DisplayPostScript,
-                ".prn" => path.PrnViewerFor() ?? TextViever,
                 ".htm" or ".html" or ".xml" or ".json" or ".pdf" => WebBrowser,
                 _ => TextViever
             };
+        }
     }
 }

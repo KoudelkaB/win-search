@@ -4,7 +4,7 @@
        (single source of truth): MinVer stamps Assembly/File/InformationalVersion from
        the latest v* tag at build time; untagged commits get a pre-release version. -->
   <PropertyGroup>
-    <Product>Win Search</Product>
+    <Product>File Search Manager</Product>
     <Authors>Bohdan Koudelka</Authors>
     <Company>Bohdan Koudelka</Company>
     <Copyright>Copyright (c) 2026 Bohdan Koudelka</Copyright>

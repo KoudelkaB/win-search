@@ -5,11 +5,10 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:search"
         mc:Ignorable="d"
-        Title="Search files" Height="450" Width="800"
+        Title="File Search Manager" Height="450" Width="800"
         Loaded="Window_Loaded" PreviewKeyDown="Window_KeyDown">
     <Window.Resources>
         <local:Bool2VisibilityConverter x:Key="Bool2VisibilityConverter" />
-        <local:DirectoryConverter x:Key="DirectoryConverter" />
         <local:IsDirectoryBooleanConverter x:Key="IsDirectoryBooleanConverter" />
         <local:IsFoundBooleanConverter x:Key="IsFoundBooleanConverter" />
         <!-- Green dot when idle, spinning blue dashed circle while running (bind the flag to Tag) -->
@@ -100,9 +99,31 @@
         </Grid>
         <ListView x:Name="filesView" ItemsSource="{Binding Items}" GridViewColumnHeader.Click="ListViewColumnHeader_Click" SelectionMode="Extended"
                   PreviewKeyDown="ListView_KeyDown" PreviewKeyUp="ListView_PreviewKeyUp"
+                  PreviewMouseMove="FilesView_PreviewMouseMove"
+                  PreviewMouseLeftButtonUp="FilesView_PreviewMouseLeftButtonUp"
                   VirtualizingPanel.IsVirtualizing="True"
                   VirtualizingPanel.VirtualizationMode="Recycling"
                   VirtualizingPanel.CacheLength="1,1" VirtualizingPanel.CacheLengthUnit="Page">
+            <ListView.ContextMenu>
+                <ContextMenu Opened="FilesContextMenu_Opened">
+                    <MenuItem Header="Open" InputGestureText="Enter" Click="ContextOpen_Click"/>
+                    <MenuItem Header="Open with" Tag="OpenWith"/>
+                    <MenuItem Header="Open containing folder" Click="ContextOpenFolder_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Copy" InputGestureText="Ctrl+C" Click="ContextCopy_Click"/>
+                    <MenuItem Header="Cut" InputGestureText="Ctrl+X" Click="ContextCut_Click"/>
+                    <MenuItem Header="Paste…" InputGestureText="Ctrl+V" Click="ContextPaste_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Copy path" Click="ContextCopyPath_Click"/>
+                    <MenuItem Header="Rename…" InputGestureText="F2" Click="ContextRename_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Zip" InputGestureText="Z" Tag="Zip" Click="ContextZip_Click"/>
+                    <MenuItem Header="Create 7z archive" Tag="Zip7z" Click="ContextZip7z_Click"/>
+                    <MenuItem Header="Unzip" InputGestureText="U" Tag="Unzip" Click="ContextUnzip_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Move to Recycle Bin" InputGestureText="Delete" Click="ContextDelete_Click"/>
+                </ContextMenu>
+            </ListView.ContextMenu>
             <ListView.ItemContainerStyle>
                 <Style TargetType="{x:Type ListViewItem}">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -145,9 +166,12 @@
                     <GridViewColumn Header="Name" Width="Auto">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding Name}"
-                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}"
-                                           PreviewMouseLeftButtonDown="Name_PreviewMouseDoubleClick" />
+                                <Border Tag="Name" Background="Transparent" AllowDrop="True"
+                                        PreviewMouseLeftButtonDown="Name_PreviewMouseDoubleClick"
+                                        DragOver="FileCell_DragOver" DragLeave="FileCell_DragLeave" Drop="FileCell_Drop">
+                                    <TextBlock Text="{Binding Name}"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}" />
+                                </Border>
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
@@ -162,9 +186,12 @@
                     <GridViewColumn Header="Folder" Width="Auto">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding FullName, Converter={StaticResource DirectoryConverter}}"
-                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}"
-                                           PreviewMouseLeftButtonDown="Folder_PreviewMouseDoubleClick"/>
+                                <Border Tag="Folder" Background="Transparent" AllowDrop="True"
+                                        PreviewMouseLeftButtonDown="Folder_PreviewMouseDoubleClick"
+                                        DragOver="FileCell_DragOver" DragLeave="FileCell_DragLeave" Drop="FileCell_Drop">
+                                    <TextBlock Text="{Binding Folder}"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}" />
+                                </Border>
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>

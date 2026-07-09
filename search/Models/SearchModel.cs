@@ -265,6 +265,14 @@ namespace search.Models
                 case nameof(INode.LastChangeTime): key = (a, b) => a.LastChangeTime.CompareTo(b.LastChangeTime); ascending = !up; break;
                 case nameof(INode.LastAccessTime): key = (a, b) => a.LastAccessTime.CompareTo(b.LastAccessTime); ascending = !up; break;
                 case nameof(INode.FullName): key = (a, b) => string.Compare(a.FullName, b.FullName); ascending = up; break;
+                case nameof(INode.Folder):
+                    key = (a, b) =>
+                    {
+                        var folderComparison = string.Compare(a.Folder, b.Folder);
+                        return folderComparison != 0 ? folderComparison : string.Compare(a.Name, b.Name);
+                    };
+                    ascending = up;
+                    break;
                 default: return null;
             }
             return ascending ? key : (a, b) => key(b, a);
@@ -310,6 +318,7 @@ namespace search.Models
                             case nameof(INode.LastChangeTime): addSort(x => x.LastChangeTime, !up); break;
                             case nameof(INode.LastAccessTime): addSort(x => x.LastAccessTime, !up); break;
                             case nameof(INode.FullName): addSort(x => x.FullName, up); break; //TODO: Sord without a need to have x.FullName i.e. by parentId chain
+                            case nameof(INode.Folder): addSort(x => (x.Folder, x.Name), up); break;
                         }
                     }
                     return src.Take(MaxItems).ToList(); // Take just the first 100 000
@@ -740,7 +749,7 @@ namespace search.Models
                 _ => "folder walk"
             }));
             var hint = ntfsWalked
-                ? " - install the Win Search service or accept the admin prompt for instant NTFS indexing"
+                ? " - install the File Search Manager service or accept the admin prompt for instant NTFS indexing"
                 : "";
             return $" ({parts}){hint}";
         }
@@ -827,9 +836,35 @@ namespace search.Models
         {
             if (nodes.FirstOrDefault() == null) return null;
             var zip = (nodes[0].FullName + (seven || call7zip ? ".7z" : ".zip")).NewOutFile();
-            var t = WaitForFileCreationIf(zip, () => true);
-            zip.Zip(nodes.Select(n => n.FullName).ToArray());
-            return await t;
+            var paths = nodes.Select(n => n.FullName).ToArray();
+            Exception failure = null;
+            try
+            {
+                // Register the watcher before writing, but perform archive creation
+                // on a worker thread so large directory trees do not freeze the UI.
+                return await Task.Run(() => WaitForFileCreationIf(zip, () =>
+                {
+                    try
+                    {
+                        ZipExtensions.Zip(zip, call7zip, paths);
+                        return File.Exists(zip);
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = ex;
+                        $"Zip failed: {ex}".Debug();
+                        return false;
+                    }
+                }));
+            }
+            catch (OperationCanceledException) when (failure != null)
+            {
+                throw new InvalidOperationException(failure.Message, failure);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
         }
 
         public IEnumerable<INode> ToTextNodes(params INode[] nodes)

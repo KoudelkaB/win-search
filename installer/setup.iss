@@ -1,15 +1,15 @@
-; Win Search installer.
+; File Search Manager installer.
 ; Build inputs: publish the two projects first (paths relative to this script):
 ;   dotnet publish ..\search\search.csproj                 -c Release -r win-x64 --self-contained true -o ..\publish\app
 ;   dotnet publish ..\search.service\search.service.csproj -c Release -r win-x64 --self-contained true -o ..\publish\service
 ; Then: ISCC.exe [/DMyAppVersion=1.2.3] setup.iss
-; Without /DMyAppVersion the version is read from the published search.exe
+; Without /DMyAppVersion the version is read from the published File Search Manager.exe
 ; (which MinVer stamped from the git tag - the single source of truth).
 
 #ifndef MyAppVersion
-  #define MyAppVersion GetVersionNumbersString("..\publish\app\search.exe")
+  #define MyAppVersion GetVersionNumbersString("..\publish\app\File Search Manager.exe")
 #endif
-#define MyAppName "Win Search"
+#define MyAppName "File Search Manager"
 #define MyPublisher "Bohdan Koudelka"
 #define MyServiceName "WinSearchService"
 #define MyServiceExe "{app}\service\search.service.exe"
@@ -23,7 +23,7 @@ AppPublisher={#MyPublisher}
 AppPublisherURL=https://github.com/KoudelkaB/win-search
 AppSupportURL=https://github.com/KoudelkaB/win-search/issues
 AppUpdatesURL=https://github.com/KoudelkaB/win-search/releases
-DefaultDirName={autopf}\Win Search
+DefaultDirName={autopf}\File Search Manager
 ; Admin is required once for the Program Files install (and to register the optional
 ; service); the app itself then runs unelevated
 PrivilegesRequired=admin
@@ -32,12 +32,12 @@ ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\LICENSE
 SetupIconFile=..\search\app.ico
 OutputDir=Output
-OutputBaseFilename=WinSearch-Setup-{#MyAppVersion}
+OutputBaseFilename=FileSearchManager-Setup-{#MyAppVersion}
 CloseApplications=yes
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
-UninstallDisplayIcon={app}\search.exe
+UninstallDisplayIcon={app}\File Search Manager.exe
 
 [Files]
 ; The two self-contained publishes MUST stay in separate directories -
@@ -50,15 +50,25 @@ Source: "..\README.md"; DestDir: "{app}"
 Source: "..\docs\HELP.md"; DestDir: "{app}\Docs"
 Source: "..\docs\WINGET.md"; DestDir: "{app}\Docs"
 
+[InstallDelete]
+; Remove main-binary names left by releases before the File Search Manager rename.
+Type: files; Name: "{app}\search.exe"
+Type: files; Name: "{app}\search.dll"
+Type: files; Name: "{app}\search.deps.json"
+Type: files; Name: "{app}\search.runtimeconfig.json"
+Type: files; Name: "{app}\search.pdb"
+Type: files; Name: "{autoprograms}\Win Search.lnk"
+Type: files; Name: "{autoprograms}\Win Search Help.lnk"
+
 [Tasks]
-; Off by default - most users never need it. The service lets Win Search index NTFS
+; Off by default - most users never need it. The service lets File Search Manager index NTFS
 ; drives instantly without any admin prompt; without it the app still works (accept the
 ; startup admin prompt for instant indexing, or it falls back to a slower folder walk).
 Name: "installservice"; Description: "Install the background service for prompt-free NTFS indexing (advanced; most users can skip this)"; Flags: unchecked
 
 [Icons]
-Name: "{autoprograms}\Win Search"; Filename: "{app}\search.exe"
-Name: "{autoprograms}\Win Search Help"; Filename: "{win}\notepad.exe"; Parameters: """{app}\Docs\HELP.md"""
+Name: "{autoprograms}\File Search Manager"; Filename: "{app}\File Search Manager.exe"
+Name: "{autoprograms}\File Search Manager Help"; Filename: "{win}\notepad.exe"; Parameters: """{app}\Docs\HELP.md"""
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcStop"
@@ -109,20 +119,20 @@ begin
     { sc.exe REQUIRES the space after each option= }
     Code := Exec2(ExpandConstant('{sys}\sc.exe'),
       'create {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') +
-      '" start= auto obj= LocalSystem DisplayName= "Win Search MFT Service"');
+      '" start= auto obj= LocalSystem DisplayName= "File Search Manager MFT Service"');
     if Code = 1073 then { ERROR_SERVICE_EXISTS - upgrade: repoint the binary }
       Code := Exec2(ExpandConstant('{sys}\sc.exe'),
         'config {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') + '" start= auto');
     if Code = 0 then
     begin
       Exec2(ExpandConstant('{sys}\sc.exe'),
-        'description {#MyServiceName} "Provides read-only NTFS MFT data to Win Search so it can index drives without elevation."');
+        'description {#MyServiceName} "Provides read-only NTFS MFT data to File Search Manager so it can index drives without elevation."');
       Code := Exec2(ExpandConstant('{sys}\sc.exe'), 'start {#MyServiceName}');
     end;
     if Code <> 0 then
       { Never abort the install - the app still works via the admin prompt or the folder scan }
-      MsgBox('The Win Search service could not be installed or started (code ' + IntToStr(Code) + ').' + #13#10 +
-             'Win Search will still work: accept the admin prompt at startup for instant indexing, ' +
+      MsgBox('The File Search Manager service could not be installed or started (code ' + IntToStr(Code) + ').' + #13#10 +
+             'File Search Manager will still work: accept the admin prompt at startup for instant indexing, ' +
              'or it falls back to a slower folder scan.', mbInformation, MB_OK);
   end;
 end;

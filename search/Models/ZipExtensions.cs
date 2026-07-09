@@ -115,15 +115,21 @@ namespace search.Models
         {
             if (call7zip)
             {
-                var args = $"a -tzip \"{zip}\" {string.Join(" ", files.Select(x => $"\"{x}\""))}";
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                var sevenZip = Apps.SevenZip;
+                if (string.IsNullOrWhiteSpace(sevenZip))
+                    throw new FileNotFoundException("7-Zip command-line executable (7z.exe or 7zz.exe) was not found.");
+                var archiveType = zip.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? "7z" : "zip";
+                var args = $"a -t{archiveType} \"{zip}\" {string.Join(" ", files.Select(x => $"\"{x}\""))}";
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "7z.exe",
+                    FileName = sevenZip,
                     Arguments = args,
                     UseShellExecute = false,
-                    RedirectStandardOutput = true,
                     CreateNoWindow = true
-                }).WaitForExit();
+                }) ?? throw new InvalidOperationException("7-Zip could not be started.");
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                    throw new InvalidOperationException($"7-Zip exited with code {process.ExitCode}.");
                 return;
             }
 

@@ -20,14 +20,22 @@ namespace search
         //To be deleted on App closeup
         static readonly int pid = Process.GetCurrentProcess().Id;
         static readonly string dirName = "search.";
+        static readonly string clipboardDirName = "search.clipboard.";
         public static readonly string TempFolder = Path.Combine(Path.GetTempPath(), dirName + pid);
+        public static readonly string ClipboardTempFolder = Path.Combine(Path.GetTempPath(), clipboardDirName + pid);
         /// <summary>
         /// Create unique temporal folder in App temp directory (will be deleted autmaticly)
         /// </summary>
         /// <returns></returns>
         public static string CreateTempFolder()
+            => CreateTempFolder(TempFolder);
+
+        public static string CreateClipboardTempFolder()
+            => CreateTempFolder(ClipboardTempFolder);
+
+        static string CreateTempFolder(string root)
         {
-            var path = Path.Combine(App.TempFolder, DateTime.Now.ToString("MMdd-HHmmss"));
+            var path = Path.Combine(root, $"{DateTime.Now:MMdd-HHmmss}-{Guid.NewGuid():N}");
             Directory.CreateDirectory(path);
             return path;
         }
@@ -44,8 +52,15 @@ namespace search
                     }
                     catch
                     {
-                        //Clean temp folder if the process not running anymore
-                        try { Directory.Delete(d, true); } catch { }
+                        // Clipboard materializations survive app exit and quick
+                        // restarts so the shell clipboard remains usable.
+                        try
+                        {
+                            var isClipboard = Path.GetFileName(d).StartsWith(clipboardDirName, StringComparison.OrdinalIgnoreCase);
+                            if (!isClipboard || Directory.GetCreationTimeUtc(d) < DateTime.UtcNow.AddDays(-1))
+                                Directory.Delete(d, true);
+                        }
+                        catch { }
                     }
                 }
             }

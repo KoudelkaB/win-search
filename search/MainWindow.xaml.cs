@@ -20,6 +20,7 @@ using System.Windows.Navigation;
 using System.Windows.Shapes;
 using search.Models;
 using SharpCompress.Common;
+using IOPath = System.IO.Path;
 
 namespace search
 {
@@ -33,6 +34,35 @@ namespace search
         bool updatingFolderWidth;
         bool columnWidthHandlersAttached;
         WindowLayout pendingLayout;
+        Point? dragStart;
+        INode dragSourceNode;
+        string dragSourceColumn;
+        bool preserveSelectionOnMouseUp;
+        bool dragStarted;
+        Border dropHoverBorder;
+        static readonly HashSet<string> ExecutableExtensions = new(
+            new[] { ".exe", ".com", ".bat", ".cmd", ".msi", ".ps1", ".vbs", ".vbe",
+                    ".js", ".jse", ".wsf", ".wsh", ".msc", ".lnk" }
+                .Concat((Environment.GetEnvironmentVariable("PATHEXT") ?? "")
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries)),
+            StringComparer.OrdinalIgnoreCase);
+        static readonly HashSet<string> ArchiveExtensions = new(
+            new[] { ".zip", ".7z", ".rar", ".tar", ".gz", ".gzip", ".tgz",
+                    ".bz2", ".bzip2", ".tbz", ".tbz2", ".xz", ".txz", ".lz", ".lzip" },
+            StringComparer.OrdinalIgnoreCase);
+        static readonly HashSet<string> TextExtensions = new(
+            new[] { ".txt", ".log", ".csv", ".ini", ".cfg", ".conf", ".json", ".xml",
+                    ".yaml", ".yml", ".md", ".cs", ".xaml", ".csproj", ".sln", ".ps1",
+                    ".bat", ".cmd", ".html", ".htm", ".sql", ".prn" },
+            StringComparer.OrdinalIgnoreCase);
+        static readonly HashSet<string> WebExtensions = new(
+            new[] { ".htm", ".html", ".xml", ".json", ".pdf", ".svg", ".png", ".jpg",
+                    ".jpeg", ".gif", ".webp", ".txt" },
+            StringComparer.OrdinalIgnoreCase);
+        static readonly HashSet<string> CodeExtensions = new(
+            TextExtensions.Concat(new[] { ".vb", ".cpp", ".c", ".h", ".hpp", ".js", ".ts",
+                                          ".css", ".scss", ".py", ".java", ".vcxproj", ".vbproj" }),
+            StringComparer.OrdinalIgnoreCase);
 
         public MainWindow()
         {
@@ -126,12 +156,15 @@ namespace search
                 }),
                 (Key.LeftCtrl,"CTRL", new CommandTree[] {
                     (Key.A, "Select/Unselect all", (n,a) => filesView.ToogleSelectAll()),
+                    (Key.C, "Copy", (n,a) => Copy(n,a)),
                     (Key.D, "Filter Directores of selected", async (n,a) => await FilterFolders(n.Select(x => Model.GetParent(x)).ToArray())),
                     (Key.F, "Filter selected Folders", async (n,a) => await FilterFolders(n.Where(n => n.IsDirectory).ToArray())),
-                    (Key.N, "Create new folders in selected", (n,a) => NewFolders(n,a),Enter("folder name"))
+                    (Key.N, "Create new folders in selected", (n,a) => NewFolders(n,a),Enter("folder name")),
+                    (Key.V, "Paste (choose action)", async (n,a) => await PasteWithDialog(n)),
+                    (Key.X, "Cut", (n,a) => Copy(n,a,true))
                 }),
                 (Key.LeftShift,"Shift", new CommandTree[] {
-                    (Key.Delete, "Force delete - do not confirm", async (n,a)=>await Delete(n,false)),
+                    (Key.Delete, "Permanently delete - do not confirm", async (n,a)=>await Delete(n,false,true)),
                 }),
                 (Key.RightShift, "Focus filter", (n,a)=>filterTextBox.Focus()),
                 (Key.U, "Unzip archive", async (n,a)=>await Unzip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")}),
@@ -550,28 +583,278 @@ namespace search
 
         async void Name_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            // TextBlock is not a Control => double click detected by ClickCount on PreviewMouseLeftButtonDown
-            if (e.ClickCount == 2 && sender is FrameworkElement l && l.ParentControl() is ListViewItem i && i.Content is INode n)
+            if (sender is FrameworkElement l && l.ParentControl() is ListViewItem i && i.Content is INode n)
             {
-                filters.Used(filterTextBox.Text);
-                await FilterFolders(n);
-                e.Handled = true;
+                BeginMouseDrag(e, i, n, "Name");
+                if (e.ClickCount == 2)
+                {
+                    CancelMouseDrag();
+                    filters.Used(filterTextBox.Text);
+                    await FilterFolders(n);
+                    e.Handled = true;
+                }
             }
         }
 
         void Folder_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            if (e.ClickCount == 2 && sender is FrameworkElement l && l.ParentControl() is ListViewItem i && i.Content is INode n)
+            if (sender is FrameworkElement l && l.ParentControl() is ListViewItem i && i.Content is INode n)
             {
-                filters.Used(filterTextBox.Text);
-                Apps.Explorer.Open($"/select,\"{n.GetFileOrTempPath()}\"");
+                BeginMouseDrag(e, i, n, "Folder");
+                if (e.ClickCount == 2)
+                {
+                    CancelMouseDrag();
+                    filters.Used(filterTextBox.Text);
+                    Apps.Explorer.Open($"/select,\"{n.GetFileOrTempPath()}\"");
+                    e.Handled = true;
+                }
+            }
+        }
+
+        void BeginMouseDrag(MouseButtonEventArgs e, ListViewItem item, INode node, string column)
+        {
+            if (e.ChangedButton != MouseButton.Left || e.ClickCount != 1)
+                return;
+
+            dragStart = e.GetPosition(filesView);
+            dragSourceNode = node;
+            dragSourceColumn = column;
+            dragStarted = false;
+
+            // WPF normally collapses an extended selection as soon as a selected
+            // row is pressed. Preserve it long enough to permit a multi-item drag;
+            // a plain click still collapses it in the mouse-up handler below.
+            preserveSelectionOnMouseUp =
+                Keyboard.Modifiers == ModifierKeys.None &&
+                item.IsSelected &&
+                filesView.SelectedItems.Count > 1;
+            if (preserveSelectionOnMouseUp)
+            {
+                item.Focus();
                 e.Handled = true;
             }
         }
 
+        void FilesView_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed || dragStart == null || dragSourceNode == null)
+                return;
+
+            var position = e.GetPosition(filesView);
+            if (Math.Abs(position.X - dragStart.Value.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(position.Y - dragStart.Value.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            var nodes = filesView.SelectedItems.Contains(dragSourceNode)
+                ? filesView.SelectedItems.Cast<INode>().ToArray()
+                : new[] { dragSourceNode };
+            var paths = dragSourceColumn == "Folder"
+                ? nodes.Select(n => IOPath.GetDirectoryName(n.FullName))
+                : nodes.Select(n => n.GetFileOrTempPath());
+            var existingPaths = paths
+                .Where(p => !string.IsNullOrWhiteSpace(p) && (File.Exists(p) || Directory.Exists(p)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            dragStarted = true;
+            preserveSelectionOnMouseUp = false;
+            CancelMouseDrag(keepDragStarted: true);
+            if (existingPaths.Length == 0)
+            {
+                Model.Status = "Nothing available to drag";
+                return;
+            }
+
+            var data = new DataObject();
+            data.SetData(DataFormats.FileDrop, existingPaths);
+            try
+            {
+                DragDrop.DoDragDrop(filesView, data, DragDropEffects.Copy);
+            }
+            catch (Exception ex)
+            {
+                Model.Status = $"Drag failed: {ex.Message}";
+            }
+            finally
+            {
+                dragStarted = false;
+            }
+        }
+
+        void FilesView_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            var clickedNode = dragSourceNode;
+            if (preserveSelectionOnMouseUp && !dragStarted && clickedNode != null)
+            {
+                filesView.UnselectAll();
+                filesView.SelectedItem = clickedNode;
+                e.Handled = true;
+            }
+            CancelMouseDrag();
+        }
+
+        void CancelMouseDrag(bool keepDragStarted = false)
+        {
+            dragStart = null;
+            dragSourceNode = null;
+            dragSourceColumn = null;
+            preserveSelectionOnMouseUp = false;
+            if (!keepDragStarted)
+                dragStarted = false;
+        }
+
+        void FileCell_DragOver(object sender, DragEventArgs e)
+        {
+            var sources = GetDropSources(e);
+            var validTarget = sources.Length > 0 &&
+                (TryGetExecutableDrop(sender, out _) || TryGetDropTargets(sender, out _));
+            if (sender is not Border border || !validTarget)
+            {
+                ClearDropHighlight();
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            if (dropHoverBorder != border)
+            {
+                ClearDropHighlight();
+                dropHoverBorder = border;
+                dropHoverBorder.Background = SystemColors.HighlightBrush;
+                dropHoverBorder.Opacity = 0.35;
+            }
+            e.Effects = DragDropEffects.Copy;
+            e.Handled = true;
+        }
+
+        void FileCell_DragLeave(object sender, DragEventArgs e)
+        {
+            if (ReferenceEquals(sender, dropHoverBorder))
+                ClearDropHighlight();
+        }
+
+        async void FileCell_Drop(object sender, DragEventArgs e)
+        {
+            ClearDropHighlight();
+            var sources = GetDropSources(e);
+            if (sources.Length == 0)
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            e.Effects = DragDropEffects.Copy;
+            e.Handled = true;
+            if (TryGetExecutableDrop(sender, out var executable))
+            {
+                try
+                {
+                    var start = new ProcessStartInfo
+                    {
+                        FileName = executable,
+                        UseShellExecute = true,
+                        WorkingDirectory = IOPath.GetDirectoryName(executable)
+                    };
+                    foreach (var source in sources)
+                        start.ArgumentList.Add(source);
+                    Process.Start(start);
+                    Model.Status = $"Started \"{executable}\" with {sources.Length} dropped argument(s)";
+                }
+                catch (Exception ex)
+                {
+                    Model.Status = $"Could not start \"{executable}\": {ex.Message}";
+                }
+                return;
+            }
+
+            if (!TryGetDropTargets(sender, out var targets) ||
+                !TryChooseTransferAction(sources.Length, targets.Length, FileTransferAction.Copy, out var action))
+            {
+                e.Effects = DragDropEffects.None;
+                return;
+            }
+            await TransferPaths(sources, targets, action);
+        }
+
+        static string[] GetDropSources(DragEventArgs e)
+        {
+            return e.Data.GetDataPresent(DataFormats.FileDrop) &&
+                   e.Data.GetData(DataFormats.FileDrop) is string[] dropped
+                ? dropped.Where(p => File.Exists(p) || Directory.Exists(p))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
+        }
+
+        bool TryGetDropTargets(object sender, out string[] targets)
+        {
+            targets = Array.Empty<string>();
+            if (sender is not FrameworkElement cell ||
+                cell.ParentControl() is not ListViewItem hovered ||
+                hovered.Content is not INode hoveredNode)
+                return false;
+
+            var nodes = hovered.IsSelected
+                ? filesView.SelectedItems.Cast<INode>()
+                : new[] { hoveredNode };
+            targets = ((cell.Tag as string) == "Folder"
+                    ? nodes.Select(n => IOPath.GetDirectoryName(n.FullName))
+                    : nodes.Where(n => n.IsDirectory).Select(n => n.FullName))
+                .Where(p => !string.IsNullOrWhiteSpace(p) && Directory.Exists(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return targets.Length > 0;
+        }
+
+        static bool TryGetExecutableDrop(object sender, out string executable)
+        {
+            executable = null;
+            if (sender is not FrameworkElement { Tag: "Name" } cell ||
+                cell.ParentControl() is not ListViewItem { Content: INode node } ||
+                node.IsDirectory || !File.Exists(node.FullName) || !IsExecutable(node.FullName))
+                return false;
+            executable = node.FullName;
+            return true;
+        }
+
+        static bool IsExecutable(string path)
+            => ExecutableExtensions.Contains(IOPath.GetExtension(path));
+
+        static bool IsDescendant(string candidate, string directory)
+        {
+            var parent = IOPath.GetFullPath(directory).TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar);
+            var child = IOPath.GetFullPath(candidate).TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar);
+            return child.StartsWith(parent + IOPath.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        void ClearDropHighlight()
+        {
+            if (dropHoverBorder == null)
+                return;
+            dropHoverBorder.Background = Brushes.Transparent;
+            dropHoverBorder.Opacity = 1;
+            dropHoverBorder = null;
+        }
+
+        bool TryChooseTransferAction(
+            int sourceCount,
+            int destinationCount,
+            FileTransferAction defaultAction,
+            out FileTransferAction action)
+        {
+            var dialog = new FileTransferDialog(sourceCount, destinationCount, defaultAction) { Owner = this };
+            if (dialog.ShowDialog() != true)
+            {
+                action = default;
+                return false;
+            }
+            action = dialog.Action;
+            return true;
+        }
+
         async void ListViewItem_RightButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if ((sender as ListViewItem).Content is INode n)
+            if (sender is ListViewItem item && item.Content is INode n)
             {
                 //CTRL + click => open the file by windows default action
                 if (Keyboard.IsKeyDown(Key.RightCtrl) || Keyboard.IsKeyDown(Key.LeftCtrl))
@@ -580,8 +863,151 @@ namespace search
                     await Open(n);
                     e.Handled = true;
                 }
+                else if (!item.IsSelected)
+                {
+                    filesView.UnselectAll();
+                    item.IsSelected = true;
+                    item.Focus();
+                }
             }
         }
+
+        INode[] ContextNodes() => filesView.SelectedItems.Cast<INode>().ToArray();
+
+        async void ContextOpen_Click(object sender, RoutedEventArgs e)
+            => await Open(null, ContextNodes());
+
+        void ContextOpenFolder_Click(object sender, RoutedEventArgs e)
+        {
+            foreach (var node in ContextNodes())
+                Apps.Explorer.Open($"/select,\"{node.GetFileOrTempPath()}\"");
+        }
+
+        void ContextCopy_Click(object sender, RoutedEventArgs e)
+            => Copy(ContextNodes(), Array.Empty<Key>());
+
+        void ContextCut_Click(object sender, RoutedEventArgs e)
+            => Copy(ContextNodes(), Array.Empty<Key>(), true);
+
+        async void ContextPaste_Click(object sender, RoutedEventArgs e)
+            => await PasteWithDialog(ContextNodes());
+
+        void ContextCopyPath_Click(object sender, RoutedEventArgs e)
+            => SetCpliboard(string.Join("\r\n", ContextNodes().Select(n => n.FullName)));
+
+        void ContextRename_Click(object sender, RoutedEventArgs e)
+            => Rename(ContextNodes(), new[] { Key.None });
+
+        async void ContextDelete_Click(object sender, RoutedEventArgs e)
+            => await Delete(ContextNodes());
+
+        void FilesContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ContextMenu menu)
+                return;
+            var nodes = ContextNodes();
+            PopulateOpenWith(menu, nodes);
+            var canZip = nodes.Length > 0 &&
+                nodes.All(n => File.Exists(n.FullName) || Directory.Exists(n.FullName));
+            foreach (var item in menu.Items.OfType<MenuItem>().Where(i => Equals(i.Tag, "Zip")))
+                item.IsEnabled = canZip;
+            foreach (var item in menu.Items.OfType<MenuItem>().Where(i => Equals(i.Tag, "Zip7z")))
+                item.Visibility = canZip && !string.IsNullOrWhiteSpace(Apps.SevenZip)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            foreach (var item in menu.Items.OfType<MenuItem>().Where(i => Equals(i.Tag, "Unzip")))
+                item.Visibility = nodes.Length > 0 && nodes.All(CanUnzip)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        void PopulateOpenWith(ContextMenu menu, INode[] nodes)
+        {
+            var openWith = menu.Items.OfType<MenuItem>().FirstOrDefault(i => Equals(i.Tag, "OpenWith"));
+            if (openWith == null)
+                return;
+            openWith.Items.Clear();
+            if (nodes.Length == 0)
+            {
+                openWith.IsEnabled = false;
+                return;
+            }
+
+            var allFiles = nodes.All(n => !n.IsDirectory);
+            var extensions = nodes.Select(n => IOPath.GetExtension(n.Name)).ToArray();
+            void Add(string label, Key key, string executable, Func<string, bool> supports)
+            {
+                if (!allFiles || string.IsNullOrWhiteSpace(executable) || !extensions.All(supports))
+                    return;
+                var item = new MenuItem { Header = label, ToolTip = executable };
+                item.Click += async (_, __) => await OpenIn(nodes, new[] { key });
+                openWith.Items.Add(item);
+            }
+
+            var diffTool = Apps.DiffTool;
+            if (nodes.Length == 2 && !string.IsNullOrWhiteSpace(diffTool))
+            {
+                var diffItem = new MenuItem { Header = "Diff tool", ToolTip = diffTool };
+                diffItem.Click += async (_, __) => await OpenDiff(nodes);
+                openWith.Items.Add(diffItem);
+            }
+
+            var sevenZipFileManager = Apps.SevenZipFileManager;
+            if (!string.IsNullOrWhiteSpace(sevenZipFileManager) &&
+                nodes.All(n => File.Exists(n.FullName) || Directory.Exists(n.FullName)))
+            {
+                var sevenZipItem = new MenuItem { Header = "7-Zip", ToolTip = sevenZipFileManager };
+                sevenZipItem.Click += async (_, __) =>
+                {
+                    foreach (var node in nodes)
+                        await Open(sevenZipFileManager, new[] { node });
+                };
+                openWith.Items.Add(sevenZipItem);
+            }
+
+            Add("Text viewer", Key.T, Apps.TextViever, TextExtensions.Contains);
+            Add("Chrome", Key.C, Apps.Chrome, WebExtensions.Contains);
+            Add("Edge", Key.E, Apps.Edge, WebExtensions.Contains);
+            Add("Firefox", Key.F, Apps.Firefox, WebExtensions.Contains);
+            Add("Opera", Key.O, Apps.Opera, WebExtensions.Contains);
+            Add("Adobe Reader", Key.A, Apps.AdobeReader,
+                extension => extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase));
+            Add("Visual Studio", Key.V, Apps.VisualStudio, CodeExtensions.Contains);
+            Add("Visual Studio Code", Key.D, Apps.VSCode, CodeExtensions.Contains);
+            Add("Antigravity", Key.Y, Apps.Antigravity, CodeExtensions.Contains);
+            Add("Ghostscript", Key.G, Apps.GhostScript,
+                extension => extension.Equals(".ps", StringComparison.OrdinalIgnoreCase) ||
+                             extension.Equals(".eps", StringComparison.OrdinalIgnoreCase) ||
+                             extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase));
+            Add("GhostPCL", Key.P, Apps.GhostPcl,
+                extension => extension.Equals(".pcl", StringComparison.OrdinalIgnoreCase) ||
+                             extension.Equals(".pxl", StringComparison.OrdinalIgnoreCase) ||
+                             extension.Equals(".px3", StringComparison.OrdinalIgnoreCase));
+            Add("GhostXPS", Key.X, Apps.GhostXps,
+                extension => extension.Equals(".xps", StringComparison.OrdinalIgnoreCase) ||
+                             extension.Equals(".oxps", StringComparison.OrdinalIgnoreCase));
+
+            if (allFiles && extensions.All(extension => extension.Equals(".prn", StringComparison.OrdinalIgnoreCase)))
+            {
+                var viewer = Apps.ViewerFor(nodes[0].FullName);
+                if (!string.Equals(viewer, Apps.TextViever, StringComparison.OrdinalIgnoreCase))
+                    Add("Detected PRN viewer", Key.R, viewer, _ => true);
+            }
+            openWith.IsEnabled = openWith.Items.Count > 0;
+        }
+
+        static bool CanUnzip(INode node)
+            => !node.IsDirectory && File.Exists(node.FullName) &&
+               ArchiveExtensions.Contains(IOPath.GetExtension(node.Name));
+
+        async void ContextZip_Click(object sender, RoutedEventArgs e)
+            => await Zip(ContextNodes(), Array.Empty<Key>());
+
+        async void ContextZip7z_Click(object sender, RoutedEventArgs e)
+            => await Zip(ContextNodes(), new[] { Key.NumPad7 });
+
+        async void ContextUnzip_Click(object sender, RoutedEventArgs e)
+            => await Unzip(ContextNodes(), Array.Empty<Key>());
 
         private void ListView_KeyDown(object sender, KeyEventArgs e)
         {
@@ -683,19 +1109,50 @@ namespace search
             filesView.Select(filesView.Items.OfType<INode>().Except(original, ReferenceEqualityComparer.Instance));
         }
 
-        async Task Delete(IEnumerable<INode> nodes, bool confirm = true)
+        async Task Delete(IEnumerable<INode> nodes, bool confirm = true, bool permanently = false)
         {
             var na = nodes.ToArray();
+            if (na.Length == 0)
+                return;
             if (!confirm ||
-                MessageBox.Show($"Do you realy want to delete {na.Length} selected items?", "Delete",
+                MessageBox.Show(
+                    permanently
+                        ? $"Permanently delete {na.Length} selected item(s)?"
+                        : $"Move {na.Length} selected item(s) to the Recycle Bin?",
+                    permanently ? "Permanently delete" : "Recycle",
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
             {
                 ClipBoardCut = false;
-                Model.Status = $"Deleting {na.Length} items";
+                Model.Status = permanently
+                    ? $"Permanently deleting {na.Length} item(s)"
+                    : $"Moving {na.Length} item(s) to the Recycle Bin";
                 await Task.Yield();
+                var errors = new List<string>();
                 foreach (INode n in na)
-                    try { n.Delete(); } catch (Exception e) { MessageBox.Show(e.Message); }
-                Model.Status = na.Length == 1 ? $"Deleted '{na.First().FullName}'" : $"Deleted {na.Length} files/directories";
+                    try
+                    {
+                        if (permanently || n is ZipNode)
+                            n.Delete();
+                        else if (n.IsDirectory)
+                            Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                                n.FullName,
+                                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                                Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+                        else
+                            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                                n.FullName,
+                                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                                Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"{n.FullName}: {ex.Message}");
+                    }
+                Model.Status = errors.Count == 0
+                    ? permanently ? $"Permanently deleted {na.Length} item(s)" : $"Recycled {na.Length} item(s)"
+                    : $"Delete completed with {errors.Count} error(s): {string.Join(", ", errors)}";
             }
         }
 
@@ -746,6 +1203,7 @@ namespace search
 
         void Copy(IEnumerable<INode> nodes, IEnumerable<Key> arg, bool cut = false)
         {
+            var nodeArray = nodes.ToArray();
             var e = arg.GetEnumerator();
             if (e.MoveNext())
             {
@@ -754,16 +1212,16 @@ namespace search
                 switch (e.Current)
                 {
                     case Key.V: // Copy files version
-                        clip = string.Join("\r\n", nodes.Select(n => FileVersionInfo.GetVersionInfo(n.FullName)));
+                        clip = string.Join("\r\n", nodeArray.Select(n => FileVersionInfo.GetVersionInfo(n.FullName)));
                         break;
                     case Key.T: // Copy creation times
-                        clip = string.Join("\r\n", nodes.Select(n => File.GetCreationTime(n.FullName)));
+                        clip = string.Join("\r\n", nodeArray.Select(n => File.GetCreationTime(n.FullName)));
                         break;
                     case Key.W: // Copy last write times
-                        clip = string.Join("\r\n", nodes.Select(n => File.GetLastWriteTime(n.FullName)));
+                        clip = string.Join("\r\n", nodeArray.Select(n => File.GetLastWriteTime(n.FullName)));
                         break;
                     case Key.A: // Copy last access times
-                        clip = string.Join("\r\n", nodes.Select(n => File.GetLastAccessTime(n.FullName)));
+                        clip = string.Join("\r\n", nodeArray.Select(n => File.GetLastAccessTime(n.FullName)));
                         break;
                     default:
                         return; // Node defined
@@ -772,10 +1230,66 @@ namespace search
                 return;
             }
 
+            if (nodeArray.Length == 0)
+            {
+                Model.Status = "Nothing selected";
+                return;
+            }
+            if (cut && nodeArray.Any(n => n is ZipNode))
+            {
+                cut = false;
+                Model.Status = "Archive entries cannot be cut; they were copied instead";
+            }
+            string[] files;
+            try
+            {
+                files = nodeArray.Select(n => n.GetFileOrTempPath(preserveAfterExit: true))
+                    .Where(p => File.Exists(p) || Directory.Exists(p))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (files.Length == 0)
+                {
+                    Model.Status = "No existing files to copy";
+                    return;
+                }
+                SetFileClipboard(files, cut);
+            }
+            catch (Exception ex)
+            {
+                Model.Status = $"Clipboard copy failed: {ex.Message}";
+                return;
+            }
             ClipBoardCut = cut;
-            var files = nodes.Select(n => n.FullName).ToArray();
-            files.FilesToClipBoard();
             Model.Status = $"Clipboarded {(files.Length == 1 ? $"\"{files[0]}\"" : $"{files.Length} items")} to {(ClipBoardCut ? "MOVE" : "COPY")}";
+        }
+
+        static void SetFileClipboard(string[] files, bool cut)
+        {
+            var paths = new StringCollection();
+            paths.AddRange(files);
+            var data = new DataObject();
+            data.SetFileDropList(paths);
+            data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(cut ? 2 : 1)));
+            Clipboard.SetDataObject(data, true);
+        }
+
+        static bool ClipboardRequestsMove()
+        {
+            try
+            {
+                var value = Clipboard.GetData("Preferred DropEffect");
+                if (value is MemoryStream stream)
+                {
+                    stream.Position = 0;
+                    using var reader = new BinaryReader(stream, Encoding.Default, leaveOpen: true);
+                    return reader.ReadInt32() == 2;
+                }
+                return value is byte[] bytes && bytes.Length >= sizeof(int) && BitConverter.ToInt32(bytes, 0) == 2;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         void CopyAppend(IEnumerable<INode> nodes, IEnumerable<Key> arg)
@@ -813,7 +1327,9 @@ namespace search
             }
 
             // Append mode for file drop list
-            var files = nodes.Select(n => n.FullName).ToArray();
+            var files = nodes.Select(n => n.GetFileOrTempPath(preserveAfterExit: true))
+                .Where(p => File.Exists(p) || Directory.Exists(p))
+                .ToArray();
             var existingFiles = new StringCollection();
             try
             {
@@ -823,7 +1339,8 @@ namespace search
             catch { }
             
             foreach (var file in files) existingFiles.Add(file);
-            Clipboard.SetFileDropList(existingFiles);
+            SetFileClipboard(existingFiles.Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), cut: false);
             Model.Status = $"Appended {(files.Length == 1 ? $"\"{files[0]}\"" : $"{files.Length} items")} to clipboard";
         }
 
@@ -975,41 +1492,203 @@ namespace search
 
         async Task Paste(IEnumerable<INode> nodes, IEnumerable<Key> arg)
         {
-            //Copy or move from clipboard
-            var paths = Clipboard.GetFileDropList();
-            if (paths.Count == 0)
+            var paths = Clipboard.GetFileDropList().Cast<string>().ToArray();
+            if (paths.Length == 0)
             {
                 Model.Status = "No files in clipboard";
                 return;
             }
-            var softLink = arg.Contains(Key.L);
-            var hardLink = arg.Contains(Key.H);
+            var clipboardMove = ClipboardRequestsMove();
+            var action = arg.Contains(Key.L) ? FileTransferAction.SymbolicLink :
+                arg.Contains(Key.H) ? FileTransferAction.HardLink :
+                clipboardMove ? FileTransferAction.Move :
+                FileTransferAction.Copy;
             var overwrite = arg.Contains(Key.O);
-            foreach (var n in nodes)
+            var completed = await TransferPaths(
+                paths,
+                PasteDestinations(nodes),
+                action,
+                overwrite ? FileCollisionAction.Overwrite : null);
+            if (completed && action == FileTransferAction.Move)
+                ConsumeCutClipboard();
+            else if (completed && clipboardMove)
+                PreserveClipboardAsCopy(paths);
+            ClipBoardCut = false;
+        }
+
+        async Task PasteWithDialog(IEnumerable<INode> nodes)
+        {
+            string[] paths;
+            try
             {
-                var move = n == nodes.Last() && ClipBoardCut; // Move the last series only (copy all the other)
-                var dest = n.FullName.Directory();             //If file => copy to parent directory
-                void ShowStatus(bool before = true)
-                {
-                    Model.Status = $"{(move ? "Mov" : before ? "Copy" : "Copi")}{(before ? "ing" : "ed")} {(paths.Count == 1 ? $"\"{paths[0]}\"" : $"{paths.Count} items")} to \"{dest}\"";
-                }
-                ShowStatus();
-                await Task.Yield();
-                var errors = new List<string>();
+                paths = Clipboard.GetFileDropList().Cast<string>().ToArray();
+            }
+            catch (Exception ex)
+            {
+                Model.Status = $"Cannot read clipboard files: {ex.Message}";
+                return;
+            }
+            var destinations = PasteDestinations(nodes);
+            if (paths.Length == 0)
+            {
+                Model.Status = "No files in clipboard";
+                return;
+            }
+            if (destinations.Length == 0)
+            {
+                Model.Status = "No paste destination selected";
+                return;
+            }
+            var clipboardMove = ClipboardRequestsMove();
+            var defaultAction = clipboardMove
+                ? FileTransferAction.Move
+                : FileTransferAction.Copy;
+            if (!TryChooseTransferAction(paths.Length, destinations.Length, defaultAction, out var action))
+                return;
+            var completed = await TransferPaths(paths, destinations, action);
+            if (completed && action == FileTransferAction.Move)
+                ConsumeCutClipboard();
+            else if (completed && clipboardMove)
+                PreserveClipboardAsCopy(paths);
+            ClipBoardCut = false;
+        }
+
+        static string[] PasteDestinations(IEnumerable<INode> nodes) =>
+            nodes.Select(n => n.FullName.Directory())
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+        void ConsumeCutClipboard()
+        {
+            ClipBoardCut = false;
+            try { Clipboard.Clear(); } catch { }
+        }
+
+        void PreserveClipboardAsCopy(string[] paths)
+        {
+            ClipBoardCut = false;
+            try { SetFileClipboard(paths, cut: false); } catch { }
+        }
+
+        async Task<bool> TransferPaths(
+            string[] paths,
+            string[] destinations,
+            FileTransferAction action,
+            FileCollisionAction? collisionForAll = null)
+        {
+            if (paths.Length == 0 || destinations.Length == 0)
+            {
+                Model.Status = "Nothing to transfer";
+                return false;
+            }
+
+            Model.Status = $"{action}: {paths.Length} item(s) to {destinations.Length} folder(s)";
+            var total = paths.Length * destinations.Length;
+            var progress = new TransferProgressWindow($"{action} file operation", total) { Owner = this };
+            var errors = new List<string>();
+            var completedCount = 0;
+            var skipped = 0;
+            var cancelled = false;
+            filesView.IsEnabled = false;
+            progress.Show();
+            try
+            {
+                for (var targetIndex = 0; targetIndex < destinations.Length; targetIndex++)
                 foreach (var file in paths)
                 {
-                    var destFile = System.IO.Path.Combine(dest, System.IO.Path.GetFileName(file));
-                    if (softLink) errors.AddRange(file.Softlink(destFile, overwrite));
-                    else if (hardLink) errors.AddRange(file.Hardlink(destFile, overwrite));
-                    else errors.AddRange(file.UniversalCopyOrMove(destFile, overwrite, move));
+                    if (cancelled || progress.Token.IsCancellationRequested)
+                    {
+                        cancelled = true;
+                        break;
+                    }
+                    var destination = IOPath.Combine(destinations[targetIndex],
+                        IOPath.GetFileName(file.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)));
+                    if (Directory.Exists(file) && IsDescendant(destination, file))
+                    {
+                        errors.Add($"Cannot transfer '{file}' into itself.");
+                        completedCount++;
+                        progress.Report(completedCount, file);
+                        continue;
+                    }
+
+                    var overwrite = false;
+                    if (File.Exists(destination) || Directory.Exists(destination))
+                    {
+                        var collision = collisionForAll;
+                        if (collision == null)
+                        {
+                            var dialog = new FileCollisionDialog(destination) { Owner = progress };
+                            if (dialog.ShowDialog() != true || dialog.Action == FileCollisionAction.Cancel)
+                            {
+                                cancelled = true;
+                                break;
+                            }
+                            collision = dialog.Action;
+                            if (dialog.ShouldApplyToAll)
+                                collisionForAll = collision;
+                        }
+                        if (collision == FileCollisionAction.Skip)
+                        {
+                            skipped++;
+                            completedCount++;
+                            progress.Report(completedCount, $"Skipped {destination}");
+                            continue;
+                        }
+                        if (collision == FileCollisionAction.Rename)
+                            destination = UniqueDestination(destination, Directory.Exists(file));
+                        else
+                            overwrite = collision == FileCollisionAction.Overwrite;
+                    }
+
+                    // One source cannot be moved to several destinations. Match the
+                    // previous cut/paste behavior: copy to earlier targets, move last.
+                    var targetAction = action == FileTransferAction.Move && targetIndex < destinations.Length - 1
+                        ? FileTransferAction.Copy
+                        : action;
+                    progress.Report(completedCount, $"{targetAction}: {file} -> {destination}");
+                    var operationErrors = await Task.Run(() =>
+                    {
+                        if (targetAction == FileTransferAction.SymbolicLink)
+                            return file.Softlink(destination, overwrite);
+                        if (targetAction == FileTransferAction.HardLink)
+                            return file.Hardlink(destination, overwrite);
+                        return file.UniversalCopyOrMove(destination, overwrite,
+                            move: targetAction == FileTransferAction.Move);
+                    });
+                    errors.AddRange(operationErrors);
+                    completedCount++;
+                    progress.Report(completedCount, file);
                 }
-                if (errors.Count > 0)
-                {
-                    Model.Status = $"{errors.Count}. failed pastes: {string.Join(", ", errors)}";
-                }
-                else ShowStatus(false);
             }
-            ClipBoardCut = false; //Only first is moved and other are copied
+            finally
+            {
+                progress.Complete();
+                filesView.IsEnabled = true;
+                filesView.Focus();
+            }
+
+            Model.Status = cancelled
+                ? $"{action} cancelled after {completedCount} of {total} operation(s)"
+                : errors.Count > 0
+                    ? $"{action} completed with {errors.Count} error(s): {string.Join(", ", errors)}"
+                    : skipped > 0
+                        ? $"{action} completed; skipped {skipped} conflict(s)"
+                        : $"{action} completed for {paths.Length} item(s) and {destinations.Length} folder(s)";
+            return !cancelled && errors.Count == 0 && skipped == 0;
+        }
+
+        static string UniqueDestination(string destination, bool directory)
+        {
+            var parent = IOPath.GetDirectoryName(destination);
+            var name = directory ? IOPath.GetFileName(destination) : IOPath.GetFileNameWithoutExtension(destination);
+            var extension = directory ? "" : IOPath.GetExtension(destination);
+            for (var number = 2; ; number++)
+            {
+                var candidate = IOPath.Combine(parent, $"{name} ({number}){extension}");
+                if (!File.Exists(candidate) && !Directory.Exists(candidate))
+                    return candidate;
+            }
         }
 
         async Task Unzip(IEnumerable<INode> nodes, IEnumerable<Key> arg)
@@ -1023,12 +1702,35 @@ namespace search
                 filesView.SelectedItems.Add(item);
         }
 
-        async Task Zip(IEnumerable<INode> nodes, IEnumerable<Key> arg)
+        async Task Zip(IEnumerable<INode> nodes, IEnumerable<Key> arg, bool seven = false)
         {
+            var selected = nodes.ToArray();
+            if (selected.Length == 0)
+            {
+                Model.Status = "Nothing selected to zip";
+                return;
+            }
             var e = arg.GetEnumerator();
             bool call7zip = e.MoveNext() && e.Current == Key.NumPad7;
 
-            filesView.SelectedItem = await Model.Zip(call7zip, false, nodes.ToArray());
+            Model.Status = $"Zipping {selected.Length} item(s)";
+            INode zip;
+            try
+            {
+                zip = await Model.Zip(call7zip, seven, selected);
+            }
+            catch (Exception ex)
+            {
+                Model.Status = $"Zip failed: {ex.Message}";
+                return;
+            }
+            if (zip == null)
+            {
+                Model.Status = "Zip failed";
+                return;
+            }
+            filesView.SelectedItem = zip;
+            Model.Status = $"Created \"{zip.FullName}\"";
         }
 
         #region Sorting by column headers
@@ -1110,15 +1812,6 @@ namespace search
         public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
             => throw new NotImplementedException();
     }
-    public class DirectoryConverter : IValueConverter
-    {
-        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
-             => System.IO.Path.GetDirectoryName(value.ToString());
-
-        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
-            => throw new NotImplementedException();
-    }
-
     public class IsDirectoryBooleanConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)

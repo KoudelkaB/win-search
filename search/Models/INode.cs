@@ -14,6 +14,7 @@ namespace search.Models
         public abstract string FullName { get; }
 
         public virtual string ParentName => Path.GetFileName(Path.GetDirectoryName(FullName)) ?? "";
+        public virtual string Folder => Path.GetDirectoryName(FullName) ?? "";
 
         public abstract DateTime CreationTime { get; protected set; }
         public abstract DateTime LastChangeTime { get; protected set; }

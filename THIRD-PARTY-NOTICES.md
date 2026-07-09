@@ -1,8 +1,8 @@
 # Third-party notices
 
-Win Search incorporates or is built with the following third-party components.
+File Search Manager incorporates or is built with the following third-party components.
 Their licenses (MIT and Apache-2.0, both reproduced at the end of this document)
-are fully compatible with the MIT license of Win Search itself.
+are fully compatible with the MIT license of File Search Manager itself.
 
 ## NonBlocking 2.1.2
 
@@ -35,7 +35,7 @@ application binaries, so their attribution is kept here.
 - License: Apache License 2.0 (reproduced below)
 
 Note: MinVer is a build-time versioning tool (`PrivateAssets="All"`); none of
-its code is redistributed with Win Search - its only output is the version
+its code is redistributed with File Search Manager - its only output is the version
 metadata stamped into the assemblies. It has not been modified, and its
 package contains no NOTICE file. The full Apache License 2.0 text is included
 below to satisfy its attribution conditions under any reading.

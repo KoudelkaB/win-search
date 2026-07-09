@@ -16,14 +16,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$packageIdentifier = "BohdanKoudelka.WinSearch"
+$packageIdentifier = "BohdanKoudelka.FileSearchManager"
 $manifestVersion = "1.12.0"
 $publisher = "Bohdan Koudelka"
-$packageName = "Win Search"
+$packageName = "File Search Manager"
 $repoUrl = "https://github.com/KoudelkaB/win-search"
 $sha256 = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToUpperInvariant()
 
-$outDir = Join-Path $OutputRoot "manifests\b\BohdanKoudelka\WinSearch\$Version"
+$outDir = Join-Path $OutputRoot "manifests\b\BohdanKoudelka\FileSearchManager\$Version"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 function Write-Utf8NoBomFile {
@@ -61,9 +61,9 @@ PackageUrl: $repoUrl
 License: MIT
 LicenseUrl: $repoUrl/blob/main/LICENSE
 Copyright: Copyright (c) 2026 Bohdan Koudelka
-ShortDescription: Fast file search for Windows with NTFS MFT indexing and keyboard-first file operations.
-Description: Fast Windows desktop file search with live filtering, content search, optional NTFS MFT indexing, and keyboard-first file operations.
-Moniker: win-search
+ShortDescription: Fast Windows file search and management with NTFS MFT indexing.
+Description: Fast Windows desktop file search and management with live filtering, content search, drag-and-drop, archive support, optional NTFS MFT indexing, and keyboard or context-menu file operations.
+Moniker: file-search-manager
 Tags:
 - files
 - search

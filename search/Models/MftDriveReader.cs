@@ -294,6 +294,10 @@ namespace search.Models
             public override ulong Size { get; protected set; }
             public override string FullName => fullName ??= BuildFullName(0);
             public override string ParentName => Parent?.Name ?? "";
+            public override string Folder =>
+                EntryNumber == RootEntryNumber || Parent == null || Parent == this
+                    ? Path.GetDirectoryName(driveRoot) ?? ""
+                    : Parent.FullName;
             public override DateTime CreationTime { get; protected set; }
             public override DateTime LastChangeTime { get; protected set; }
             public override DateTime LastAccessTime { get; protected set; }

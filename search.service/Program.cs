@@ -13,7 +13,7 @@ namespace search.Service
             if (args.Contains("--console") || Environment.UserInteractive)
             {
                 // Debug mode: run the pipe loop in the console (needs an elevated prompt to be useful)
-                Console.WriteLine($"Win Search MFT service - console mode, pipe '{ServicePipe.PipeName}'. Ctrl+C to quit.");
+                Console.WriteLine($"File Search Manager MFT service - console mode, pipe '{ServicePipe.PipeName}'. Ctrl+C to quit.");
                 using var cts = new CancellationTokenSource();
                 Console.CancelKeyPress += (o, e) => { e.Cancel = true; cts.Cancel(); };
                 PipeServer.Run(cts.Token);

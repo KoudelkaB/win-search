@@ -1,4 +1,4 @@
-# Generates search/app.ico - the original Win Search icon.
+# Generates search/app.ico - the File Search Manager icon.
 # Design: white magnifying glass over a "file list" on a blue rounded square.
 # Rerun after design changes: powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
 

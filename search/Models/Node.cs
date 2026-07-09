@@ -103,12 +103,14 @@ namespace search.Models
         /// </summary>
         /// <param name="n"></param>
         /// <returns></returns>
-        public static string GetFileOrTempPath(this INode n)
+        public static string GetFileOrTempPath(this INode n, bool preserveAfterExit = false)
         {
             if (n is ZipNode zn)
             {
                 //Save to the temp file
-                string path = App.CreateTempFolder();
+                string path = preserveAfterExit
+                    ? App.CreateClipboardTempFolder()
+                    : App.CreateTempFolder();
                 path = Path.Combine(path, n.Name);
                 using var a = zn.GetArchive();
                 if (zn.IsDirectory)

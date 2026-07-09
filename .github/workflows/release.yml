@@ -44,14 +44,14 @@ jobs:
       - name: Generate checksum
         shell: pwsh
         run: |
-          $file = "installer/Output/WinSearch-Setup-$env:VERSION.exe"
+          $file = "installer/Output/FileSearchManager-Setup-$env:VERSION.exe"
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToUpperInvariant()
-          "$hash  WinSearch-Setup-$env:VERSION.exe" | Set-Content installer/Output/SHA256SUMS.txt
+          "$hash  FileSearchManager-Setup-$env:VERSION.exe" | Set-Content installer/Output/SHA256SUMS.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            installer/Output/WinSearch-Setup-${{ env.VERSION }}.exe
+            installer/Output/FileSearchManager-Setup-${{ env.VERSION }}.exe
             installer/Output/SHA256SUMS.txt
           generate_release_notes: true

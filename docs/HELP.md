@@ -1,6 +1,6 @@
-# Win Search Help
+# File Search Manager Help
 
-Win Search has two main fields:
+File Search Manager has two main fields:
 
 - **Filter** narrows the file list by name, folder, path, or selected directories.
 - **Search** searches file contents inside the currently filtered files.
@@ -9,15 +9,15 @@ The result list is designed for keyboard use. When the list has focus, the **Hin
 
 ## Indexing and Elevation
 
-On startup, Win Search loads ready drives and watches for file-system changes.
+On startup, File Search Manager loads ready drives and watches for file-system changes.
 
-For NTFS drives, the fastest path is reading the NTFS Master File Table. Win Search can do that in one of these ways:
+For NTFS drives, the fastest path is reading the NTFS Master File Table. File Search Manager can do that in one of these ways:
 
 - Optional Windows service: no prompt after installation.
 - Elevated broker: approve the startup UAC prompt once per app run.
-- Direct elevated app: run Win Search as administrator.
+- Direct elevated app: run File Search Manager as administrator.
 
-If none of those are available, Win Search falls back to walking folders. The app still works, but the initial load may be slower.
+If none of those are available, File Search Manager falls back to walking folders. The app still works, but the initial load may be slower.
 
 The optional service is read-only for indexing. It exposes MFT data to the desktop app and is named `WinSearchService`.
 
@@ -71,10 +71,29 @@ Typing anything other than `Enter` in the search field clears the current conten
 
 ## Mouse Actions
 
+- Click, Ctrl+click, or Shift+click results to select individual items or ranges.
 - Double-click a file or folder name to filter into that item.
 - Double-click the folder column to open File Explorer with the item selected.
 - Ctrl + right-click a result to open it with the default Windows action.
 - Click a column header to sort by that column.
+- Right-click selected items for Open, dynamic Open with, clipboard, rename, archive, and deletion actions.
+- Drag from the Name column to send selected files or directories to another application.
+- Drag from the Folder column to send the selected items' parent folders.
+- Drop files onto a directory in the Name column or a parent path in the Folder column. Choose copy, move, symbolic link, or hard link.
+- Drop files onto an executable Name cell to launch it with the dropped paths as arguments.
+
+## Context Menu
+
+The context menu adapts to the current selection:
+
+- **Open with** lists only installed applications compatible with the selection. A configured diff tool is listed first for exactly two files or directories.
+- **7-Zip** is shown when `7zFM.exe` is installed.
+- **Zip** creates a ZIP archive.
+- **Create 7z archive** is shown only when `7z.exe` or `7zz.exe` is installed.
+- **Unzip** is shown for supported archive selections.
+- **Move to Recycle Bin** performs recoverable deletion.
+
+Directory drops and `Ctrl+V` show an action chooser. Existing-name conflicts offer overwrite, skip, automatic rename, and apply-to-all behavior. Transfers show item progress and can be cancelled between top-level operations.
 
 ## Keyboard Commands
 
@@ -83,8 +102,11 @@ Focus the result list and press a key shown in the **Hints** panel. Some command
 Common commands:
 
 - `Enter`: filter into selected folders.
-- `Delete`: delete selected items.
-- `Shift+Delete`: delete selected items without confirmation.
+- `Delete`: move selected items to the Recycle Bin after confirmation.
+- `Shift+Delete`: permanently delete selected items without confirmation.
+- `Ctrl+C`: standard shell-compatible copy.
+- `Ctrl+X`: standard shell-compatible cut.
+- `Ctrl+V`: paste after choosing copy, move, symbolic link, or hard link.
 - `C`: copy selected items to the clipboard.
 - `X`: cut selected items to the clipboard.
 - `V`: paste clipboard files into the selected folders or parent folders.
@@ -113,6 +135,10 @@ Open targets after `O` or `A`:
 - `T`: text viewer.
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
+- `G`: Ghostscript.
+- `P`: GhostPCL.
+- `X`: GhostXPS.
+- `R`: viewer detected for PRN content.
 - `S`, then `P`: PowerShell.
 - `S` alone: Command Prompt.
 
@@ -151,4 +177,4 @@ User state is stored under:
 
 If NTFS loading is slow, install the optional service from the installer or approve the startup UAC prompt. The status bar reports whether each drive used the service, direct access, admin helper, or folder walk.
 
-If a mapped or external drive is unavailable, Win Search skips it after a short readiness check so startup does not stall on unreachable storage.
+If a mapped or external drive is unavailable, File Search Manager skips it after a short readiness check so startup does not stall on unreachable storage.
