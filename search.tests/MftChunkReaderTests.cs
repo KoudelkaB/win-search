@@ -21,7 +21,7 @@ namespace search.Tests
                 Array.Fill(data, (byte)(r + 1), r * bytesPerRecord, bytesPerRecord);
 
             var stream = new MemoryStream(data);
-            var seen = new ConcurrentDictionary<int, byte[]>();
+            var seen = new NonBlocking.ConcurrentDictionary<int, byte[]>();
             var total = MftChunkReader.Read(stream, bytesPerRecord, data.Length, (buffer, first, count) =>
             {
                 for (var i = 0; i < count; i++)

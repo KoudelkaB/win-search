@@ -31,6 +31,14 @@ namespace search.Models
         public bool IsDirectory => Attributes.HasFlag(FileAttributes.Directory);
 
         /// <summary>
+        /// Adjust the size by a signed watcher-event delta. Saturates at 0 - aggregated
+        /// directory sizes are best-effort between MFT reloads and a missed event must not
+        /// wrap the unsigned size to exabytes.
+        /// </summary>
+        public void AddSizeDelta(long delta) =>
+            Size = delta >= 0 ? Size + (ulong)delta : Size - Math.Min(Size, (ulong)-delta);
+
+        /// <summary>
         /// Re-read size, times and the directory flag from the file system
         /// </summary>
         public void Refresh()

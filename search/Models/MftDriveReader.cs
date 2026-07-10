@@ -50,8 +50,8 @@ namespace search.Models
             // of the base record. pendingSizes holds the files whose base carried no $DATA.
             // Sequence numbers ride along so stale references (records freed and reused while
             // the $MFT streamed by) are rejected instead of mixing two unrelated files.
-            var extensionSizes = new ConcurrentDictionary<uint, (ulong Size, ushort Sequence)>();
-            var extensionLinks = new ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)>();
+            var extensionSizes = new NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)>();
+            var extensionLinks = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)>();
             var pendingSizes = new ConcurrentQueue<MftNode>();
 
             MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
@@ -252,7 +252,7 @@ namespace search.Models
         /// size (resident, or the non-resident instance starting at VCN 0) and the
         /// parents of any non-DOS $FILE_NAME (hard-link names overflowed from the base)
         /// </summary>
-        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference, ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes, ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links)
+        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference, NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes, NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links)
         {
             var baseIndex = (uint)(baseReference & FileReferenceMask);
             var baseSequence = (ushort)(baseReference >> 48);

@@ -38,7 +38,7 @@ namespace search.Tests
         public void DictionaryKeyedByNodesIsQueriedByPathStrings()
         {
             var nodes = Sample();
-            var dict = new ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+            var dict = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
             foreach (var n in nodes) dict[n] = n;
 
             Assert.True(dict.TryGetValue(@"Q:\Docs\Sub\b.txt", out var b));

@@ -353,23 +353,77 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Remove node
+        /// Remove node and subtract a removed file from its ancestor directory sizes
         /// </summary>
         /// <param name="path"></param>
-        INode Remove(string path) => files.TryRemove(path, out var n) ? n : null;
+        INode Remove(string path)
+        {
+            if (!files.TryRemove(path, out var n)) return null;
+            //Directories are skipped: a recursive delete raises an event per contained file and
+            //subtracting the aggregate too would double-count. A tree that leaves without
+            //per-file events (move to recycle bin = rename of the top folder) stays counted
+            //until the next MFT reload.
+            if (!n.IsDirectory) PropagateSizeDelta(path, -(long)n.Size);
+            return n;
+        }
 
         /// <summary>
-        /// Refresh node
+        /// Refresh node and apply its size change to ancestor directory sizes
         /// </summary>
         /// <param name="path"></param>
         INode Refresh(string path)
         {
             if (files.TryGetValue(path, out var n))
             {
+                //Directory sizes are aggregates - only file sizes contribute, including the
+                //rare flip between file and directory
+                var oldSize = n.IsDirectory ? 0L : (long)n.Size;
                 n.Refresh();
+                PropagateSizeDelta(path, (n.IsDirectory ? 0L : (long)n.Size) - oldSize);
                 return n;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Get the node or index a newly seen file, adding a new file to its ancestor directory sizes
+        /// </summary>
+        INode GetOrAddNew(string path)
+        {
+            var added = new FileNode(path);
+            var node = files.GetOrAdd(path, added);
+            //Only a first sighting contributes - an already indexed node was counted by the scan
+            if (ReferenceEquals(node, added) && !node.IsDirectory) PropagateSizeDelta(path, (long)node.Size);
+            return node;
+        }
+
+        /// <summary>
+        /// Best-effort update of aggregated ancestor directory sizes for a file size delta.
+        /// Runs only on the serialized FS change thread; exact sizes are restored by the
+        /// next MFT reload (F12), which also heals drift from missed events.
+        /// </summary>
+        void PropagateSizeDelta(string path, long delta)
+        {
+            if (delta == 0) return;
+            for (var dir = Path.GetDirectoryName(path); dir != null; dir = Path.GetDirectoryName(dir))
+                if (files.TryGetValue(dir, out var d) && d.IsDirectory) d.AddSizeDelta(delta);
+            RefreshSizesSoon();
+        }
+
+        int sizeRefreshQueued = 0; //1 => a UI repaint covering all size changes so far is already queued
+        /// <summary>
+        /// Repaint visible rows so changed directory sizes show, coalesced to one refresh
+        /// per 2s - never per event, which would saturate the dispatcher during change storms
+        /// </summary>
+        void RefreshSizesSoon()
+        {
+            if (Interlocked.CompareExchange(ref sizeRefreshQueued, 1, 0) != 0) return;
+            Task.Run(async () =>
+            {
+                await Task.Delay(2000);
+                Interlocked.Exchange(ref sizeRefreshQueued, 0);
+                UIRefreshRequested?.Invoke();
+            });
         }
 
         /// <summary>
@@ -553,7 +607,7 @@ namespace search.Models
                     {
                         case WatcherChangeTypes.Created:
                             //Trace.WriteLine($"+{e.FullPath}");
-                            var node = files.GetOrAdd(e.FullPath, new FileNode(e.FullPath));
+                            var node = GetOrAddNew(e.FullPath);
                             await UpdateFor(node);
                             List<TaskCompletionSource<INode>> tcs = null;
                             lock (OnFileCreated)
@@ -564,13 +618,14 @@ namespace search.Models
                             break;
                         case WatcherChangeTypes.Changed:
                             //Change attributes and size
-                            await UpdateFor(Refresh(e.FullPath) ?? files.GetOrAdd(e.FullPath, new FileNode(e.FullPath)));
+                            await UpdateFor(Refresh(e.FullPath) ?? GetOrAddNew(e.FullPath));
                             break;
                         case WatcherChangeTypes.Renamed:
                             //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
+                            //Remove first so a same-directory rename nets to zero on the shared ancestors
                             await UpdateFor(
-                                files.GetOrAdd(e.FullPath, new FileNode(e.FullPath)),
-                                Remove((e as RenamedEventArgs).OldFullPath));
+                                Remove((e as RenamedEventArgs).OldFullPath),
+                                GetOrAddNew(e.FullPath));
                             break;
                         case WatcherChangeTypes.Deleted:
                             //Trace.WriteLine($"-{e.FullPath}");
@@ -636,7 +691,7 @@ namespace search.Models
                 Loading = true;
                 LoadStatusTooltip = null;
                 var watch = Stopwatch.StartNew();
-                var origins = new ConcurrentDictionary<string, MftOrigin>();
+                var origins = new NonBlocking.ConcurrentDictionary<string, MftOrigin>();
                 var progress = new CancellationTokenSource();
                 var progressTask = ContinualUpdate(progress.Token, () =>
                     LoadStatus = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s",
@@ -773,7 +828,7 @@ namespace search.Models
         /// "(C: service, D: folder walk)" tooltip text for the load status, with a hint
         /// when an NTFS drive had to be walked
         /// </summary>
-        string OriginsInfo(ConcurrentDictionary<string, MftOrigin> origins)
+        string OriginsInfo(NonBlocking.ConcurrentDictionary<string, MftOrigin> origins)
         {
             if (origins.IsEmpty) return "";
             var parts = string.Join(", ", origins.OrderBy(x => x.Key).Select(x => $"{x.Key} " + x.Value switch

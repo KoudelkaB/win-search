@@ -22,7 +22,7 @@ namespace search.Tests
             nodes = mft.Parse();
 
             // Stand-in for the SearchModel files index
-            var index = new ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+            var index = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
             foreach (var n in nodes) index[n] = n;
             NodeFilter.Resolve = path =>
                 index.TryGetValue(path, out var n) ? n
