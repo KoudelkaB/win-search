@@ -40,8 +40,8 @@ namespace search.Tests
             return this;
         }
 
-        public FakeMft AddRecord(bool inUse = true, bool directory = false, ulong baseReference = 0, params byte[][] attributes)
-            => AddRaw(Record(BytesPerRecord, inUse, directory, baseReference, attributes));
+        public FakeMft AddRecord(bool inUse = true, bool directory = false, ulong baseReference = 0, ushort sequence = 0, params byte[][] attributes)
+            => AddRaw(Record(BytesPerRecord, inUse, directory, baseReference, sequence, attributes));
 
         /// <summary>The root directory record; must land on entry 5</summary>
         public FakeMft AddRoot()
@@ -70,7 +70,7 @@ namespace search.Tests
         // FILE record and attribute builders
         // ------------------------------------------------------------------
 
-        public static byte[] Record(int size, bool inUse = true, bool directory = false, ulong baseReference = 0, params byte[][] attributes)
+        public static byte[] Record(int size, bool inUse = true, bool directory = false, ulong baseReference = 0, ushort sequence = 0, params byte[][] attributes)
         {
             var record = new byte[size];
             record[0] = (byte)'F'; record[1] = (byte)'I'; record[2] = (byte)'L'; record[3] = (byte)'E';
@@ -80,6 +80,7 @@ namespace search.Tests
             var attributesOffset = (48 + 2 * usaCount + 7) & ~7;
             W16(record, 4, 48);
             W16(record, 6, usaCount);
+            W16(record, 16, sequence);
             W16(record, 20, (ushort)attributesOffset);
             W16(record, 22, (ushort)((inUse ? 1 : 0) | (directory ? 2 : 0)));
             W64(record, 32, baseReference);
@@ -129,8 +130,8 @@ namespace search.Tests
             return Resident(0x10, value);
         }
 
-        /// <summary>$FILE_NAME; ns: 0 POSIX, 1 Win32, 2 DOS, 3 Win32+DOS</summary>
-        public static byte[] FileName(uint parent, string name, ulong size = 0, uint flags = 0, byte ns = 1, DateTime created = default)
+        /// <summary>$FILE_NAME; ns: 0 POSIX, 1 Win32, 2 DOS, 3 Win32+DOS; parent may carry a sequence in bits 48-63</summary>
+        public static byte[] FileName(ulong parent, string name, ulong size = 0, uint flags = 0, byte ns = 1, DateTime created = default)
         {
             var value = new byte[66 + name.Length * 2];
             W64(value, 0, parent);

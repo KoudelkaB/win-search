@@ -148,6 +148,59 @@ namespace search.Tests
         }
 
         [Fact]
+        public void OrphanedFilesAreDropped()
+        {
+            // Parent entry 99 does not exist (deleted mid-scan): the file's real path is
+            // unknowable and must not surface at a made-up "Q:\" path
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[] { FakeMft.FileName(99, "ghost.txt"), FakeMft.ResidentData(100) }) // 6
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "kept.txt") })              // 7
+                .Parse();
+
+            Assert.Equal(new[] { "Q:", "kept.txt" }, nodes.Select(n => n.Name).OrderBy(n => n, StringComparer.Ordinal));
+            Assert.Equal(0UL, nodes.Single(n => n.Name == "Q:").Size); // the orphan's size never lands anywhere
+        }
+
+        [Fact]
+        public void AnOrphanedDirectoryTakesItsSubtreeWithIt()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(99, "lost") })          // 6: orphan dir
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "child.txt"), FakeMft.ResidentData(50) }) // 7
+                .Parse();
+
+            Assert.Equal(new[] { "Q:" }, nodes.Select(n => n.Name));
+        }
+
+        [Fact]
+        public void ParentCyclesAreDropped()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(7, "a") })          // 6 -> 7
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(6, "b") })          // 7 -> 6
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "in-cycle.txt") })                // 8
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "kept.txt") })    // 9
+                .Parse();
+
+            Assert.Equal(new[] { "Q:", "kept.txt" }, nodes.Select(n => n.Name).OrderBy(n => n, StringComparer.Ordinal));
+        }
+
+        [Fact]
+        public void AStaleParentSequenceOrphansTheFile()
+        {
+            // Entry 6 currently holds "Docs" with sequence 5; the stale file still references
+            // sequence 2 - its true parent was deleted and the entry reused mid-scan
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, sequence: 5, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") }) // 6
+                .AddRecord(attributes: new[] { FakeMft.FileName(6 | (2UL << 48), "stale.txt") })                            // 7
+                .AddRecord(attributes: new[] { FakeMft.FileName(6 | (5UL << 48), "fresh.txt") })                            // 8
+                .Parse();
+
+            Assert.DoesNotContain(nodes, n => n.Name == "stale.txt");
+            Assert.Equal(@"Q:\Docs\fresh.txt", nodes.Single(n => n.Name == "fresh.txt").FullName);
+        }
+
+        [Fact]
         public void ConsumesThePartialTailSoAPipeSenderNeverBlocks()
         {
             var mft = WithRoot(1024).AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "a.txt") });

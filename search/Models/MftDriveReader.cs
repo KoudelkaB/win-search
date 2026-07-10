@@ -48,8 +48,10 @@ namespace search.Models
             // works even when the list itself is non-resident): the unnamed $DATA size of a
             // heavily fragmented file, and the parents of hard-link names that overflowed out
             // of the base record. pendingSizes holds the files whose base carried no $DATA.
-            var extensionSizes = new ConcurrentDictionary<uint, ulong>();
-            var extensionLinks = new ConcurrentDictionary<uint, List<uint>>();
+            // Sequence numbers ride along so stale references (records freed and reused while
+            // the $MFT streamed by) are rejected instead of mixing two unrelated files.
+            var extensionSizes = new ConcurrentDictionary<uint, (ulong Size, ushort Sequence)>();
+            var extensionLinks = new ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)>();
             var pendingSizes = new ConcurrentQueue<MftNode>();
 
             MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
@@ -62,13 +64,13 @@ namespace search.Models
                         if (!MftFixup.Apply(record))
                             continue;
 
-                        var baseReference = U64(record[32..]) & FileReferenceMask;
-                        if (baseReference != 0)
+                        var baseReference = U64(record[32..]);
+                        if ((baseReference & FileReferenceMask) != 0)
                         {
                             // Only in-use extensions - a freed one may point at a base index
                             // that has since been reused by a different file
                             if ((U16(record[22..]) & 0x1) != 0)
-                                ScanExtension(record, (uint)baseReference, extensionSizes, extensionLinks);
+                                ScanExtension(record, baseReference, extensionSizes, extensionLinks);
                             continue;
                         }
 
@@ -82,20 +84,8 @@ namespace search.Models
 
             // Every extension record has been seen now - resolve the deferred sizes
             foreach (var node in pendingSizes)
-                if (extensionSizes.TryGetValue(node.EntryNumber, out var size))
-                    node.SetSize(size);
-
-            // ... and merge overflowed hard-link parents into their base records
-            foreach (var (baseIndex, extra) in extensionLinks)
-            {
-                if (baseIndex >= (uint)recordCount || parsed[(int)baseIndex] is not MftNode node || node.IsDirectory)
-                    continue;
-                var links = new List<uint>(1 + extra.Count);
-                if (node.LinkParents != null) links.AddRange(node.LinkParents);
-                else links.Add(node.ParentEntryNumber);
-                links.AddRange(extra);
-                node.LinkParents = links.ToArray();
-            }
+                if (extensionSizes.TryGetValue(node.EntryNumber, out var e) && SequencesMatch(e.Sequence, node.SequenceNumber))
+                    node.SetSize(e.Size);
 
             var nodes = new Dictionary<uint, MftNode>(parsed.Count(n => n != null));
             foreach (var node in parsed)
@@ -104,8 +94,25 @@ namespace search.Models
 
             foreach (var node in nodes.Values)
             {
-                if (node.ParentEntryNumber != node.EntryNumber && nodes.TryGetValue(node.ParentEntryNumber, out var parent))
+                if (node.ParentEntryNumber != node.EntryNumber
+                    && nodes.TryGetValue(node.ParentEntryNumber, out var parent)
+                    && SequencesMatch(node.ParentSequence, parent.SequenceNumber))
                     node.Parent = parent;
+            }
+
+            DropOrphans(nodes, recordCount);
+
+            // Merge overflowed hard-link parents into their (surviving) base records
+            foreach (var (baseIndex, contribution) in extensionLinks)
+            {
+                if (!nodes.TryGetValue(baseIndex, out var node) || node.IsDirectory
+                    || !SequencesMatch(contribution.Sequence, node.SequenceNumber))
+                    continue;
+                var links = new List<ulong>(1 + contribution.Parents.Count);
+                if (node.LinkParents != null) links.AddRange(node.LinkParents);
+                else links.Add((ulong)node.ParentSequence << 48 | node.ParentEntryNumber);
+                links.AddRange(contribution.Parents);
+                node.LinkParents = links.ToArray();
             }
 
             CalculateFolderSizes(nodes);
@@ -119,6 +126,7 @@ namespace search.Models
                 return null;
 
             var isDirectory = (headerFlags & 0x2) != 0;
+            var sequenceNumber = U16(record[16..]);
 
             string name = null;
             var nameRank = int.MaxValue;
@@ -128,8 +136,8 @@ namespace search.Models
             // must count the file once per link - that is what a directory walk and
             // Explorer's folder properties do. Allocated only for multi-link files.
             var linkCount = 0;
-            uint firstLinkParent = 0;
-            List<uint> linkParents = null;
+            ulong firstLinkParent = 0;
+            List<ulong> linkParents = null;
             ulong fnCreated = 0, fnModified = 0, fnAccessed = 0;
             var hasStandardInfo = false;
             ulong siCreated = 0, siModified = 0, siAccessed = 0;
@@ -171,15 +179,15 @@ namespace search.Models
                                 var rank = value[65] switch { 1 => 0, 3 => 1, 0 => 2, _ => 3 }; // Win32, Win32+DOS, POSIX, DOS
                                 if (!isDirectory && value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
                                 {
-                                    var linkParent = (uint)(U64(value) & FileReferenceMask);
+                                    var linkParent = U64(value);
                                     if (linkCount++ == 0) firstLinkParent = linkParent;
-                                    else (linkParents ??= new List<uint>(4) { firstLinkParent }).Add(linkParent);
+                                    else (linkParents ??= new List<ulong>(4) { firstLinkParent }).Add(linkParent);
                                 }
                                 if (rank < nameRank && 66 + nameBytes <= valueLength)
                                 {
                                     nameRank = rank;
                                     name = new string(MemoryMarshal.Cast<byte, char>(value.Slice(66, nameBytes)));
-                                    parentReference = U64(value) & FileReferenceMask;
+                                    parentReference = U64(value);
                                     fnCreated = U64(value[8..]);
                                     fnModified = U64(value[16..]);
                                     fnAccessed = U64(value[32..]);
@@ -219,7 +227,7 @@ namespace search.Models
             var node = new MftNode(
                 driveRoot,
                 (uint)index,
-                (uint)parentReference,
+                (uint)(parentReference & FileReferenceMask),
                 index == RootEntryNumber ? rootName : name,
                 attributes,
                 isDirectory ? 0UL : dataSize,
@@ -227,6 +235,8 @@ namespace search.Models
                 Time(hasStandardInfo ? siModified : fnModified),
                 Time(hasStandardInfo ? siAccessed : fnAccessed))
             {
+                SequenceNumber = sequenceNumber,
+                ParentSequence = (ushort)(parentReference >> 48),
                 LinkParents = linkParents?.ToArray()
             };
 
@@ -242,9 +252,11 @@ namespace search.Models
         /// size (resident, or the non-resident instance starting at VCN 0) and the
         /// parents of any non-DOS $FILE_NAME (hard-link names overflowed from the base)
         /// </summary>
-        static void ScanExtension(ReadOnlySpan<byte> record, uint baseIndex, ConcurrentDictionary<uint, ulong> sizes, ConcurrentDictionary<uint, List<uint>> links)
+        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference, ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes, ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links)
         {
-            List<uint> parents = null;
+            var baseIndex = (uint)(baseReference & FileReferenceMask);
+            var baseSequence = (ushort)(baseReference >> 48);
+            List<ulong> parents = null;
             var offset = (int)U16(record[20..]);
             while (offset + 24 <= record.Length)
             {
@@ -259,9 +271,9 @@ namespace search.Models
                 if (type == AttributeData && record[offset + 9] == 0)
                 {
                     if (record[offset + 8] == 0)
-                        sizes[baseIndex] = U32(record[(offset + 16)..]);
+                        sizes[baseIndex] = (U32(record[(offset + 16)..]), baseSequence);
                     else if (length >= 64 && U64(record[(offset + 16)..]) == 0)
-                        sizes[baseIndex] = U64(record[(offset + 48)..]);
+                        sizes[baseIndex] = (U64(record[(offset + 48)..]), baseSequence);
                 }
                 else if (type == AttributeFileName && record[offset + 8] == 0)
                 {
@@ -271,7 +283,7 @@ namespace search.Models
                     {
                         var value = record.Slice(offset + valueOffset, valueLength);
                         if (value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
-                            (parents ??= new List<uint>(2)).Add((uint)(U64(value) & FileReferenceMask));
+                            (parents ??= new List<ulong>(2)).Add(U64(value));
                     }
                 }
 
@@ -279,14 +291,65 @@ namespace search.Models
             }
 
             if (parents != null)
-                links.AddOrUpdate(baseIndex, parents,
+                links.AddOrUpdate(baseIndex, (baseSequence, parents),
                     (_, old) =>
                     {
-                        var merged = new List<uint>(old.Count + parents.Count);
-                        merged.AddRange(old);
+                        var merged = new List<ulong>(old.Parents.Count + parents.Count);
+                        merged.AddRange(old.Parents);
                         merged.AddRange(parents);
-                        return merged;
+                        return (old.Sequence, merged);
                     });
+        }
+
+        /// <summary>
+        /// A file reference is current only when its embedded sequence number matches the
+        /// record's - a mismatch means the record was freed and reused while the $MFT
+        /// streamed by. Zero acts as a wildcard (references written without a sequence).
+        /// </summary>
+        static bool SequencesMatch(ushort reference, ushort record)
+            => reference == 0 || record == 0 || reference == record;
+
+        /// <summary>
+        /// Remove nodes whose parent chain does not reach the drive root. Their parent was
+        /// deleted or its record reused while the $MFT streamed by (NTFS only deletes empty
+        /// directories, so such a file is normally deleted too), or the records are corrupt
+        /// or cyclic. Either way the real path is unknowable - a made-up one would collide
+        /// with the drive root and break every file operation. Anything that still exists
+        /// is re-delivered by the change watcher or the next rescan.
+        /// </summary>
+        static void DropOrphans(Dictionary<uint, MftNode> nodes, int recordCount)
+        {
+            if (!nodes.ContainsKey(RootEntryNumber))
+                return; // No root record - dropping would empty the whole drive
+
+            const byte Keep = 1, Drop = 2, Visiting = 3;
+            var state = new byte[recordCount];
+            var chain = new List<MftNode>(64);
+            foreach (var start in nodes.Values)
+            {
+                var node = start;
+                byte verdict = 0;
+                while (verdict == 0)
+                {
+                    var seen = state[node.EntryNumber];
+                    if (seen == Keep || seen == Drop) verdict = seen;
+                    else if (seen == Visiting) verdict = Drop; // Parent cycle
+                    else if (node.EntryNumber == RootEntryNumber) verdict = Keep;
+                    else if (node.Parent == null) verdict = Drop;
+                    else
+                    {
+                        state[node.EntryNumber] = Visiting;
+                        chain.Add(node);
+                        node = node.Parent;
+                    }
+                }
+                if (state[node.EntryNumber] == 0) state[node.EntryNumber] = verdict; // The deciding node itself
+                foreach (var visited in chain) state[visited.EntryNumber] = verdict;
+                chain.Clear();
+            }
+
+            foreach (var entry in nodes.Values.Where(n => state[n.EntryNumber] == Drop).Select(n => n.EntryNumber).ToList())
+                nodes.Remove(entry);
         }
 
         static ushort U16(ReadOnlySpan<byte> bytes) => BinaryPrimitives.ReadUInt16LittleEndian(bytes);
@@ -313,7 +376,8 @@ namespace search.Models
                 else
                 {
                     foreach (var link in node.LinkParents)
-                        if (nodes.TryGetValue(link, out var parent) && parent != node)
+                        if (nodes.TryGetValue((uint)(link & FileReferenceMask), out var parent) && parent != node
+                            && SequencesMatch((ushort)(link >> 48), parent.SequenceNumber))
                             AddToChain(parent, node.Size);
                 }
             }
@@ -348,11 +412,17 @@ namespace search.Models
             public uint ParentEntryNumber { get; }
             public MftNode Parent { get; set; }
 
+            /// <summary>This record's sequence number - stale references to a reused entry are detected against it</summary>
+            public ushort SequenceNumber { get; init; }
+
+            /// <summary>The sequence number embedded in the parent reference of the chosen $FILE_NAME</summary>
+            public ushort ParentSequence { get; init; }
+
             /// <summary>
-            /// Parent entries of every hard link when the file has more than one
-            /// (includes the primary parent); null for ordinary single-link files
+            /// Full file references (entry + sequence) of every hard-link parent when the
+            /// file has more than one; null for ordinary single-link files
             /// </summary>
-            public uint[] LinkParents { get; set; }
+            public ulong[] LinkParents { get; set; }
 
             public override FileAttributes Attributes { get; protected set; }
             public override string Name { get; }
