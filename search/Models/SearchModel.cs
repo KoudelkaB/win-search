@@ -52,9 +52,13 @@ namespace search.Models
 
         public ObservableCollection<INode> Items { get; private set; } = new ObservableCollection<INode>();
 
-        static NonBlocking.ConcurrentDictionary<string, INode> files = new(StringComparer.OrdinalIgnoreCase);
+        // Keyed by the nodes themselves (NodePath hashes/compares their component chains),
+        // yet still queried by plain path strings - so the bulk MFT load holds no full-path
+        // strings at all. Watcher additions may key by the path string; it is the same
+        // instance their FileNode stores anyway.
+        static NonBlocking.ConcurrentDictionary<object, INode> files = new(NodePath.KeyComparer);
         static ConcurrentBag<ZipNode> zipNodes = new();
-        static ReadOnlyDictionary<string, INode> exes;
+        static INode[] exes;
         Dispatcher Dispatcher = Dispatcher.CurrentDispatcher; //Constructor is called from UI thread => get its dispatcher
         SemaphoreSlim Updating = new SemaphoreSlim(1, 1);
         string filter = null, sort = "+" + nameof(INode.LastChangeTime);
@@ -221,7 +225,8 @@ namespace search.Models
                 {
                     var index = items.IndexOf(node);
                     //Present in files under its path and matching the filter => it belongs to the result
-                    var include = files.TryGetValue(node.FullName, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
+                    //(the node itself is a valid key - no full path is materialized here)
+                    var include = files.TryGetValue(node, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
                     if (index >= 0)
                     {
                         items.RemoveAt(index);
@@ -275,15 +280,8 @@ namespace search.Models
                 case nameof(INode.Size): key = (a, b) => a.Size.CompareTo(b.Size); ascending = !up; break;
                 case nameof(INode.LastChangeTime): key = (a, b) => a.LastChangeTime.CompareTo(b.LastChangeTime); ascending = !up; break;
                 case nameof(INode.LastAccessTime): key = (a, b) => a.LastAccessTime.CompareTo(b.LastAccessTime); ascending = !up; break;
-                case nameof(INode.FullName): key = (a, b) => string.Compare(a.FullName, b.FullName); ascending = up; break;
-                case nameof(INode.Folder):
-                    key = (a, b) =>
-                    {
-                        var folderComparison = string.Compare(a.Folder, b.Folder);
-                        return folderComparison != 0 ? folderComparison : string.Compare(a.Name, b.Name);
-                    };
-                    ascending = up;
-                    break;
+                case nameof(INode.FullName): key = NodePath.ByPath.Compare; ascending = up; break;
+                case nameof(INode.Folder): key = NodePath.ByFolderThenName.Compare; ascending = up; break;
                 default: return null;
             }
             return ascending ? key : (a, b) => key(b, a);
@@ -328,8 +326,15 @@ namespace search.Models
                             case nameof(INode.Size): addSort(x => x.Size, !up); break;
                             case nameof(INode.LastChangeTime): addSort(x => x.LastChangeTime, !up); break;
                             case nameof(INode.LastAccessTime): addSort(x => x.LastAccessTime, !up); break;
-                            case nameof(INode.FullName): addSort(x => x.FullName, up); break; //TODO: Sord without a need to have x.FullName i.e. by parentId chain
-                            case nameof(INode.Folder): addSort(x => (x.Folder, x.Name), up); break;
+                            //Sorted by the parent chains - no full path strings are built
+                            case nameof(INode.FullName):
+                                src = up ? src.OrderBy(x => CancelOr(x), NodePath.ByPath)
+                                         : src.OrderByDescending(x => CancelOr(x), NodePath.ByPath);
+                                break;
+                            case nameof(INode.Folder):
+                                src = up ? src.OrderBy(x => CancelOr(x), NodePath.ByFolderThenName)
+                                         : src.OrderByDescending(x => CancelOr(x), NodePath.ByFolderThenName);
+                                break;
                         }
                     }
                     return src.Take(MaxItems).ToList(); // Take just the first 100 000
@@ -371,9 +376,10 @@ namespace search.Models
         /// </summary>
         /// <param name="n"></param>
         /// <returns></returns>
-        public bool? FoundIn(INode n) => searched.TryGetValue(n.FullName, out var v) ? v : null;
+        public bool? FoundIn(INode n) => searched.TryGetValue(n, out var v) ? v : null;
 
-        NonBlocking.ConcurrentDictionary<string, bool?> searched = new();
+        // Keyed by node identity - result rows are the same instances, and no path strings are held
+        NonBlocking.ConcurrentDictionary<INode, bool?> searched = new();
 
         // Update continualy the UI until canceled
         // refreshUI: false => only run the action (Status binds via INPC); a full list refresh
@@ -446,7 +452,7 @@ namespace search.Models
             {
                 await Task.Run(() => nodes.AsParallel().WithCancellation(thisFind.Token)
                     .ForAll(
-                    n => searched[n.FullName] = Find(n.FullName, toFind, caseInsensitive)
+                    n => searched[n] = Find(n.FullName, toFind, caseInsensitive)
                     ));
             }
             catch (OperationCanceledException) { }
@@ -600,13 +606,13 @@ namespace search.Models
 
         public static string FindExe(params string[] names)
         {
-            foreach (var name in names.Select(x => Path.DirectorySeparatorChar + x))
+            foreach (var name in names)
             {
-                var path = exes?.Keys.AsParallel().FirstOrDefault(x =>
-                x.EndsWith(name, StringComparison.OrdinalIgnoreCase) &&
+                var path = exes?.AsParallel().FirstOrDefault(n =>
+                NodePath.LeafEquals(n, name) &&
                 // do not get development exes
-                !x.Contains(@"\debug\", StringComparison.OrdinalIgnoreCase) &&
-                !x.Contains(@"\obj\", StringComparison.OrdinalIgnoreCase));
+                !NodePath.HasPathComponent(n, "debug") &&
+                !NodePath.HasPathComponent(n, "obj"))?.FullName;
 
                 if (path != null) return path;
             }
@@ -646,7 +652,7 @@ namespace search.Models
                         try
                         {
                             //Add files from all NTFS drives - each drive loads in parallel into a shared dictionary
-                            var loaded = new NonBlocking.ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
+                            var loaded = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
                             // First load => publish every finished drive immediately, so a fast MFT drive
                             // shows at once instead of waiting on the slowest drive's walk (which may hang).
                             // Must NOT key off files.Count: the FileSystemWatcher pre-populates files on any
@@ -666,7 +672,8 @@ namespace search.Models
                                     }
                                     var entries = DriveEntries(d, out var origin);
                                     origins[d.Name.TrimEnd(Path.DirectorySeparatorChar)] = origin;
-                                    foreach (var n in entries) loaded[n.FullName] = n;
+                                    //The node itself is the key - no full path string is ever built or stored
+                                    foreach (var n in entries) loaded[n] = n;
                                     if (publishPartial)
                                     {
                                         files = loaded;
@@ -684,9 +691,8 @@ namespace search.Models
                               {
                                   if (files.TryGetValue(x, out var n)) AddArchive(n);
                               });
-                            var exeNodes = new ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
-                            files.AsParallel().Where(x => !x.Value.IsDirectory && x.Key.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ForAll(x => exeNodes[x.Key] = x.Value);
-                            exes = new(exeNodes);                            
+                            exes = files.Values.AsParallel()
+                                .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
                         }
                         catch { }
                         
@@ -831,7 +837,17 @@ namespace search.Models
         /// </summary>
         /// <param name="n"></param>
         /// <returns></returns>
-        public INode GetParent(INode n) => files.TryGetValue(Path.GetDirectoryName(n.FullName), out var p) ? p : null;
+        public INode GetParent(INode n) => n.PathParent ?? FindByPath(Path.GetDirectoryName(n.FullName));
+
+        /// <summary>
+        /// Node indexed under the path, tolerating the trailing-backslash-less root form ("C:")
+        /// </summary>
+        internal static INode FindByPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (files.TryGetValue(path, out var n)) return n;
+            return path[^1] != '\\' && files.TryGetValue(path + '\\', out n) ? n : null;
+        }
 
         /// <summary>
         /// Unzip all zip nodes - each in separate directory

@@ -90,13 +90,6 @@ namespace search.Models
                     node.Parent = parent;
             }
 
-            // Precompute full paths in parallel - the caller keys its dictionary by FullName
-            Parallel.ForEach(Partitioner.Create(0, parsed.Length), range =>
-            {
-                for (var i = range.Item1; i < range.Item2; i++)
-                    _ = parsed[i]?.FullName;
-            });
-
             CalculateFolderSizes(nodes.Values);
             return nodes.Values;
         }
@@ -299,7 +292,6 @@ namespace search.Models
         sealed class MftNode : INode
         {
             readonly string driveRoot;
-            string fullName;
 
             public MftNode(string driveRoot, uint entryNumber, uint parentEntryNumber, string name, FileAttributes attributes, ulong size, DateTime creationTime, DateTime lastChangeTime, DateTime lastAccessTime)
             {
@@ -321,30 +313,28 @@ namespace search.Models
             public override FileAttributes Attributes { get; protected set; }
             public override string Name { get; }
             public override ulong Size { get; protected set; }
-            public override string FullName => fullName ??= BuildFullName(0);
+
+            /// <summary>
+            /// The path lives in the parent chain (roots and orphans are terminal at the
+            /// drive root, exactly like the old memoized BuildFullName)
+            /// </summary>
+            public override INode PathParent =>
+                EntryNumber == RootEntryNumber || Parent == this ? null : Parent;
+
+            /// <summary>
+            /// Built on demand - full paths are no longer stored per node.
+            /// NodePath keys, sorts and filters nodes without ever calling this in bulk.
+            /// </summary>
+            public override string FullName => PathParent == null ? driveRoot : NodePath.Materialize(this);
+
             public override string ParentName => Parent?.Name ?? "";
-            public override string Folder =>
-                EntryNumber == RootEntryNumber || Parent == null || Parent == this
-                    ? Path.GetDirectoryName(driveRoot) ?? ""
-                    : Parent.FullName;
+            public override string Folder => PathParent?.FullName ?? Path.GetDirectoryName(driveRoot) ?? "";
             public override DateTime CreationTime { get; protected set; }
             public override DateTime LastChangeTime { get; protected set; }
             public override DateTime LastAccessTime { get; protected set; }
 
             public void AddSize(ulong size) => Size += size;
             public void SetSize(ulong size) => Size = size;
-
-            string BuildFullName(int depth)
-            {
-                // Memoize every level so ancestor paths are built once and shared;
-                // the depth cap guards against parent cycles in corrupt records
-                var cached = fullName;
-                if (cached != null) return cached;
-                if (EntryNumber == RootEntryNumber || Parent == null || Parent == this || depth > 255)
-                    return driveRoot;
-
-                return fullName = Path.Combine(Parent.BuildFullName(depth + 1), Name);
-            }
         }
     }
 }

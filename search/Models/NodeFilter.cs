@@ -47,9 +47,18 @@ namespace search.Models
             static readonly MethodInfo miEndsWith = typeof(string).GetMethod("EndsWith", cmpTypes);
             static readonly MethodInfo miEquals = typeof(string).GetMethod("Equals", cmpTypes);
 
+            /// <summary>
+            /// True when every alternative is a plain contains-match without '\' - such a
+            /// pattern can never span a path separator, so matching it against each path
+            /// component is exactly equivalent to matching it against the full path string
+            /// (and needs no full path to be built).
+            /// </summary>
+            public readonly bool PlainContains;
+
             public Pattern(string pattern)
             {
                 this.pattern = pattern;
+                PlainContains = pattern.Split('|').All(x => !x.StartsWith(':') && !x.EndsWith(':') && !x.Contains('\\'));
 
                 //Create and compile expression for comparison
                 ParameterExpression text = Ex.Parameter(typeof(string));
@@ -75,11 +84,50 @@ namespace search.Models
             public static implicit operator String(Pattern p) => p.ToString();
         }
 
+        /// <summary>
+        /// A directory criterion: the filter path plus the indexed node it resolves to.
+        /// Resolved once per NodeFilter instance (a new instance is created for every
+        /// filter change), so node matching is pointer walks instead of string prefixes.
+        /// </summary>
+        class DirCriterion
+        {
+            public readonly string Path;
+            public readonly string Prefix; // Path + '\' for the textual fallback
+            public readonly bool Recursive;
+            INode node;
+            bool resolved;
+
+            public DirCriterion(string path, bool recursive)
+            {
+                Path = path;
+                Prefix = path + '\\';
+                Recursive = recursive;
+            }
+
+            public INode Node
+            {
+                get
+                {
+                    if (!resolved)
+                    {
+                        node = Resolve(Path);
+                        resolved = true;
+                    }
+                    return node;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Resolves a filter directory path to its indexed node (hook for tests)
+        /// </summary>
+        internal static Func<string, INode> Resolve = SearchModel.FindByPath;
+
     List<Pattern> inName = new List<Pattern>();
     List<Pattern> inParentName = new List<Pattern>();
     List<Pattern> inParentsName = new List<Pattern>();
-    // Directories list with recursion flag (Path, Recursive)
-    List<(string Path, bool Recursive)> dirs = new List<(string Path, bool Recursive)>();
+    // Directories with recursion flag
+    List<DirCriterion> dirs = new List<DirCriterion>();
 
         /// <summary>
         /// Create the filter from text - list of OR directories and AND values separated by spaces except in quotes "..."
@@ -101,7 +149,7 @@ namespace search.Models
                     bool recursive = trailing >= 2; // double backslash => recursive subtree
                     var path = raw.TrimEnd('\\');
                     if (!dirs.Any(d => d.Recursive == recursive && string.Equals(d.Path, path, StringComparison.OrdinalIgnoreCase)))
-                        dirs.Add((path, recursive));
+                        dirs.Add(new DirCriterion(path, recursive));
                 }
                 else
                 {
@@ -144,20 +192,48 @@ namespace search.Models
         {
             if (inName.Count > 0 && !inName.All(x => x.Matches(n.Name))) return false;
             if (inParentName.Count > 0 && !inParentName.All(x => x.Matches(n.ParentName))) return false;
-            if (inParentsName.Count > 0 && !inParentsName.All(x => x.Matches(n.FullName))) return false;
+            if (inParentsName.Count > 0 && !inParentsName.All(x => MatchesPath(x, n))) return false;
 
             if (dirs.Count == 0) return true;
 
             if (inName.Count == 0)
+                return dirs.Any(d => d.Recursive ? IsUnder(n, d) : HasParent(n, d));
+            return dirs.Any(d => IsUnder(n, d));
+        }
+
+        /// <summary>
+        /// The pattern matched against the full path, without building it: a plain
+        /// contains-term cannot span a '\', so testing each component (and the terminal
+        /// path prefix) is equivalent. Anchored or '\'-crossing patterns keep the exact
+        /// old semantics on the materialized path.
+        /// </summary>
+        static bool MatchesPath(Pattern p, INode n)
+        {
+            if (!p.PlainContains) return p.Matches(n.FullName);
+
+            var m = n;
+            for (var guard = 0; m.PathParent != null && guard < 512; guard++)
             {
-                var parentDir = Path.GetDirectoryName(n.FullName)?.TrimEnd('\\');
-                return dirs.Any(d => (!d.Recursive && string.Equals(parentDir, d.Path, StringComparison.OrdinalIgnoreCase))
-                                  || (d.Recursive && n.FullName.StartsWith(d.Path + '\\', StringComparison.OrdinalIgnoreCase)));
+                if (p.Matches(m.Name)) return true;
+                m = m.PathParent;
             }
-            else
-            {
-                return dirs.Any(d => n.FullName.StartsWith(d.Path + '\\', StringComparison.OrdinalIgnoreCase));
-            }
+            return p.Matches(m.FullName);
+        }
+
+        /// <summary>
+        /// The node lies strictly inside the directory subtree - by ancestor identity for
+        /// indexed chains, by path prefix for path-backed nodes (zip entries, walked drives)
+        /// </summary>
+        static bool IsUnder(INode n, DirCriterion d) => NodePath.IsUnder(n, d.Node, d.Prefix);
+
+        /// <summary>
+        /// The directory is the node's immediate parent
+        /// </summary>
+        static bool HasParent(INode n, DirCriterion d)
+        {
+            if (n.PathParent != null) return NodePath.HasParent(n, d.Node);
+            var parentDir = Path.GetDirectoryName(n.FullName)?.TrimEnd('\\');
+            return string.Equals(parentDir, d.Path, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

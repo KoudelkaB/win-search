@@ -13,6 +13,14 @@ namespace search.Models
         public abstract ulong Size { get; protected set; }
         public abstract string FullName { get; }
 
+        /// <summary>
+        /// Non-null => this node's path is PathParent's path + '\' + Name (a component
+        /// chain that never stores the full path). Null => the node is path-terminal and
+        /// FullName is its stored path (FileNode, ZipNode, MFT root and orphans).
+        /// NodePath keys, compares and filters nodes through this decomposition.
+        /// </summary>
+        public virtual INode PathParent => null;
+
         public virtual string ParentName => Path.GetFileName(Path.GetDirectoryName(FullName)) ?? "";
         public virtual string Folder => Path.GetDirectoryName(FullName) ?? "";
 
