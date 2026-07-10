@@ -14,7 +14,7 @@ namespace search.Models
     /// </summary>
     internal static class MftChunkReader
     {
-        public const int DefaultChunkBytes = 1 << 24; // 16 MB
+        public const int DefaultChunkBytes = 1 << 23; // 8 MB (empiric minimal with best time)
 
         /// <summary>
         /// Read length bytes as records of bytesPerRecord bytes each, calling

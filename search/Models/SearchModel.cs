@@ -423,7 +423,8 @@ namespace search.Models
             var watch = Stopwatch.StartNew();
 
             // Search
-            var update = ContinualUpdate(thisFind.Token, () => Status = $"Searching for '{text}' - {searched.Count} files checked");
+            var update = ContinualUpdate(thisFind.Token, () =>
+                Status = $"Searching for '{text}' - {searched.Count} files checked in {watch.Elapsed.TotalSeconds:0.0}s");
             var searchText = caseInsensitive ? text.ToLowerInvariant() : text;
 
             // Convert search text to bytes based on encoding
@@ -458,7 +459,7 @@ namespace search.Models
             if (ReferenceEquals(thisFind, lastFind)) //Do not overwrite state of a newer search
             {
                 Searching = false;
-                Status = $"Search of '{text}' {result} in {watch.Elapsed.TotalSeconds:0.0}s => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")}";
+                Status = $"Search of '{text}' {result} => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")} in {watch.Elapsed.TotalSeconds:0.0}s";
                 UIRefreshRequested?.Invoke();
 
                 // The parallel search and its result aggregation can leave substantial
