@@ -85,6 +85,30 @@ namespace search.Tests
         }
 
         [Fact]
+        public void ResolvesTheDataSizeEvenWithoutAResidentAttributeList()
+        {
+            // A non-resident $ATTRIBUTE_LIST leaves no list value in the base record at all;
+            // the extension record's own base reference must be enough to resolve the size
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "frag.bin", size: 999) }) // 6
+                .AddRecord(baseReference: 6, attributes: new[] { FakeMft.NonResidentData(777) })             // 7
+                .Parse();
+
+            Assert.Equal(777UL, nodes.Single(n => n.Name == "frag.bin").Size);
+        }
+
+        [Fact]
+        public void AFreedExtensionRecordDoesNotPoisonAReusedBaseIndex()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "new.bin", size: 999) })    // 6: reused base
+                .AddRecord(inUse: false, baseReference: 6, attributes: new[] { FakeMft.NonResidentData(777) }) // 7: stale, freed extension
+                .Parse();
+
+            Assert.Equal(999UL, nodes.Single(n => n.Name == "new.bin").Size);
+        }
+
+        [Fact]
         public void FallsBackToTheFileNameSizeWhenTheExtensionRecordIsMissing()
         {
             var nodes = WithRoot(1024)
@@ -143,6 +167,64 @@ namespace search.Tests
 
             Assert.Empty(nodes);
             Assert.Equal(100, stream.Position);
+        }
+
+        [Fact]
+        public void HardLinksCountOncePerLinkInFolderSizes()
+        {
+            // A file hard-linked into Docs and Other is one directory entry in each -
+            // both folders count it, and the root counts both entries (walk/Explorer semantics)
+            var mft = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") })  // 6
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Other") }) // 7
+                .AddRecord(attributes: new[]                                                                    // 8
+                {
+                    FakeMft.FileName(6, "linked.bin", ns: 1),
+                    FakeMft.FileName(7, "linked2.bin", ns: 1),
+                    FakeMft.ResidentData(100)
+                });
+
+            var nodes = mft.Parse();
+
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Other").Size);
+            Assert.Equal(200UL, nodes.Single(n => n.Name == "Q:").Size);
+        }
+
+        [Fact]
+        public void HardLinkNamesOverflowedToExtensionRecordsCountInFolderSizes()
+        {
+            // The file's second hard-link name lives in an extension record (its base
+            // record ran out of space) - the extension's own base reference ties it back
+            var mft = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") })  // 6
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Other") }) // 7
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "linked.bin"), FakeMft.ResidentData(100) })  // 8
+                .AddRecord(baseReference: 8, attributes: new[] { FakeMft.FileName(7, "linked2.bin") });         // 9
+
+            var nodes = mft.Parse();
+
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Other").Size);
+            Assert.Equal(200UL, nodes.Single(n => n.Name == "Q:").Size);
+        }
+
+        [Fact]
+        public void ADosShadowNameDoesNotDoubleCountFolderSizes()
+        {
+            var mft = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") }) // 6
+                .AddRecord(attributes: new[]                                                                   // 7
+                {
+                    FakeMft.FileName(6, "AFILE~1.TXT", ns: 2), // the DOS pair of the Win32 name below
+                    FakeMft.FileName(6, "a file.txt", ns: 1),
+                    FakeMft.ResidentData(100)
+                });
+
+            var nodes = mft.Parse();
+
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size);
         }
 
         [Fact]

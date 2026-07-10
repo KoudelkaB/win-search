@@ -16,17 +16,18 @@ namespace search.Models
     /// All parsing lives here in the app - the service and broker only ship bytes.
     ///
     /// The only cross-record dependency is the unnamed $DATA size of a heavily
-    /// fragmented file, which lives in an extension record reached through the base
-    /// record's $ATTRIBUTE_LIST. Extension records are rare, so their data sizes are
-    /// collected into a dictionary while streaming and the affected base records are
-    /// resolved after the last chunk - no random access into the $MFT is ever needed.
+    /// fragmented file, which lives in an extension record. Every extension record
+    /// names its base record in its own header, so their data sizes are collected
+    /// into a dictionary keyed by base index while streaming and the affected base
+    /// records are resolved after the last chunk - no $ATTRIBUTE_LIST parsing and
+    /// no random access into the $MFT is ever needed (and the size is found even
+    /// when the attribute list is non-resident).
     /// </summary>
     static class MftDriveReader
     {
         const uint RootEntryNumber = 5;
 
         const uint AttributeStandardInformation = 0x10;
-        const uint AttributeAttributeList = 0x20;
         const uint AttributeFileName = 0x30;
         const uint AttributeData = 0x80;
         const uint AttributeTerminator = 0xffffffff;
@@ -42,10 +43,14 @@ namespace search.Models
             var recordCount = checked((int)(length / bytesPerRecord));
             var parsed = new MftNode[recordCount];
 
-            // Unnamed $DATA sizes found in extension records, keyed by record index,
-            // and the base records whose size must be resolved from them at the end
+            // What extension records contribute to their base record (keyed by the base index
+            // taken from the extension's own header - no $ATTRIBUTE_LIST parsing needed, so it
+            // works even when the list itself is non-resident): the unnamed $DATA size of a
+            // heavily fragmented file, and the parents of hard-link names that overflowed out
+            // of the base record. pendingSizes holds the files whose base carried no $DATA.
             var extensionSizes = new ConcurrentDictionary<uint, ulong>();
-            var pendingSizes = new ConcurrentQueue<(MftNode Node, uint Target)>();
+            var extensionLinks = new ConcurrentDictionary<uint, List<uint>>();
+            var pendingSizes = new ConcurrentQueue<MftNode>();
 
             MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
             {
@@ -57,16 +62,17 @@ namespace search.Models
                         if (!MftFixup.Apply(record))
                             continue;
 
-                        var index = first + i;
-                        if ((U64(record[32..]) & FileReferenceMask) != 0)
+                        var baseReference = U64(record[32..]) & FileReferenceMask;
+                        if (baseReference != 0)
                         {
-                            // Extension record: only its unnamed $DATA size can matter to a base record
-                            if (TryUnnamedDataSize(record, out var size))
-                                extensionSizes[(uint)index] = size;
+                            // Only in-use extensions - a freed one may point at a base index
+                            // that has since been reused by a different file
+                            if ((U16(record[22..]) & 0x1) != 0)
+                                ScanExtension(record, (uint)baseReference, extensionSizes, extensionLinks);
                             continue;
                         }
 
-                        parsed[index] = ParseRecord(record, index, recordCount, driveRoot, rootName, pendingSizes);
+                        parsed[first + i] = ParseRecord(record, first + i, driveRoot, rootName, pendingSizes);
                     }
                 });
             }, chunkBytes);
@@ -75,9 +81,21 @@ namespace search.Models
                 return Enumerable.Empty<INode>();
 
             // Every extension record has been seen now - resolve the deferred sizes
-            foreach (var (node, target) in pendingSizes)
-                if (extensionSizes.TryGetValue(target, out var size))
+            foreach (var node in pendingSizes)
+                if (extensionSizes.TryGetValue(node.EntryNumber, out var size))
                     node.SetSize(size);
+
+            // ... and merge overflowed hard-link parents into their base records
+            foreach (var (baseIndex, extra) in extensionLinks)
+            {
+                if (baseIndex >= (uint)recordCount || parsed[(int)baseIndex] is not MftNode node || node.IsDirectory)
+                    continue;
+                var links = new List<uint>(1 + extra.Count);
+                if (node.LinkParents != null) links.AddRange(node.LinkParents);
+                else links.Add(node.ParentEntryNumber);
+                links.AddRange(extra);
+                node.LinkParents = links.ToArray();
+            }
 
             var nodes = new Dictionary<uint, MftNode>(parsed.Count(n => n != null));
             foreach (var node in parsed)
@@ -90,11 +108,11 @@ namespace search.Models
                     node.Parent = parent;
             }
 
-            CalculateFolderSizes(nodes.Values);
+            CalculateFolderSizes(nodes);
             return nodes.Values;
         }
 
-        static MftNode ParseRecord(ReadOnlySpan<byte> record, int index, int recordCount, string driveRoot, string rootName, ConcurrentQueue<(MftNode, uint)> pendingSizes)
+        static MftNode ParseRecord(ReadOnlySpan<byte> record, int index, string driveRoot, string rootName, ConcurrentQueue<MftNode> pendingSizes)
         {
             var headerFlags = U16(record[22..]);
             if ((headerFlags & 0x1) == 0)
@@ -106,12 +124,17 @@ namespace search.Models
             var nameRank = int.MaxValue;
             ulong parentReference = 0, fileNameSize = 0;
             uint fileNameFlags = 0;
+            // Every non-DOS $FILE_NAME is one directory entry (hard link). Folder sizes
+            // must count the file once per link - that is what a directory walk and
+            // Explorer's folder properties do. Allocated only for multi-link files.
+            var linkCount = 0;
+            uint firstLinkParent = 0;
+            List<uint> linkParents = null;
             ulong fnCreated = 0, fnModified = 0, fnAccessed = 0;
             var hasStandardInfo = false;
             ulong siCreated = 0, siModified = 0, siAccessed = 0;
             var hasDataSize = false;
             ulong dataSize = 0;
-            var attributeList = default(ReadOnlySpan<byte>);
 
             var offset = (int)U16(record[20..]);
             while (offset + 24 <= record.Length)
@@ -143,13 +166,15 @@ namespace search.Models
                                 hasStandardInfo = true;
                                 break;
 
-                            case AttributeAttributeList:
-                                attributeList = value;
-                                break;
-
                             case AttributeFileName when valueLength >= 66:
                                 var nameBytes = value[64] * 2;
                                 var rank = value[65] switch { 1 => 0, 3 => 1, 0 => 2, _ => 3 }; // Win32, Win32+DOS, POSIX, DOS
+                                if (!isDirectory && value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
+                                {
+                                    var linkParent = (uint)(U64(value) & FileReferenceMask);
+                                    if (linkCount++ == 0) firstLinkParent = linkParent;
+                                    else (linkParents ??= new List<uint>(4) { firstLinkParent }).Add(linkParent);
+                                }
                                 if (rank < nameRank && 66 + nameBytes <= valueLength)
                                 {
                                     nameRank = rank;
@@ -200,45 +225,26 @@ namespace search.Models
                 isDirectory ? 0UL : dataSize,
                 Time(hasStandardInfo ? siCreated : fnCreated),
                 Time(hasStandardInfo ? siModified : fnModified),
-                Time(hasStandardInfo ? siAccessed : fnAccessed));
+                Time(hasStandardInfo ? siAccessed : fnAccessed))
+            {
+                LinkParents = linkParents?.ToArray()
+            };
 
             // The unnamed $DATA lives in an extension record - resolve after the last chunk
-            if (!isDirectory && !hasDataSize && TryDataTarget(attributeList, index, recordCount, out var target))
-                pendingSizes.Enqueue((node, target));
+            if (!isDirectory && !hasDataSize)
+                pendingSizes.Enqueue(node);
 
             return node;
         }
 
-        static bool TryDataTarget(ReadOnlySpan<byte> list, int baseIndex, int recordCount, out uint target)
+        /// <summary>
+        /// Collect what an extension record contributes to its base: the unnamed $DATA
+        /// size (resident, or the non-resident instance starting at VCN 0) and the
+        /// parents of any non-DOS $FILE_NAME (hard-link names overflowed from the base)
+        /// </summary>
+        static void ScanExtension(ReadOnlySpan<byte> record, uint baseIndex, ConcurrentDictionary<uint, ulong> sizes, ConcurrentDictionary<uint, List<uint>> links)
         {
-            target = 0;
-            var offset = 0;
-            while (offset + 26 <= list.Length)
-            {
-                var type = U32(list[offset..]);
-                if (type == 0 || type == AttributeTerminator)
-                    break;
-
-                var entryLength = (int)U16(list[(offset + 4)..]);
-                if (entryLength < 26 || offset + entryLength > list.Length)
-                    break;
-
-                if (type == AttributeData && list[offset + 6] == 0 && U64(list[(offset + 8)..]) == 0)
-                {
-                    var reference = U64(list[(offset + 16)..]) & FileReferenceMask;
-                    target = (uint)reference;
-                    return reference != (ulong)baseIndex && reference < (ulong)recordCount;
-                }
-
-                offset += entryLength;
-            }
-
-            return false;
-        }
-
-        static bool TryUnnamedDataSize(ReadOnlySpan<byte> record, out ulong dataSize)
-        {
-            dataSize = 0;
+            List<uint> parents = null;
             var offset = (int)U16(record[20..]);
             while (offset + 24 <= record.Length)
             {
@@ -253,22 +259,34 @@ namespace search.Models
                 if (type == AttributeData && record[offset + 9] == 0)
                 {
                     if (record[offset + 8] == 0)
+                        sizes[baseIndex] = U32(record[(offset + 16)..]);
+                    else if (length >= 64 && U64(record[(offset + 16)..]) == 0)
+                        sizes[baseIndex] = U64(record[(offset + 48)..]);
+                }
+                else if (type == AttributeFileName && record[offset + 8] == 0)
+                {
+                    var valueLength = (int)U32(record[(offset + 16)..]);
+                    var valueOffset = (int)U16(record[(offset + 20)..]);
+                    if (valueLength >= 66 && valueOffset + valueLength <= length)
                     {
-                        dataSize = U32(record[(offset + 16)..]);
-                        return true;
-                    }
-
-                    if (length >= 64 && U64(record[(offset + 16)..]) == 0)
-                    {
-                        dataSize = U64(record[(offset + 48)..]);
-                        return true;
+                        var value = record.Slice(offset + valueOffset, valueLength);
+                        if (value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
+                            (parents ??= new List<uint>(2)).Add((uint)(U64(value) & FileReferenceMask));
                     }
                 }
 
                 offset += length;
             }
 
-            return false;
+            if (parents != null)
+                links.AddOrUpdate(baseIndex, parents,
+                    (_, old) =>
+                    {
+                        var merged = new List<uint>(old.Count + parents.Count);
+                        merged.AddRange(old);
+                        merged.AddRange(parents);
+                        return merged;
+                    });
         }
 
         static ushort U16(ReadOnlySpan<byte> bytes) => BinaryPrimitives.ReadUInt16LittleEndian(bytes);
@@ -278,14 +296,34 @@ namespace search.Models
         static DateTime Time(ulong fileTime)
             => fileTime == 0 || fileTime > MaxFileTime ? DateTime.MinValue : DateTime.FromFileTimeUtc((long)fileTime);
 
-        static void CalculateFolderSizes(IEnumerable<MftNode> nodes)
+        /// <summary>
+        /// A file counts once per hard link (per non-DOS $FILE_NAME), so folder sizes
+        /// match what a directory walk and Explorer's folder properties report.
+        /// </summary>
+        static void CalculateFolderSizes(Dictionary<uint, MftNode> nodes)
         {
-            foreach (var node in nodes.Where(n => !n.IsDirectory))
+            foreach (var node in nodes.Values)
+            {
+                if (node.IsDirectory) continue;
+
+                if (node.LinkParents == null)
+                {
+                    AddToChain(node.Parent, node.Size);
+                }
+                else
+                {
+                    foreach (var link in node.LinkParents)
+                        if (nodes.TryGetValue(link, out var parent) && parent != node)
+                            AddToChain(parent, node.Size);
+                }
+            }
+
+            static void AddToChain(MftNode parent, ulong size)
             {
                 // The depth cap guards against parent cycles in corrupt records
                 var depth = 0;
-                for (var parent = node.Parent; parent != null && depth++ < 255; parent = parent.Parent)
-                    parent.AddSize(node.Size);
+                for (; parent != null && depth++ < 255; parent = parent.Parent)
+                    parent.AddSize(size);
             }
         }
 
@@ -309,6 +347,12 @@ namespace search.Models
             public uint EntryNumber { get; }
             public uint ParentEntryNumber { get; }
             public MftNode Parent { get; set; }
+
+            /// <summary>
+            /// Parent entries of every hard link when the file has more than one
+            /// (includes the primary parent); null for ordinary single-link files
+            /// </summary>
+            public uint[] LinkParents { get; set; }
 
             public override FileAttributes Attributes { get; protected set; }
             public override string Name { get; }
