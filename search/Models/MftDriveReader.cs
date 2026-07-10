@@ -11,8 +11,15 @@ using search.Core;
 namespace search.Models
 {
     /// <summary>
-    /// Parses a raw $MFT (already acquired into an MftBuffer by MftSource) into INodes.
+    /// Parses a raw $MFT byte stream (delivered by MftSource) into INodes in a single
+    /// pass over bounded chunks - the whole $MFT is never held in memory.
     /// All parsing lives here in the app - the service and broker only ship bytes.
+    ///
+    /// The only cross-record dependency is the unnamed $DATA size of a heavily
+    /// fragmented file, which lives in an extension record reached through the base
+    /// record's $ATTRIBUTE_LIST. Extension records are rare, so their data sizes are
+    /// collected into a dictionary while streaming and the affected base records are
+    /// resolved after the last chunk - no random access into the $MFT is ever needed.
     /// </summary>
     static class MftDriveReader
     {
@@ -26,31 +33,51 @@ namespace search.Models
         const ulong FileReferenceMask = 0xffffffffffff;
         const ulong MaxFileTime = 2650467743999999999; // DateTime.MaxValue.ToFileTimeUtc()
 
-        public static IEnumerable<INode> GetNodes(MftBuffer mft, DriveInfo drive)
+        public static IEnumerable<INode> GetNodes(Stream mft, int bytesPerRecord, long length, string driveRoot, int chunkBytes = MftChunkReader.DefaultChunkBytes)
         {
-            if (mft == null || mft.RecordCount == 0)
+            if (mft == null)
                 return Enumerable.Empty<INode>();
 
-            var driveRoot = drive.RootDirectory.FullName;
             var rootName = driveRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var recordCount = checked((int)(length / bytesPerRecord));
+            var parsed = new MftNode[recordCount];
 
-            var valid = new bool[mft.RecordCount];
-            var parsed = new MftNode[mft.RecordCount];
+            // Unnamed $DATA sizes found in extension records, keyed by record index,
+            // and the base records whose size must be resolved from them at the end
+            var extensionSizes = new ConcurrentDictionary<uint, ulong>();
+            var pendingSizes = new ConcurrentQueue<(MftNode Node, uint Target)>();
 
-            // Fix up every record before any parsing: parsing may follow an attribute
-            // list into another record, which is only safe once no record is mutated.
-            Parallel.ForEach(Partitioner.Create(0, mft.RecordCount), range =>
+            MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
             {
-                for (var i = range.Item1; i < range.Item2; i++)
-                    valid[i] = MftFixup.Apply(mft.Record(i));
-            });
+                Parallel.ForEach(Partitioner.Create(0, count), range =>
+                {
+                    for (var i = range.Item1; i < range.Item2; i++)
+                    {
+                        var record = buffer.AsSpan(i * bytesPerRecord, bytesPerRecord);
+                        if (!MftFixup.Apply(record))
+                            continue;
 
-            Parallel.ForEach(Partitioner.Create(0, mft.RecordCount), range =>
-            {
-                for (var i = range.Item1; i < range.Item2; i++)
-                    if (valid[i])
-                        parsed[i] = ParseRecord(mft, valid, i, driveRoot, rootName);
-            });
+                        var index = first + i;
+                        if ((U64(record[32..]) & FileReferenceMask) != 0)
+                        {
+                            // Extension record: only its unnamed $DATA size can matter to a base record
+                            if (TryUnnamedDataSize(record, out var size))
+                                extensionSizes[(uint)index] = size;
+                            continue;
+                        }
+
+                        parsed[index] = ParseRecord(record, index, recordCount, driveRoot, rootName, pendingSizes);
+                    }
+                });
+            }, chunkBytes);
+
+            if (recordCount == 0)
+                return Enumerable.Empty<INode>();
+
+            // Every extension record has been seen now - resolve the deferred sizes
+            foreach (var (node, target) in pendingSizes)
+                if (extensionSizes.TryGetValue(target, out var size))
+                    node.SetSize(size);
 
             var nodes = new Dictionary<uint, MftNode>(parsed.Count(n => n != null));
             foreach (var node in parsed)
@@ -74,15 +101,11 @@ namespace search.Models
             return nodes.Values;
         }
 
-        static MftNode ParseRecord(MftBuffer mft, bool[] valid, int index, string driveRoot, string rootName)
+        static MftNode ParseRecord(ReadOnlySpan<byte> record, int index, int recordCount, string driveRoot, string rootName, ConcurrentQueue<(MftNode, uint)> pendingSizes)
         {
-            ReadOnlySpan<byte> record = mft.Record(index);
             var headerFlags = U16(record[22..]);
             if ((headerFlags & 0x1) == 0)
                 return null;
-
-            if ((U64(record[32..]) & FileReferenceMask) != 0)
-                return null; // extension record; its attributes are reached through the base record's attribute list
 
             var isDirectory = (headerFlags & 0x2) != 0;
 
@@ -166,7 +189,7 @@ namespace search.Models
             if (name == null)
                 return null;
 
-            if (!isDirectory && !hasDataSize && !TryDataSizeFromAttributeList(mft, valid, attributeList, index, out dataSize))
+            if (!isDirectory && !hasDataSize)
                 dataSize = fileNameSize;
 
             // Mask to standard FILE_ATTRIBUTE_* bits - $FILE_NAME flags carry 0x10000000 for directories,
@@ -175,7 +198,7 @@ namespace search.Models
             if (isDirectory)
                 attributes |= FileAttributes.Directory;
 
-            return new MftNode(
+            var node = new MftNode(
                 driveRoot,
                 (uint)index,
                 (uint)parentReference,
@@ -185,11 +208,17 @@ namespace search.Models
                 Time(hasStandardInfo ? siCreated : fnCreated),
                 Time(hasStandardInfo ? siModified : fnModified),
                 Time(hasStandardInfo ? siAccessed : fnAccessed));
+
+            // The unnamed $DATA lives in an extension record - resolve after the last chunk
+            if (!isDirectory && !hasDataSize && TryDataTarget(attributeList, index, recordCount, out var target))
+                pendingSizes.Enqueue((node, target));
+
+            return node;
         }
 
-        static bool TryDataSizeFromAttributeList(MftBuffer mft, bool[] valid, ReadOnlySpan<byte> list, int baseIndex, out ulong dataSize)
+        static bool TryDataTarget(ReadOnlySpan<byte> list, int baseIndex, int recordCount, out uint target)
         {
-            dataSize = 0;
+            target = 0;
             var offset = 0;
             while (offset + 26 <= list.Length)
             {
@@ -203,9 +232,9 @@ namespace search.Models
 
                 if (type == AttributeData && list[offset + 6] == 0 && U64(list[(offset + 8)..]) == 0)
                 {
-                    var target = (long)(U64(list[(offset + 16)..]) & FileReferenceMask);
-                    return target != baseIndex && target < mft.RecordCount && valid[target] &&
-                           TryUnnamedDataSize(mft.Record((int)target), out dataSize);
+                    var reference = U64(list[(offset + 16)..]) & FileReferenceMask;
+                    target = (uint)reference;
+                    return reference != (ulong)baseIndex && reference < (ulong)recordCount;
                 }
 
                 offset += entryLength;
@@ -303,6 +332,7 @@ namespace search.Models
             public override DateTime LastAccessTime { get; protected set; }
 
             public void AddSize(ulong size) => Size += size;
+            public void SetSize(ulong size) => Size = size;
 
             string BuildFullName(int depth)
             {

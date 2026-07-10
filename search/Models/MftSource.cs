@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using search.Core;
@@ -11,17 +12,18 @@ namespace search.Models
     internal enum MftOrigin { Service, Direct, Broker, Walk }
 
     /// <summary>
-    /// Acquires the raw $MFT of an NTFS drive from the first source available, in order:
+    /// Reads the raw $MFT of an NTFS drive from the first source available, in order:
     /// direct in-process read (only when elevated) -> elevated broker when already connected
     /// -> WinSearchService pipe (no prompt, instant availability check) -> waiting for the
     /// broker's UAC prompt. The wait comes last on purpose: the first scan starts while the
     /// prompt is still unanswered, and blocking on it would delay a scan the service (or
-    /// nothing at all) should serve. Returns null when none worked - the caller falls back
-    /// to the zero-privilege directory walk.
+    /// nothing at all) should serve. The $MFT is parsed while it streams in - it is never
+    /// buffered whole. Returns null when no source worked - the caller falls back to the
+    /// zero-privilege directory walk.
     /// </summary>
     internal static class MftSource
     {
-        public static MftBuffer TryAcquire(DriveInfo drive, out MftOrigin origin)
+        public static IEnumerable<INode> TryGetNodes(DriveInfo drive, out MftOrigin origin)
         {
             var volume = drive.RootDirectory.FullName;
 
@@ -34,7 +36,8 @@ namespace search.Models
                 {
                     origin = MftOrigin.Direct;
                     using var raw = RawMft.Open(volume);
-                    return MftBuffer.From(raw);
+                    using var stream = raw.CreateStream();
+                    return MftDriveReader.GetNodes(stream, raw.BytesPerMftRecord, raw.Length, volume);
                 }
                 catch (Exception e)
                 {
@@ -51,7 +54,7 @@ namespace search.Models
                 if (Broker.Available)
                 {
                     origin = MftOrigin.Broker;
-                    return Broker.ReadMft(volume);
+                    return Broker.ReadMftNodes(volume);
                 }
             }
             catch (Exception e)
@@ -64,8 +67,8 @@ namespace search.Models
             try
             {
                 origin = MftOrigin.Service;
-                var buffer = FromService(volume);
-                if (buffer != null) return buffer;
+                var nodes = FromService(volume);
+                if (nodes != null) return nodes;
             }
             catch (Exception e)
             {
@@ -79,7 +82,7 @@ namespace search.Models
                 if (Broker.WaitAvailable(TimeSpan.FromSeconds(60)))
                 {
                     origin = MftOrigin.Broker;
-                    return Broker.ReadMft(volume);
+                    return Broker.ReadMftNodes(volume);
                 }
             }
             catch (Exception e)
@@ -92,10 +95,10 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Request the raw $MFT from the WinSearchService. Returns null when the
-        /// service is not installed/running (fast connect timeout).
+        /// Request the raw $MFT from the WinSearchService and parse it as it streams in.
+        /// Returns null when the service is not installed/running (fast connect timeout).
         /// </summary>
-        static MftBuffer FromService(string volume)
+        static IEnumerable<INode> FromService(string volume)
         {
             using var pipe = new NamedPipeClientStream(".", ServicePipe.PipeName, PipeDirection.InOut);
             try
@@ -122,10 +125,11 @@ namespace search.Models
 
             var bytesPerRecord = ServicePipe.ReadInt32(pipe);
             var length = ServicePipe.ReadInt64(pipe);
-            if (bytesPerRecord <= 0 || bytesPerRecord > (1 << 16) || length < 0)
+            if (bytesPerRecord <= 0 || length < 0)
                 throw new InvalidDataException($"Invalid MFT header from the service: {bytesPerRecord}/{length}.");
 
-            return MftBuffer.From(pipe, bytesPerRecord, length);
+            // GetNodes consumes the whole payload before returning, so disposing the pipe here is safe
+            return MftDriveReader.GetNodes(pipe, bytesPerRecord, length, volume);
         }
     }
 }

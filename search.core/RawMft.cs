@@ -61,36 +61,78 @@ namespace search.Core
         }
 
         /// <summary>
-        /// Stream the logical $MFT byte stream run-by-run to the sink as (buffer, usedCount).
-        /// Sparse runs are zero-filled so record indexes stay aligned.
-        /// Only chunkSize bytes are held in memory - the whole $MFT (possibly GBs) is never buffered.
+        /// Sequential read-only stream over the logical $MFT byte stream, walked
+        /// run-by-run with sparse runs zero-filled so record indexes stay aligned.
+        /// Only the caller's buffer is filled - the whole $MFT (possibly GBs) is
+        /// never held in memory. The stream stays valid while this RawMft is open.
+        /// </summary>
+        public Stream CreateStream() => new MftDataStream(this);
+
+        /// <summary>
+        /// Stream the logical $MFT byte stream to the sink as (buffer, usedCount).
+        /// Only chunkSize bytes are held in memory.
         /// </summary>
         public void CopyTo(Action<byte[], int> sink, int chunkSize = 1 << 20)
         {
+            using var stream = CreateStream();
             var chunk = new byte[chunkSize];
-            var position = 0L;
-            foreach (var run in runs)
-            {
-                var runBytes = checked((long)(run.Clusters * volume.BytesPerCluster));
-                var runPosition = 0L;
-                while (runPosition < runBytes && position < Length)
-                {
-                    var count = (int)Math.Min(chunk.Length, Math.Min(runBytes - runPosition, Length - position));
-                    if (run.IsSparse)
-                        Array.Clear(chunk, 0, count);
-                    else
-                        volume.Read(checked((ulong)(run.Lcn * (long)volume.BytesPerCluster + runPosition)), chunk, 0, count);
-                    sink(chunk, count);
-                    position += count;
-                    runPosition += count;
-                }
-            }
-
-            if (position < Length)
-                throw new InvalidDataException("The $MFT data runs do not cover the whole $MFT.");
+            int count;
+            while ((count = stream.Read(chunk, 0, chunk.Length)) > 0)
+                sink(chunk, count);
         }
 
         public void Dispose() => volume.Dispose();
+
+        sealed class MftDataStream : Stream
+        {
+            readonly RawMft mft;
+            int run;
+            long runPosition; // Bytes consumed of the current run
+            long position;    // Logical position in the $MFT data stream
+
+            public MftDataStream(RawMft mft) => this.mft = mft;
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => mft.Length;
+            public override long Position { get => position; set => throw new NotSupportedException(); }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                count = (int)Math.Min(count, mft.Length - position);
+                if (count <= 0) return 0;
+
+                var bytesPerCluster = (long)mft.volume.BytesPerCluster;
+                while (run < mft.runs.Count)
+                {
+                    var current = mft.runs[run];
+                    var runBytes = checked((long)current.Clusters * bytesPerCluster);
+                    if (runPosition >= runBytes)
+                    {
+                        run++;
+                        runPosition = 0;
+                        continue;
+                    }
+
+                    var chunk = (int)Math.Min(count, runBytes - runPosition);
+                    if (current.IsSparse)
+                        Array.Clear(buffer, offset, chunk);
+                    else
+                        mft.volume.Read(checked((ulong)(current.Lcn * bytesPerCluster + runPosition)), buffer, offset, chunk);
+                    runPosition += chunk;
+                    position += chunk;
+                    return chunk;
+                }
+
+                throw new InvalidDataException("The $MFT data runs do not cover the whole $MFT.");
+            }
+
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
 
         static (List<DataRun> Runs, ulong DataSize) MftDataRuns(ReadOnlySpan<byte> record)
         {

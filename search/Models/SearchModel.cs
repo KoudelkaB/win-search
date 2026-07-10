@@ -752,8 +752,8 @@ namespace search.Models
 
             if (string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
             {
-                var mft = MftSource.TryAcquire(drive, out origin);
-                if (mft != null) return MftDriveReader.GetNodes(mft, drive);
+                var nodes = MftSource.TryGetNodes(drive, out origin);
+                if (nodes != null) return nodes;
                 ntfsWalked = true;
             }
 

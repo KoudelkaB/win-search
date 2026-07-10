@@ -189,20 +189,22 @@ namespace search
             });
 
         /// <summary>
-        /// Read the raw $MFT of a volume through the broker (used when the service is not installed)
+        /// Read the raw $MFT of a volume through the broker (used when the service is not
+        /// installed) and parse it while it streams in - the payload is consumed exactly,
+        /// so the status line follows and the channel stays balanced.
         /// </summary>
-        internal static Models.MftBuffer ReadMft(string volumeMountPoint)
+        internal static IEnumerable<Models.INode> ReadMftNodes(string volumeMountPoint)
         {
-            Models.MftBuffer buffer = null;
+            IEnumerable<Models.INode> nodes = null;
             Run(Command.READ_MFT, s => WriteLine(s, volumeMountPoint), s =>
             {
                 var header = ReadLine(s);
                 var parts = header?.Split(' ');
                 if (parts?.Length != 2 || !int.TryParse(parts[0], out var bytesPerRecord) || !long.TryParse(parts[1], out var length))
                     throw new Exception(header ?? "Broker pipe closed.");
-                buffer = Models.MftBuffer.From(s, bytesPerRecord, length);
+                nodes = Models.MftDriveReader.GetNodes(s, bytesPerRecord, length, volumeMountPoint);
             });
-            return buffer;
+            return nodes;
         }
 
         static void ReceivePayload(Stream s, string dest)
