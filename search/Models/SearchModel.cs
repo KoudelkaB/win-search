@@ -125,6 +125,7 @@ namespace search.Models
                     newSort ??= sort;
                     var refresh = dataRefresh
                         | filter != newFilter //refilter also on new filter
+                        | sort != newSort //a new ordering needs the full filtered source, not the current result window
                         | !itemsComplete; //previous publishing was canceled => Items are partial and can not be resorted in place
 
                     // Set current filter/sorter before possible canceling

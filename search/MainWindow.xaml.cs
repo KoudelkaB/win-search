@@ -18,6 +18,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using search.Models;
 using SharpCompress.Common;
 using IOPath = System.IO.Path;
@@ -1791,6 +1792,10 @@ namespace search
 
                         _lastHeaderClicked = headerClicked;
                         _lastDirection = direction;
+
+                        // ListView updates are rendered after this handler yields to the
+                        // dispatcher. Keep the wait cursor until that render has completed.
+                        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
                     }
                 }
             }
