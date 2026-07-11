@@ -147,7 +147,7 @@ namespace search.Models
         public static List<string> UniversalCopyOrMove(this string file, string dest, bool overwrite, bool move = false)
         {
             var errors = new List<string>();
-            if (file == dest)
+            if (!move && PathsReferToSameLocation(file, dest))
             {
                 // Create a copy if the same
                 dest = Path.Combine(Path.GetDirectoryName(dest), Path.GetFileNameWithoutExtension(dest) + "-Copy" + Path.GetExtension(dest));
@@ -156,7 +156,8 @@ namespace search.Models
             // Precreate the destination directory if it does not exist yet
             try
             {
-                System.IO.Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                var parent = Path.GetDirectoryName(Path.GetFullPath(dest));
+                if (!string.IsNullOrEmpty(parent)) System.IO.Directory.CreateDirectory(parent);
             }
             catch (Exception e)
             {
@@ -220,6 +221,26 @@ namespace search.Models
                 errors.Add(e.Message);
             }
             return errors;
+        }
+
+        /// <summary>
+        /// Windows paths are case-insensitive. Comparing the input strings directly makes a
+        /// case-only spelling of the same path reach File.Copy/File.Move, which then reports
+        /// that source and destination are the same file.
+        /// </summary>
+        internal static bool PathsReferToSameLocation(string first, string second)
+        {
+            if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second)) return false;
+            try
+            {
+                static string Normalize(string path) => Path.GetFullPath(path)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(Normalize(first), Normalize(second), StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         /// <summary>

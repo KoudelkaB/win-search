@@ -11,6 +11,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using System.Buffers;
 
 namespace search.Models
 {
@@ -368,6 +369,65 @@ namespace search.Models
         }
 
         /// <summary>
+        /// Remove a path and every indexed descendant. FileSystemWatcher normally emits
+        /// only one rename event for a directory, so removing just that directory leaves
+        /// all of its old child paths searchable forever.
+        /// </summary>
+        INode[] RemoveTree(string path)
+        {
+            if (!files.TryGetValue(path, out var root)) return Array.Empty<INode>();
+            var prefix = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var candidates = files.Values.AsParallel()
+                .Where(n => ReferenceEquals(n, root) || NodePath.IsUnder(n, root, prefix))
+                .ToArray();
+            var removed = new List<INode>(candidates.Length);
+            foreach (var candidate in candidates)
+            {
+                if (!files.TryRemove(candidate, out var actual)) continue;
+                removed.Add(actual);
+                if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
+            }
+            return removed.ToArray();
+        }
+
+        /// <summary>
+        /// Re-index descendants after a directory rename. Windows reports the directory
+        /// rename but does not report a rename for every child.
+        /// </summary>
+        void ReindexRenamedTree(string oldPath, string newPath, IEnumerable<INode> removed)
+        {
+            var removedItems = removed.ToArray();
+            var archivePaths = removedItems.OfType<ZipNode>()
+                .Select(n => n.ZIP.FullName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path.Length)
+                .ToArray();
+            GetOrAddNew(newPath);
+            var oldPrefix = oldPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var newPrefix = newPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (var old in removedItems
+                .Where(n => n is not ZipNode)
+                .Where(n => !string.Equals(n.FullName, oldPath, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(n => n.IsDirectory ? 0 : 1)
+                .ThenBy(n => n.FullName.Length))
+            {
+                if (!old.FullName.StartsWith(oldPrefix + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
+                GetOrAddNew(newPrefix + old.FullName.Substring(oldPrefix.Length));
+            }
+            // Re-open renamed archives so their entries remain real ZipNodes rather than
+            // path-only FileNodes that do not exist on disk.
+            foreach (var oldArchive in archivePaths)
+            {
+                if (!oldArchive.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                var newArchive = newPrefix + oldArchive.Substring(oldPrefix.Length);
+                if (files.TryGetValue(newArchive, out var archive)) AddArchive(archive);
+            }
+        }
+
+        static bool HasArchiveChildren(INode node)
+            => node != null && zipNodes.Any(z => ReferenceEquals(z.ZIP, node));
+
+        /// <summary>
         /// Refresh node and apply its size change to ancestor directory sizes
         /// </summary>
         /// <param name="path"></param>
@@ -507,7 +567,7 @@ namespace search.Models
             {
                 await Task.Run(() => nodes.AsParallel().WithCancellation(thisFind.Token)
                     .ForAll(
-                    n => searched[n] = Find(n.FullName, toFind, caseInsensitive)
+                    n => searched[n] = FindFileContents(n.FullName, toFind, caseInsensitive)
                     ));
             }
             catch (OperationCanceledException) { }
@@ -530,13 +590,27 @@ namespace search.Models
             }
         }
 
-        bool? Find(string path, ReadOnlyMemory<byte> search, bool caseInsensitive = false)
+        internal static bool? FindFileContents(string path, ReadOnlyMemory<byte> search, bool caseInsensitive = false)
         {
+            const int StackBufferLength = 1 << 16;
+            byte[] rented = null;
             try
             {
                 if (search.Length == 0) return true;
-                Span<byte> buf = stackalloc byte[1 << 16]; //64KB fast buffer
-                Span<byte> lowerBuf = caseInsensitive ? stackalloc byte[1 << 16] : Span<byte>.Empty;
+                // The UI normally supplies a short needle, so keep the hot path allocation-
+                // free. Pool only the exceptional buffer that must be larger than 64 KiB:
+                // it needs room for the whole retained needle plus at least one new byte.
+                var bufferLength = search.Length < StackBufferLength
+                    ? StackBufferLength
+                    : checked(search.Length + 1);
+                scoped Span<byte> buf;
+                if (bufferLength == StackBufferLength)
+                    buf = stackalloc byte[StackBufferLength];
+                else
+                {
+                    rented = ArrayPool<byte>.Shared.Rent(bufferLength);
+                    buf = rented.AsSpan(0, bufferLength);
+                }
                 using var s = File.OpenRead(path);
                 int start = 0; //Overlap kept from the previous block
                 while (true)
@@ -545,20 +619,18 @@ namespace search.Models
                     var len = start + read;
                     var bufSlice = buf.Slice(0, len);
 
-                    var haystack = bufSlice;
                     if (caseInsensitive)
                     {
-                        // Convert buffer to lowercase for case-insensitive search
-                        var lowerSlice = lowerBuf.Slice(0, len);
+                        // Fold in place: the original bytes are not needed after matching,
+                        // and the retained overlap may safely remain folded for the next read.
                         for (int i = 0; i < len; i++)
                         {
                             var b = bufSlice[i];
-                            lowerSlice[i] = (b >= 65 && b <= 90) ? (byte)(b + 32) : b; // Convert A-Z to a-z
+                            if (b >= 'A' && b <= 'Z') bufSlice[i] = (byte)(b + ('a' - 'A'));
                         }
-                        haystack = lowerSlice;
                     }
 
-                    if (haystack.IndexOf(search.Span) != -1) return true;
+                    if (bufSlice.IndexOf(search.Span) != -1) return true;
                     if (read == 0) return false; //End of file
                     // Keep the tail that could contain the start of a match crossing the block boundary
                     start = Math.Min(search.Length - 1, len);
@@ -569,6 +641,10 @@ namespace search.Models
             {
                 return null;
             }
+            finally
+            {
+                if (rented != null) ArrayPool<byte>.Shared.Return(rented);
+            }
         }
 
         // Registrations are added on the UI thread and completed on the FS change processing thread => lock
@@ -576,25 +652,44 @@ namespace search.Models
             new Dictionary<string, List<TaskCompletionSource<INode>>>(StringComparer.InvariantCultureIgnoreCase);
         Task<INode> WaitForFileCreationIf(string path, Func<bool> p)
         {
-            var t = new TaskCompletionSource<INode>();
+            var t = new TaskCompletionSource<INode>(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (OnFileCreated)
             {
                 if (!OnFileCreated.TryGetValue(path, out var l)) l = OnFileCreated[path] = new List<TaskCompletionSource<INode>>();
                 l.Add(t);
             }
-            if (!p())
+            bool created;
+            try { created = p(); }
+            catch
             {
-                lock (OnFileCreated)
-                {
-                    if (OnFileCreated.TryGetValue(path, out var l))
-                    {
-                        l.Remove(t);
-                        if (l.Count == 0) OnFileCreated.Remove(path);
-                    }
-                }
-                t.SetCanceled();
+                RemoveCreationWaiter(path, t);
+                throw;
+            }
+            if (!created)
+            {
+                RemoveCreationWaiter(path, t);
+                t.TrySetCanceled();
+            }
+            else if (!t.Task.IsCompleted && (File.Exists(path) || Directory.Exists(path)))
+            {
+                // FileSystemWatcher is a notification mechanism, not a delivery guarantee.
+                // Complete from the filesystem after a successful operation so a dropped or
+                // coalesced Created event can never leave zip/unzip awaiting forever.
+                var node = GetOrAddNew(path);
+                RemoveCreationWaiter(path, t);
+                t.TrySetResult(node);
             }
             return t.Task;
+        }
+
+        void RemoveCreationWaiter(string path, TaskCompletionSource<INode> waiter)
+        {
+            lock (OnFileCreated)
+            {
+                if (!OnFileCreated.TryGetValue(path, out var waiters)) return;
+                waiters.Remove(waiter);
+                if (waiters.Count == 0) OnFileCreated.Remove(path);
+            }
         }
 
         public SearchModel() => FSChangeProcessor.Run(async d => await InitFromNTFS()
@@ -614,7 +709,7 @@ namespace search.Models
                             {
                                 if (OnFileCreated.TryGetValue(e.FullPath, out tcs)) OnFileCreated.Remove(e.FullPath);
                             }
-                            if (tcs != null) foreach (var x in tcs) x.SetResult(node);
+                            if (tcs != null) foreach (var x in tcs) x.TrySetResult(node);
                             break;
                         case WatcherChangeTypes.Changed:
                             //Change attributes and size
@@ -622,14 +717,32 @@ namespace search.Models
                             break;
                         case WatcherChangeTypes.Renamed:
                             //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
-                            //Remove first so a same-directory rename nets to zero on the shared ancestors
-                            await UpdateFor(
-                                Remove((e as RenamedEventArgs).OldFullPath),
-                                GetOrAddNew(e.FullPath));
+                            var renamed = (RenamedEventArgs)e;
+                            var oldRoot = files.TryGetValue(renamed.OldFullPath, out var indexedOld) ? indexedOld : null;
+                            if (oldRoot?.IsDirectory == true || HasArchiveChildren(oldRoot))
+                            {
+                                var removedTree = RemoveTree(renamed.OldFullPath);
+                                ReindexRenamedTree(renamed.OldFullPath, e.FullPath, removedTree);
+                                await Update();
+                            }
+                            else
+                            {
+                                //Remove first so a same-directory rename nets to zero on the shared ancestors
+                                await UpdateFor(Remove(renamed.OldFullPath), GetOrAddNew(e.FullPath));
+                            }
                             break;
                         case WatcherChangeTypes.Deleted:
                             //Trace.WriteLine($"-{e.FullPath}");
-                            await UpdateFor(Remove(e.FullPath));
+                            var deletedRoot = files.TryGetValue(e.FullPath, out var indexedDeleted) ? indexedDeleted : null;
+                            if (deletedRoot?.IsDirectory == true || HasArchiveChildren(deletedRoot))
+                            {
+                                RemoveTree(e.FullPath);
+                                await Update();
+                            }
+                            else
+                            {
+                                await UpdateFor(Remove(e.FullPath));
+                            }
                             break;
                     }
                 }
@@ -779,15 +892,22 @@ namespace search.Models
         }
 
         static SemaphoreSlim logging = new SemaphoreSlim(1, 1);
-        Task Log(string text)
+        async Task Log(string text)
         {
             var tid = Thread.CurrentThread.ManagedThreadId; //Save logging thread id
-            return Task.Run(async () =>
+            await logging.WaitAsync();
+            try
             {
-                await logging.WaitAsync();
-                await File.AppendAllTextAsync("log.txt", $"{DateTime.Now} {tid} {text}\n");
+                await File.AppendAllTextAsync(UserDataPaths.For("log.txt"), $"{DateTime.Now} {tid} {text}\n");
+            }
+            catch
+            {
+                // Diagnostics must never break the operation that was being diagnosed.
+            }
+            finally
+            {
                 logging.Release();
-            });
+            }
         }
 
         /// <summary>
@@ -861,7 +981,10 @@ namespace search.Models
                 if (a == null) return false;
 
                 //Add all entries from the archive to node tree
-                var src = a.Entries.AsParallel();
+                // A crafted archive may contain rooted or parent-traversing names. Do not
+                // let those entries escape the archive's virtual subtree (or abort adding
+                // every otherwise valid entry in the archive).
+                var src = a.Entries.AsParallel().Where(e => ZipExtensions.IsSafeArchivePath(e.Key));
                 var keys = src.Select(e => e.Key.AsMemory()).Where(x => !x.IsEmpty);
                 src.Select(e => new ZipNode(n, e))
                     //Add remaining dirs not included in archive
@@ -916,7 +1039,7 @@ namespace search.Models
             var tasks = nodes.Select(z => Task.Run(() =>
              {
                  var dir = (z.FullName + "_").NewOutDir();
-                 return WaitForFileCreationIf(dir, () => z.Unzip(dir));
+                return WaitForFileCreationIf(dir, () => z.Unzip(dir, call7zip));
              })).ToArray();
             foreach (var t in tasks)
             {

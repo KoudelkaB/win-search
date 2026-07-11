@@ -32,7 +32,12 @@ namespace search.Models
             LastAccessTime = e.LastAccessedTime ?? DateTime.MinValue;
         }
 
-        void SetPath(string p) => path = Path.Combine(ZIP.FullName, p.Replace("/", "\\"));
+        void SetPath(string p)
+        {
+            if (!ZipExtensions.IsSafeArchivePath(p))
+                throw new InvalidDataException($"Unsafe archive entry path '{p}'.");
+            path = Path.Combine(ZIP.FullName, p.Replace("/", "\\"));
+        }
 
         public INode ZIP { get; protected set; }
 
@@ -126,7 +131,8 @@ namespace search.Models
                             if (!r.Entry.IsDirectory && r.Entry.Key.StartsWith(zn.Key, StringComparison.OrdinalIgnoreCase) &&
                                 r.Entry.Key.AsSpan(zn.Key.Length).IndexOfAny("/\\")==0)
                             {
-                                var ePath = Path.Combine(path, r.Entry.Key.Substring(zn.Key.Length + 1));
+                                var ePath = ZipExtensions.SafeExtractionPath(path, r.Entry.Key.Substring(zn.Key.Length + 1));
+                                if (ePath == null) continue;
                                 Directory.CreateDirectory(Path.GetDirectoryName(ePath));
                                 using (var fs = File.Create(ePath)) r.WriteEntryTo(fs);
                             }

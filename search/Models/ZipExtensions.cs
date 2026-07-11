@@ -6,6 +6,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Globalization;
+using System.Diagnostics;
 using System.Text;
 using System.Xml.Linq;
 
@@ -68,7 +70,8 @@ namespace search.Models
         /// <returns></returns>
         public static IArchive StructuredSubArchive(this IArchive a)
         {
-            if (a != null && a.Entries.Skip(1).FirstOrDefault() == null && a.Entries.First() is IArchiveEntry fe && fe.Key == null && fe.ToArchive() is IArchive sa)
+            var entries = a?.Entries.Take(2).ToArray();
+            if (entries?.Length == 1 && entries[0].Key == null && entries[0].ToArchive() is IArchive sa)
             {
                 //Dispose unstructured archive and get structured from sa
                 using (a) return sa.StructuredSubArchive();
@@ -107,9 +110,57 @@ namespace search.Models
             }
             catch (Exception)
             {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
                 return false;
             }
         }
+
+        /// <summary>Extract with the selected engine. The external option used to be ignored.</summary>
+        public static bool Unzip(this INode file, string dir, bool call7zip)
+        {
+            if (!call7zip) return file.Unzip(dir);
+            try
+            {
+                var sevenZip = Apps.SevenZip;
+                if (string.IsNullOrWhiteSpace(sevenZip)) return false;
+                Directory.CreateDirectory(dir);
+                var source = file.GetFileOrTempPath();
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = sevenZip,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    ArgumentList = { "x", "-y", $"-o{dir}", source }
+                });
+                process?.WaitForExit();
+                if (process?.ExitCode == 0) return true;
+                try { Directory.Delete(dir, true); } catch { }
+                return false;
+            }
+            catch
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Resolve an archive entry below an extraction root, rejecting rooted paths and
+        /// parent traversal. Used by manual nested-archive extraction.
+        /// </summary>
+        internal static string SafeExtractionPath(string root, string entry)
+        {
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(entry)) return null;
+            var relative = entry.Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar);
+            if (Path.IsPathRooted(relative)) return null;
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relative));
+            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) ? fullPath : null;
+        }
+
+        internal static bool IsSafeArchivePath(string entry)
+            => SafeExtractionPath(Path.Combine(Path.GetTempPath(), "archive-root"), entry) != null;
 
         public static void Zip(this string zip, bool call7zip, params string[] files)
         {
@@ -169,7 +220,14 @@ namespace search.Models
                 {
                     if (FormatCodes == null)
                     {
-                        using var s = a.Entries.First(x => x.Key == "xl/styles.xml").Load(); s.Position = 0;
+                        var styles = a.Entries.FirstOrDefault(x => x.Key == "xl/styles.xml");
+                        if (styles == null)
+                        {
+                            defaultFormat = "GENERAL";
+                            FormatCodes = Array.Empty<string>();
+                            return defaultFormat;
+                        }
+                        using var s = styles.Load();
                         var xml = XDocument.Load(s);
                         var ns = xml.Root.GetDefaultNamespace();
                         var numFmts = xml.Descendants(ns + "numFmt").ToDictionary(x => x.Attribute("numFmtId").Value, x => x.Attribute("formatCode").Value);
@@ -180,14 +238,24 @@ namespace search.Models
                         defaultFormat = numFmt(xml.Root.Element(ns + "cellStyleXfs").Elements().First().Attribute("numFmtId").Value);
                         FormatCodes = xml.Root.Element(ns + "cellXfs").Elements().Select(x => numFmt(x.Attribute("numFmtId").Value)).ToArray();
                     }
-                    return style == null ? defaultFormat : FormatCodes[long.Parse(style)];
+                    return style == null || !int.TryParse(style, out var index) || index < 0 || index >= FormatCodes.Length
+                        ? defaultFormat
+                        : FormatCodes[index];
                 }
 
                 //Shared strings
-                using var ss = a.Entries.First(x => x.Key == "xl/sharedStrings.xml").Load(); ss.Position = 0;
-                var xml = XDocument.Load(ss);
-                var ns = xml.Root.GetDefaultNamespace();
-                var SharedStrings = xml.Descendants(ns + "t").Select(x => x.Value).ToArray();
+                var sharedEntry = a.Entries.FirstOrDefault(x => x.Key == "xl/sharedStrings.xml");
+                var SharedStrings = Array.Empty<string>();
+                XDocument xml = null;
+                XNamespace ns = null;
+                if (sharedEntry != null)
+                {
+                    using var ss = sharedEntry.Load();
+                    xml = XDocument.Load(ss);
+                    ns = xml.Root.GetDefaultNamespace();
+                    SharedStrings = xml.Descendants(ns + "si")
+                        .Select(si => string.Concat(si.Descendants(ns + "t").Select(t => t.Value))).ToArray();
+                }
 
                 //Sheets
                 string Value(XElement e) => e.Element(ns + "v")?.Value ?? "";
@@ -206,8 +274,8 @@ namespace search.Models
                             "inlineStr" => x.Value,
                             _ => FormatCode(x.Attribute("s")?.Value) switch
                             {
-                                "YYYY-MM-DD" => DateTime.FromOADate(double.Parse(Value(x))).ToString("yyyy-MM-dd"),
-                                "YYYY-MM-DD\\ HH:MM:SS" => DateTime.FromOADate(double.Parse(Value(x))).ToString("yyyy-MM-dd HH:mm:ss"),
+                                "YYYY-MM-DD" => DateTime.FromOADate(double.Parse(Value(x), CultureInfo.InvariantCulture)).ToString("yyyy-MM-dd"),
+                                "YYYY-MM-DD\\ HH:MM:SS" => DateTime.FromOADate(double.Parse(Value(x), CultureInfo.InvariantCulture)).ToString("yyyy-MM-dd HH:mm:ss"),
                                 _ => Value(x) //Unknown leave as it is
                             }
                         }))));

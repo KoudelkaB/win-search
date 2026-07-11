@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
+using System.Globalization;
 
 namespace search.Models
 {
@@ -37,8 +38,16 @@ namespace search.Models
             {
                 try
                 {
-                    items = File.ReadAllLines(path).Select(l => l.Split(new char[] { '|' }, 3))
-                        .ToDictionary(x => x[2], x => new Info { TimesUsed = int.Parse(x[0]), LastUsed = DateTime.Parse(x[1]) }, StringComparer.OrdinalIgnoreCase);
+                    items = new Dictionary<string, Info>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var line in File.ReadLines(path))
+                    {
+                        var values = line.Split(new char[] { '|' }, 3);
+                        if (values.Length != 3 ||
+                            !int.TryParse(values[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var times) ||
+                            !(DateTime.TryParseExact(values[1], "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastUsed) ||
+                              DateTime.TryParse(values[1], out lastUsed))) continue;
+                        items[values[2]] = new Info { TimesUsed = times, LastUsed = lastUsed };
+                    }
                 }
                 catch { }
             }
@@ -99,8 +108,15 @@ namespace search.Models
         /// Save filters to persistent storage
         /// </summary>
         /// <param name="filters"></param>
-        public void Save() => File.WriteAllLines(path, items.OrderByDescending(x => x.Value.TimesUsed)
-            .Select(x => $"{x.Value.TimesUsed}|{x.Value.LastUsed}|{x.Key}"));
+        public void Save()
+        {
+            try
+            {
+                File.WriteAllLines(path, items.OrderByDescending(x => x.Value.TimesUsed)
+                    .Select(x => $"{x.Value.TimesUsed.ToString(CultureInfo.InvariantCulture)}|{x.Value.LastUsed:O}|{x.Key}"));
+            }
+            catch { }
+        }
     }
 
     public class History
