@@ -891,23 +891,10 @@ namespace search.Models
             });
         }
 
-        static SemaphoreSlim logging = new SemaphoreSlim(1, 1);
         async Task Log(string text)
         {
             var tid = Thread.CurrentThread.ManagedThreadId; //Save logging thread id
-            await logging.WaitAsync();
-            try
-            {
-                await File.AppendAllTextAsync(UserDataPaths.For("log.txt"), $"{DateTime.Now} {tid} {text}\n");
-            }
-            catch
-            {
-                // Diagnostics must never break the operation that was being diagnosed.
-            }
-            finally
-            {
-                logging.Release();
-            }
+            await StorageMaintenance.AppendLogAsync("log.txt", $"{DateTime.Now} {tid} {text}{Environment.NewLine}");
         }
 
         /// <summary>

@@ -21,8 +21,9 @@ namespace search
         static readonly int pid = Process.GetCurrentProcess().Id;
         static readonly string dirName = "search.";
         static readonly string clipboardDirName = "search.clipboard.";
-        public static readonly string TempFolder = Path.Combine(Path.GetTempPath(), dirName + pid);
-        public static readonly string ClipboardTempFolder = Path.Combine(Path.GetTempPath(), clipboardDirName + pid);
+        static readonly long processStartTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+        public static readonly string TempFolder = Path.Combine(Path.GetTempPath(), $"{dirName}{pid}.{processStartTicks}");
+        public static readonly string ClipboardTempFolder = Path.Combine(Path.GetTempPath(), $"{clipboardDirName}{pid}.{processStartTicks}");
         /// <summary>
         /// Create unique temporal folder in App temp directory (will be deleted autmaticly)
         /// </summary>
@@ -41,29 +42,7 @@ namespace search
         }
         static App()
         {
-            //Clean all search temp folders from previous runs
-            foreach (var d in Directory.EnumerateDirectories(Path.GetDirectoryName(TempFolder), dirName + "*"))
-            {
-                if (int.TryParse(Path.GetExtension(d).Substring(1), out var pid))
-                {
-                    try
-                    {
-                        Process.GetProcessById(pid);
-                    }
-                    catch
-                    {
-                        // Clipboard materializations survive app exit and quick
-                        // restarts so the shell clipboard remains usable.
-                        try
-                        {
-                            var isClipboard = Path.GetFileName(d).StartsWith(clipboardDirName, StringComparison.OrdinalIgnoreCase);
-                            if (!isClipboard || Directory.GetCreationTimeUtc(d) < DateTime.UtcNow.AddDays(-1))
-                                Directory.Delete(d, true);
-                        }
-                        catch { }
-                    }
-                }
-            }
+            StorageMaintenance.RunStartupCleanup(Path.GetTempPath(), TempFolder, DateTime.UtcNow);
         }
 
         public App()
@@ -97,7 +76,15 @@ namespace search
                 $"App exiting with {e.ApplicationExitCode}".Debug();
                 //Best-effort removal of this run's temp folder; anything locked here
                 //is swept by the stale-folder cleanup on the next start
-                try { Directory.Delete(TempFolder, true); } catch { }
+                StorageMaintenance.TryDeleteDirectory(TempFolder);
+                try
+                {
+                    var clipboardPaths = Clipboard.ContainsFileDropList()
+                        ? Clipboard.GetFileDropList().Cast<string>()
+                        : Array.Empty<string>();
+                    StorageMaintenance.CleanupClipboardMaterializations(ClipboardTempFolder, clipboardPaths);
+                }
+                catch { } // Keep clipboard files when clipboard access is temporarily unavailable.
             };
         }
     }

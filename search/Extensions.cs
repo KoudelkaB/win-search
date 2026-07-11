@@ -37,7 +37,7 @@ namespace search
                 var log = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ") + text;
                 System.Diagnostics.Debug.WriteLine(log);
                 //Write to user data so unelevated runs never depend on install-folder access.
-                File.AppendAllText(UserDataPaths.For("search.run.log"), log + "\n");
+                StorageMaintenance.AppendLog("search.run.log", log + Environment.NewLine);
                 if (msgBox) MessageBox.Show(text, "Debug", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch { } //Do not break application

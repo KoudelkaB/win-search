@@ -1272,6 +1272,7 @@ namespace search
             data.SetFileDropList(paths);
             data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(cut ? 2 : 1)));
             Clipboard.SetDataObject(data, true);
+            StorageMaintenance.CleanupClipboardMaterializations(App.ClipboardTempFolder, files);
         }
 
         static bool ClipboardRequestsMove()
