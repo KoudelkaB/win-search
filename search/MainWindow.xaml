@@ -1,4 +1,5 @@
 ﻿<Window x:Class="search.MainWindow"
+        x:Name="Root"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -11,6 +12,7 @@
         <local:Bool2VisibilityConverter x:Key="Bool2VisibilityConverter" />
         <local:IsDirectoryBooleanConverter x:Key="IsDirectoryBooleanConverter" />
         <local:IsFoundBooleanConverter x:Key="IsFoundBooleanConverter" />
+        <local:ActiveFilterBrushConverter x:Key="ActiveFilterBrushConverter" />
         <!-- Green dot when idle, spinning blue dashed circle while running (bind the flag to Tag) -->
         <Style x:Key="BusyIndicator" TargetType="Ellipse">
             <Setter Property="Width" Value="11"/>
@@ -45,12 +47,72 @@
         </Style>
     </Window.Resources>
     <DockPanel LastChildFill="True">
-        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal">
-            <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Loading}" Margin="5,0,0,0"/>
-            <Label  Content="{Binding CountsInfo}" Padding="5,0,5,0" />
-            <Label  Content="{Binding LoadStatus}" ToolTip="{Binding LoadStatusTooltip}" Padding="0,0,5,0" />
-            <TextBlock Text="|" VerticalAlignment="Center" Margin="0,0,5,0" />
-            <Label  Content="{Binding Status}" Padding="0" />
+        <StackPanel DockPanel.Dock="Bottom">
+            <Border BorderBrush="LightGray" BorderThickness="0,1,0,1" Padding="5,4" Background="#FFF8F8F8">
+                <DockPanel LastChildFill="True">
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                        <TextBlock Text="Targets:" FontWeight="DemiBold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <Button Content="+ _Name" ToolTip="Add the selected Name-column items as targets (Alt+N)"
+                                Click="AddNameTargets_Click" Padding="5,1" Margin="0,0,3,0"/>
+                        <Button Content="+ _Folder" ToolTip="Add the selected items' parent folders as targets (Alt+F)"
+                                Click="AddFolderTargets_Click" Padding="5,1" Margin="0,0,3,0"/>
+                        <Button Content="Paste to _all…" ToolTip="Use clipboard files with every target (Alt+A or Ctrl+Shift+V)"
+                                Click="PasteToBasket_Click" Padding="5,1" Margin="0,0,3,0"/>
+                        <Button Content="_Clear" ToolTip="Remove every target (Alt+C)"
+                                Click="ClearTargets_Click" Padding="5,1" Margin="0,0,6,0"/>
+                    </StackPanel>
+                    <Border MinHeight="28" Padding="3,1" BorderBrush="#FF9A9A9A" BorderThickness="1" CornerRadius="3">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Right" x:Name="BasketAddZone" AllowDrop="True"
+                                    Background="#FFE8F2FF" BorderBrush="#FF6A9BCB" BorderThickness="1"
+                                    CornerRadius="3" Padding="8,3" Margin="5,0,0,0"
+                                    DragOver="BasketAddZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketAddZone_Drop">
+                                <TextBlock Text="＋ Drop here to add targets" VerticalAlignment="Center"/>
+                            </Border>
+                            <Border DockPanel.Dock="Left" x:Name="BasketUseZone" AllowDrop="True"
+                                    Background="#FFEAF7EA" BorderBrush="#FF5B9B5B" BorderThickness="1"
+                                    CornerRadius="3" Padding="8,3" Margin="0,0,5,0"
+                                    ToolTip="Drop sources here to use every target in the basket"
+                                    DragOver="BasketUseZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketUseZone_Drop">
+                                <TextBlock VerticalAlignment="Center"><Run Text="↓ Use all ("/><Run Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay}"/><Run Text=")"/></TextBlock>
+                            </Border>
+                            <Border x:Name="BasketItemsZone" AllowDrop="True" Background="Transparent"
+                                    ToolTip="Drop on empty space to add targets"
+                                    DragOver="BasketAddZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketAddZone_Drop">
+                                <ItemsControl ItemsSource="{Binding BasketTargets, ElementName=Root}" VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Tag="{Binding}" AllowDrop="True" Margin="0,0,4,0" Padding="5,2"
+                                                    ToolTip="{Binding Path}" DragOver="BasketTarget_DragOver"
+                                                    DragLeave="BasketZone_DragLeave" Drop="BasketTarget_Drop">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Filter to target" Click="TargetFilter_Click"/>
+                                                        <MenuItem Header="Open target" Click="TargetOpen_Click"/>
+                                                        <Separator/>
+                                                        <MenuItem Header="Remove target" Click="TargetRemove_Click"/>
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                                <TextBlock><Run Text="{Binding Icon, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Name, Mode=OneWay}"/></TextBlock>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </DockPanel>
+                    </Border>
+                </DockPanel>
+            </Border>
+            <StackPanel Orientation="Horizontal">
+                <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Loading}" Margin="5,0,0,0"/>
+                <Label Content="{Binding CountsInfo}" Padding="5,0,5,0" />
+                <Label Content="{Binding LoadStatus}" ToolTip="{Binding LoadStatusTooltip}" Padding="0,0,5,0" />
+                <TextBlock Text="|" VerticalAlignment="Center" Margin="0,0,5,0" />
+                <Label Content="{Binding Status}" Padding="0" />
+            </StackPanel>
         </StackPanel>
         <StackPanel Name="help" DockPanel.Dock="Right" Orientation="Vertical" Margin="5">
             <TextBlock FontWeight="DemiBold">Hints</TextBlock>
@@ -61,6 +123,7 @@
         </StackPanel>
         <Grid DockPanel.Dock="Top" Margin="5,5,5,2">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -76,19 +139,83 @@
                 <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Filtering}"/>
                 <Label Content="Filter:" VerticalAlignment="Center"/>
             </StackPanel>
-            <local:AutoCompleteTextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" x:Name="filterTextBox" 
+            <local:AutoCompleteTextBox Grid.Row="0" Grid.Column="1" x:Name="filterTextBox"
                                        TextChanged="TextBox_TextChanged" PreviewKeyDown="filterTextBox_PreviewKeyDown" 
                                        Margin="0,0,0,1"/>
+            <Button Grid.Row="0" Grid.Column="2" Content="📌 _Pin…" Click="PinFilter_Click"
+                    Margin="3,0,0,1" Padding="6,0" ToolTip="Save this filter under a name (Alt+P or Ctrl+D)"/>
+            <StackPanel Grid.Row="0" Grid.Column="3" Orientation="Horizontal">
+                <Button Content="_Import…" Click="ImportWorkspace_Click" Margin="3,0,0,1" Padding="5,0"
+                        ToolTip="Replace pinned filters and targets from a settings file (Alt+I)"/>
+                <Button Content="_Export…" Click="ExportWorkspace_Click" Margin="3,0,0,1" Padding="5,0"
+                        ToolTip="Save pinned filters and targets to a settings file (Alt+E)"/>
+            </StackPanel>
+
+            <ItemsControl Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                          ItemsSource="{Binding PinnedFilters, ElementName=Root}" Margin="0,1,0,2">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,0,4,0">
+                            <Button Content="{Binding Name}" Tag="{Binding}" Click="PinnedFilter_Click"
+                                    ToolTip="{Binding Filter}" Padding="7,1">
+                                <Button.Background>
+                                    <MultiBinding Converter="{StaticResource ActiveFilterBrushConverter}">
+                                        <Binding Path="Filter"/>
+                                        <Binding ElementName="filterTextBox" Path="Text"/>
+                                    </MultiBinding>
+                                </Button.Background>
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Update from current filter" Click="PinnedFilterUpdate_Click"/>
+                                        <MenuItem Header="Rename" Click="PinnedFilterRename_Click"/>
+                                        <Separator/>
+                                        <MenuItem Header="Unpin" Click="PinnedFilterRemove_Click"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     MinWidth="120" Padding="5,1"
+                                     TextChanged="PinnedFilterName_TextChanged"
+                                     PreviewKeyDown="PinnedFilterName_KeyDown"
+                                     LostKeyboardFocus="PinnedFilterName_LostKeyboardFocus"
+                                     IsVisibleChanged="PinnedFilterName_IsVisibleChanged">
+                                <TextBox.Style>
+                                    <Style TargetType="TextBox">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBox.Style>
+                            </TextBox>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
             
             <!-- Search Row -->
-            <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,0">
+            <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,0">
                 <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Searching}"/>
                 <Label Content="Search:" VerticalAlignment="Center"/>
             </StackPanel>
-            <local:AutoCompleteTextBox Grid.Row="1" Grid.Column="1" x:Name="findTextBox" 
+            <local:AutoCompleteTextBox Grid.Row="2" Grid.Column="1" x:Name="findTextBox"
                                        PreviewKeyDown="findTextBox_PreviewKeyDown" 
                                        Margin="0"/>
-            <ComboBox Grid.Row="1" Grid.Column="2" x:Name="encodingComboBox" SelectedIndex="0" 
+            <ComboBox Grid.Row="2" Grid.Column="2" x:Name="encodingComboBox" SelectedIndex="0"
                       VerticalAlignment="Stretch" Margin="3,0,0,0" MinWidth="60"
                       Height="{Binding ActualHeight, ElementName=findTextBox}"
                       SelectionChanged="EncodingComboBox_SelectionChanged">
@@ -96,9 +223,19 @@
                 <ComboBoxItem Content="UTF-16"/>
                 <ComboBoxItem Content="HEX"/>
             </ComboBox>
-            <CheckBox Grid.Row="1" Grid.Column="3" x:Name="caseInsensitive" Content="Case insensitive" 
+            <CheckBox Grid.Row="2" Grid.Column="3" x:Name="caseInsensitive" Content="Case insensitive"
                       VerticalAlignment="Center" Margin="3,0,0,0"/>
         </Grid>
+        <Border x:Name="inlineActionBar" DockPanel.Dock="Top" Visibility="Collapsed"
+                Background="#FFFFF7D6" BorderBrush="#FFD8B24A" BorderThickness="0,1"
+                Padding="7,4">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Content="Cancel" Click="InlineActionCancel_Click" Margin="4,0,0,0" Padding="8,1"/>
+                <Button DockPanel.Dock="Right" Content="Create" Click="InlineActionAccept_Click" Margin="4,0,0,0" Padding="8,1"/>
+                <TextBlock x:Name="inlineActionLabel" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                <TextBox x:Name="inlineActionTextBox" PreviewKeyDown="InlineActionTextBox_KeyDown"/>
+            </DockPanel>
+        </Border>
         <ListView x:Name="filesView" ItemsSource="{Binding Items}" GridViewColumnHeader.Click="ListViewColumnHeader_Click" SelectionMode="Extended"
                   PreviewKeyDown="ListView_KeyDown" PreviewKeyUp="ListView_PreviewKeyUp"
                   PreviewMouseMove="FilesView_PreviewMouseMove"
@@ -107,7 +244,7 @@
                   VirtualizingPanel.VirtualizationMode="Recycling"
                   VirtualizingPanel.CacheLength="1,1" VirtualizingPanel.CacheLengthUnit="Page">
             <ListView.ContextMenu>
-                <ContextMenu Opened="FilesContextMenu_Opened">
+                <ContextMenu Opened="FilesContextMenu_Opened" Closed="FilesContextMenu_Closed">
                     <MenuItem Header="Open" InputGestureText="Enter" Click="ContextOpen_Click"/>
                     <MenuItem Header="Open with" Tag="OpenWith"/>
                     <MenuItem Header="Open containing folder" Click="ContextOpenFolder_Click"/>
@@ -115,9 +252,10 @@
                     <MenuItem Header="Copy" InputGestureText="Ctrl+C" Click="ContextCopy_Click"/>
                     <MenuItem Header="Cut" InputGestureText="Ctrl+X" Click="ContextCut_Click"/>
                     <MenuItem Header="Paste…" InputGestureText="Ctrl+V" Click="ContextPaste_Click"/>
+                    <MenuItem Header="Add to target basket" Tag="AddTarget" Click="ContextAddTarget_Click"/>
                     <Separator/>
                     <MenuItem Header="Copy path" Click="ContextCopyPath_Click"/>
-                    <MenuItem Header="Rename…" InputGestureText="F2" Click="ContextRename_Click"/>
+                    <MenuItem Header="Rename" InputGestureText="F2" Click="ContextRename_Click"/>
                     <Separator/>
                     <MenuItem Header="Zip" InputGestureText="Z" Tag="Zip" Click="ContextZip_Click"/>
                     <MenuItem Header="Create 7z archive" Tag="Zip7z" Click="ContextZip7z_Click"/>
@@ -171,8 +309,13 @@
                                 <Border Tag="Name" Background="Transparent" AllowDrop="True"
                                         PreviewMouseLeftButtonDown="Name_PreviewMouseDoubleClick"
                                         DragOver="FileCell_DragOver" DragLeave="FileCell_DragLeave" Drop="FileCell_Drop">
-                                    <TextBlock Text="{Binding Name}"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}" />
+                                    <Grid>
+                                        <TextBlock x:Name="NameDisplay" Text="{Binding Name}"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}" />
+                                        <TextBox x:Name="InlineNameEditor" Visibility="Collapsed" Tag="{Binding}"
+                                                 PreviewKeyDown="InlineNameEditor_KeyDown"
+                                                 LostKeyboardFocus="InlineNameEditor_LostKeyboardFocus"/>
+                                    </Grid>
                                 </Border>
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>

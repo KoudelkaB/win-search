@@ -14,6 +14,9 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 - Drag files and directories to other applications from the Name or Folder column.
 - Drop files onto selected directories to copy, move, create symbolic links, or create hard links.
 - Drop files onto executables and scripts to pass them as arguments.
+- Pin named filters for one-click switching between reusable result sets.
+- Keep folders, archives, and executables in a persistent target basket and apply one source selection to several targets.
+- Export and import pinned filters and the complete target basket as one JSON settings file.
 - Standard `Ctrl+C`, `Ctrl+X`, and `Ctrl+V` shell-compatible clipboard operations.
 - Collision handling with overwrite, skip, rename, and apply-to-all choices.
 - Transfer progress, cancellation, and normal deletion through the Recycle Bin.

@@ -48,6 +48,15 @@ History:
 - `Del` removes the selected suggestion.
 - Hold `Ctrl` while opening suggestions to use most-recent history instead of most-used history.
 
+### Pinned Filters
+
+- Click **Pin…** to add an editable tab to the pinned-filter row. Type its name in place and press `Enter`; `Esc` cancels it.
+- Click a named filter to restore its saved expression. The active named filter is highlighted.
+- Right-click a named filter to update it from the current expression, rename it in place, or unpin it.
+- Pinned filters are restored when the application starts.
+
+**Export…** saves all pinned filters and target-basket entries to one JSON settings file. **Import…** validates a settings file and, after confirmation, replaces the current pinned filters and targets with its contents.
+
 ## Content Search
 
 Type a term in **Search** and press `Enter`.
@@ -77,10 +86,12 @@ Typing anything other than `Enter` in the search field clears the current conten
 - Ctrl + right-click a result to open it with the default Windows action.
 - Click a column header to sort by that column.
 - Right-click selected items for Open, dynamic Open with, clipboard, rename, archive, and deletion actions.
+- **Add to target basket** follows the column that was right-clicked: Name adds the selected items, while Folder adds their parent folders. It is hidden when the corresponding paths are not supported targets or are already in the basket.
 - Drag from the Name column to send selected files or directories to another application.
 - Drag from the Folder column to send the selected items' parent folders.
 - Drop files onto a directory in the Name column or a parent path in the Folder column. Choose copy, move, symbolic link, or hard link.
 - Drop files onto an executable Name cell to launch it with the dropped paths as arguments.
+- File drops follow Explorer defaults: one folder on the same volume defaults to move, another volume defaults to copy. Hold `Ctrl` for copy, `Shift` for move, or `Alt` for a symbolic link. Multiple destinations default to copy.
 
 ## Context Menu
 
@@ -94,6 +105,25 @@ The context menu adapts to the current selection:
 - **Move to Recycle Bin** performs recoverable deletion.
 
 Directory drops and `Ctrl+V` show an action chooser. Existing-name conflicts offer overwrite, skip, automatic rename, and apply-to-all behavior. Transfers show item progress and can be cancelled between top-level operations.
+
+## Target Basket
+
+The target basket at the bottom keeps reusable drop targets:
+
+- **+ Name** adds selected Name-column items. Folders, supported archives, and executables have target-specific behavior.
+- **+ Folder** adds the selected items' parent folders.
+- Dropping paths on **Drop here to add targets** adds exactly the paths produced by the drag. A drag started in the Folder column therefore adds parent folders; a drag started in the Name column adds the named items.
+- Dropping on empty space after the target chips also adds targets. Dropping directly on a chip uses that target instead.
+- Dropping sources onto one target uses only that target. Drop onto the separate green **Use all (n)** zone to use every available target after showing a summary when needed.
+- Folder targets show the copy, move, symbolic-link, and hard-link chooser.
+- Archive targets add the sources to the archive. Updating non-ZIP formats requires an installed `7z.exe` or `7zz.exe`.
+- Executable targets are started with the source paths as arguments and require confirmation.
+- **Paste to all…** uses file paths currently on the clipboard with every target.
+- Right-click a target to filter to it, open it, or remove it. **Clear** removes all targets.
+
+The basket is saved automatically between application runs. Missing targets remain in the saved configuration but are skipped until they become available again.
+
+Target-bar access keys are `Alt+N` (add Name), `Alt+F` (add Folder), `Alt+A` (paste to all), and `Alt+C` (clear). `Ctrl+Shift+V` also invokes **Paste to all…**. Filter controls use `Alt+P` or `Ctrl+D` to pin, `Alt+I` to import, and `Alt+E` to export.
 
 ## Keyboard Commands
 
@@ -112,13 +142,13 @@ Common commands:
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
 - `A`: open selected items as administrator.
-- `F2`: rename or change selected items.
+- `F2`: rename one physical file or folder directly in its Name cell. With multiple items, use one of the transformation commands below.
 - `F3`: view selected items.
 - `F4`: edit selected items.
 - `N`: copy selected names.
 - `P`: copy selected full paths.
 - `F`: copy selected folder paths.
-- `M`: make a directory in selected folders.
+- `M`: show an inline bar for creating a directory in the selected folders.
 - `S`: selection commands.
 - `U`: unzip selected archives.
 - `Z`: zip selected items.

@@ -14,15 +14,9 @@
     <Compile Update="AutoCompleteTextBox.xaml.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Update="EditValueWindow.xaml.cs">
-      <SubType>Code</SubType>
-    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Page Update="AutoCompleteTextBox.xaml">
-      <SubType>Designer</SubType>
-    </Page>
-    <Page Update="EditValueWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>

@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -19,6 +20,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using search.Models;
 using SharpCompress.Common;
 using IOPath = System.IO.Path;
@@ -32,6 +34,8 @@ namespace search
     {
         Filters filters = new Filters();
         SearchTerms searchTerms = new SearchTerms();
+        public ObservableCollection<PinnedFilter> PinnedFilters { get; } = new();
+        public ObservableCollection<BasketTarget> BasketTargets { get; } = new();
         bool updatingFolderWidth;
         bool columnWidthHandlersAttached;
         WindowLayout pendingLayout;
@@ -41,6 +45,16 @@ namespace search
         bool preserveSelectionOnMouseUp;
         bool dragStarted;
         Border dropHoverBorder;
+        PinnedFilter editingPinnedFilter;
+        string editingPinnedOriginalName;
+        bool finishingPinnedEdit;
+        INode inlineRenameNode;
+        TextBox inlineRenameEditor;
+        TextBlock inlineRenameDisplay;
+        bool finishingInlineRename;
+        INode[] newFolderTargets;
+        bool newFolderOverwrite;
+        string contextTargetColumn;
         static readonly HashSet<string> ExecutableExtensions = new(
             new[] { ".exe", ".com", ".bat", ".cmd", ".msi", ".ps1", ".vbs", ".vbe",
                     ".js", ".jse", ".wsf", ".wsh", ".msc", ".lnk" }
@@ -68,10 +82,15 @@ namespace search
         public MainWindow()
         {
             InitializeComponent();
+            ApplyWorkspaceSettings(WorkspaceSettingsStore.Load());
             ApplyWindowLayout();
             AttachColumnWidthHandlers();
             SizeChanged += (_, __) => UpdateFolderColumnWidth();
-            Closing += (_, __) => WindowLayoutStore.Save(this, CaptureColumnWidths());
+            Closing += (_, __) =>
+            {
+                WindowLayoutStore.Save(this, CaptureColumnWidths());
+                SaveWorkspaceSettings();
+            };
 
             DataContext = new Models.SearchModel();
             filterTextBox.SuggestionList = () => Keyboard.Modifiers == ModifierKeys.Control ? filters.LastUsed : filters.MostUsed;
@@ -192,6 +211,535 @@ namespace search
                 filesView.Items.Refresh();
                 UpdateFolderColumnWidth();
             });
+        }
+
+        WorkspaceSettings CaptureWorkspaceSettings() => new()
+        {
+            PinnedFilters = PinnedFilters.Select(x => new PinnedFilter
+            {
+                Name = x.Name,
+                Filter = x.Filter
+            }).ToList(),
+            BasketTargets = BasketTargets.Select(x => new BasketTarget
+            {
+                Path = x.Path,
+                Kind = x.Kind
+            }).ToList()
+        };
+
+        void ApplyWorkspaceSettings(WorkspaceSettings settings)
+        {
+            PinnedFilters.Clear();
+            foreach (var filter in settings.PinnedFilters)
+                PinnedFilters.Add(filter);
+            BasketTargets.Clear();
+            foreach (var target in settings.BasketTargets)
+                BasketTargets.Add(target);
+        }
+
+        void SaveWorkspaceSettings()
+        {
+            try { WorkspaceSettingsStore.Save(CaptureWorkspaceSettings()); }
+            catch (Exception ex) { Model.Status = $"Could not save workspace settings: {ex.Message}"; }
+        }
+
+        void PinFilter_Click(object sender, RoutedEventArgs e)
+        {
+            CancelPinnedFilterEdit();
+            var pinned = new PinnedFilter
+            {
+                Name = SuggestedFilterName(filterTextBox.Text),
+                Filter = filterTextBox.Text ?? "",
+                IsDraft = true
+            };
+            PinnedFilters.Add(pinned);
+            BeginPinnedFilterEdit(pinned);
+        }
+
+        static string SuggestedFilterName(string filter)
+        {
+            if (string.IsNullOrWhiteSpace(filter)) return "All files";
+            var value = filter.Trim().Trim('"').TrimEnd('\\');
+            var name = IOPath.GetFileName(value);
+            return string.IsNullOrWhiteSpace(name) || name.IndexOfAny(IOPath.GetInvalidFileNameChars()) >= 0
+                ? (filter.Length > 40 ? filter.Substring(0, 40) : filter)
+                : name;
+        }
+
+        void PinnedFilter_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: PinnedFilter pinned })
+            {
+                filters.Used(filterTextBox.Text);
+                filterTextBox.Text = pinned.Filter;
+                filterTextBox.Focus();
+            }
+        }
+
+        PinnedFilter PinnedFilterFromMenu(object sender) =>
+            sender is MenuItem item && item.Parent is ContextMenu menu &&
+            menu.PlacementTarget is FrameworkElement { Tag: PinnedFilter pinned } ? pinned : null;
+
+        void PinnedFilterUpdate_Click(object sender, RoutedEventArgs e)
+        {
+            var pinned = PinnedFilterFromMenu(sender);
+            if (pinned == null) return;
+            var index = PinnedFilters.IndexOf(pinned);
+            PinnedFilters[index] = new PinnedFilter { Name = pinned.Name, Filter = filterTextBox.Text ?? "" };
+            SaveWorkspaceSettings();
+        }
+
+        void PinnedFilterRename_Click(object sender, RoutedEventArgs e)
+        {
+            var pinned = PinnedFilterFromMenu(sender);
+            if (pinned == null) return;
+            CancelPinnedFilterEdit();
+            BeginPinnedFilterEdit(pinned);
+        }
+
+        void PinnedFilterRemove_Click(object sender, RoutedEventArgs e)
+        {
+            var pinned = PinnedFilterFromMenu(sender);
+            if (pinned != null && PinnedFilters.Remove(pinned)) SaveWorkspaceSettings();
+        }
+
+        void BeginPinnedFilterEdit(PinnedFilter pinned)
+        {
+            editingPinnedFilter = pinned;
+            editingPinnedOriginalName = pinned.Name;
+            pinned.IsEditing = true;
+        }
+
+        bool PinnedFilterNameIsValid(PinnedFilter pinned, out string error)
+        {
+            if (string.IsNullOrWhiteSpace(pinned?.Name))
+            {
+                error = "Enter a name.";
+                return false;
+            }
+            if (PinnedFilters.Any(x => !ReferenceEquals(x, pinned) &&
+                string.Equals(x.Name?.Trim(), pinned.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                error = "A pinned filter with this name already exists.";
+                return false;
+            }
+            error = null;
+            return true;
+        }
+
+        bool FinishPinnedFilterEdit(bool commit)
+        {
+            if (finishingPinnedEdit || editingPinnedFilter == null) return true;
+            var pinned = editingPinnedFilter;
+            if (commit && !PinnedFilterNameIsValid(pinned, out var error))
+            {
+                Model.Status = error;
+                return false;
+            }
+            finishingPinnedEdit = true;
+            try
+            {
+                if (!commit)
+                {
+                    if (pinned.IsDraft) PinnedFilters.Remove(pinned);
+                    else pinned.Name = editingPinnedOriginalName;
+                }
+                else
+                {
+                    pinned.Name = pinned.Name.Trim();
+                    pinned.IsDraft = false;
+                    SaveWorkspaceSettings();
+                }
+                pinned.IsEditing = false;
+                editingPinnedFilter = null;
+                editingPinnedOriginalName = null;
+                return true;
+            }
+            finally { finishingPinnedEdit = false; }
+        }
+
+        void CancelPinnedFilterEdit() => FinishPinnedFilterEdit(commit: false);
+
+        void PinnedFilterName_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is not TextBox { DataContext: PinnedFilter pinned } editor) return;
+            var valid = PinnedFilterNameIsValid(pinned, out var error);
+            editor.BorderBrush = valid ? SystemColors.ControlDarkBrush : Brushes.IndianRed;
+            editor.ToolTip = error ?? pinned.Filter;
+        }
+
+        void PinnedFilterName_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                if (FinishPinnedFilterEdit(commit: true)) filterTextBox.Focus();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                CancelPinnedFilterEdit();
+                filterTextBox.Focus();
+                e.Handled = true;
+            }
+        }
+
+        void PinnedFilterName_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (finishingPinnedEdit || editingPinnedFilter == null) return;
+            if (!FinishPinnedFilterEdit(commit: true) && sender is TextBox editor)
+                Dispatcher.BeginInvoke(() => editor.Focus(), DispatcherPriority.Input);
+        }
+
+        void PinnedFilterName_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (sender is TextBox editor && editor.IsVisible)
+                Dispatcher.BeginInvoke(() =>
+                {
+                    editor.Focus();
+                    editor.SelectAll();
+                }, DispatcherPriority.Input);
+        }
+
+        void ExportWorkspace_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new SaveFileDialog
+            {
+                Title = "Export pinned filters and targets",
+                Filter = "File Search Manager settings (*.winsearch-settings.json)|*.winsearch-settings.json|JSON files (*.json)|*.json",
+                FileName = "file-search-manager.winsearch-settings.json",
+                AddExtension = true,
+                DefaultExt = ".json"
+            };
+            if (dialog.ShowDialog(this) != true) return;
+            try
+            {
+                WorkspaceSettingsStore.Export(CaptureWorkspaceSettings(), dialog.FileName);
+                Model.Status = $"Exported workspace settings to \"{dialog.FileName}\"";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Settings export failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        void ImportWorkspace_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "Import pinned filters and targets",
+                Filter = "File Search Manager settings (*.winsearch-settings.json;*.json)|*.winsearch-settings.json;*.json|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+            if (dialog.ShowDialog(this) != true) return;
+            try
+            {
+                var imported = WorkspaceSettingsStore.Import(dialog.FileName);
+                if ((PinnedFilters.Count > 0 || BasketTargets.Count > 0) &&
+                    MessageBox.Show(this,
+                        $"Replace {PinnedFilters.Count} pinned filter(s) and {BasketTargets.Count} target(s) with the imported settings?",
+                        "Import settings", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                    return;
+                ApplyWorkspaceSettings(imported);
+                SaveWorkspaceSettings();
+                Model.Status = $"Imported {PinnedFilters.Count} pinned filter(s) and {BasketTargets.Count} target(s)";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Settings import failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        void AddNameTargets_Click(object sender, RoutedEventArgs e) =>
+            AddBasketTargets(filesView.SelectedItems.Cast<INode>().Select(NameTargetPath));
+
+        void AddFolderTargets_Click(object sender, RoutedEventArgs e) =>
+            AddBasketTargets(filesView.SelectedItems.Cast<INode>().Select(x => IOPath.GetDirectoryName(x.FullName)));
+
+        void ContextAddTarget_Click(object sender, RoutedEventArgs e)
+        {
+            var nodes = ContextNodes();
+            AddBasketTargets(contextTargetColumn == "Folder"
+                ? nodes.Select(x => IOPath.GetDirectoryName(x.FullName))
+                : nodes.Select(NameTargetPath));
+        }
+
+        static string NameTargetPath(INode node) =>
+            node != null && (File.Exists(node.FullName) || Directory.Exists(node.FullName))
+                ? node.FullName
+                : null;
+
+        void AddBasketTargets(IEnumerable<string> paths)
+        {
+            var added = 0;
+            foreach (var rawPath in paths.Where(x => !string.IsNullOrWhiteSpace(x)))
+            {
+                string path;
+                try { path = WorkspaceSettingsStore.NormalizePath(rawPath); }
+                catch { continue; }
+                if ((!File.Exists(path) && !Directory.Exists(path)) ||
+                    BasketTargets.Any(x => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                var kind = GetBasketTargetKind(path);
+                if (kind == BasketTargetKind.File || IsTemporaryDragPath(path))
+                    continue;
+                BasketTargets.Add(new BasketTarget { Path = path, Kind = kind });
+                added++;
+            }
+            if (added > 0) SaveWorkspaceSettings();
+            Model.Status = added > 0 ? $"Added {added} target(s)" : "No new valid targets to add";
+        }
+
+        static BasketTargetKind GetBasketTargetKind(string path)
+        {
+            if (Directory.Exists(path)) return BasketTargetKind.Folder;
+            if (ArchiveExtensions.Contains(IOPath.GetExtension(path))) return BasketTargetKind.Archive;
+            if (IsExecutable(path)) return BasketTargetKind.Executable;
+            return BasketTargetKind.File;
+        }
+
+        void ClearTargets_Click(object sender, RoutedEventArgs e)
+        {
+            if (BasketTargets.Count == 0) return;
+            BasketTargets.Clear();
+            SaveWorkspaceSettings();
+        }
+
+        BasketTarget TargetFromMenu(object sender) =>
+            sender is MenuItem item && item.Parent is ContextMenu menu &&
+            menu.PlacementTarget is FrameworkElement { Tag: BasketTarget target } ? target : null;
+
+        void TargetRemove_Click(object sender, RoutedEventArgs e)
+        {
+            var target = TargetFromMenu(sender);
+            if (target != null && BasketTargets.Remove(target)) SaveWorkspaceSettings();
+        }
+
+        void TargetFilter_Click(object sender, RoutedEventArgs e)
+        {
+            var target = TargetFromMenu(sender);
+            if (target == null) return;
+            var folder = target.Kind == BasketTargetKind.Folder ? target.Path : IOPath.GetDirectoryName(target.Path);
+            filterTextBox.Text = string.IsNullOrWhiteSpace(folder) ? target.Name : $"\"{folder}\"";
+            filterTextBox.Focus();
+        }
+
+        void TargetOpen_Click(object sender, RoutedEventArgs e)
+        {
+            var target = TargetFromMenu(sender);
+            if (target == null) return;
+            try { Process.Start(new ProcessStartInfo(target.Path) { UseShellExecute = true }); }
+            catch (Exception ex) { Model.Status = $"Could not open target: {ex.Message}"; }
+        }
+
+        void BasketAddZone_DragOver(object sender, DragEventArgs e) => SetBasketDragEffect(sender, e,
+            GetDropSources(e).Length > 0, DragDropEffects.Copy);
+
+        void BasketUseZone_DragOver(object sender, DragEventArgs e)
+        {
+            var sources = GetDropSources(e);
+            var targets = BasketTargets.Where(TargetIsAvailable).ToArray();
+            SetBasketDragEffect(sender, e, targets.Length > 0 && sources.Length > 0,
+                SuggestedBasketDropEffect(e, sources, targets));
+        }
+
+        void BasketTarget_DragOver(object sender, DragEventArgs e)
+        {
+            var sources = GetDropSources(e);
+            var target = (sender as FrameworkElement)?.Tag as BasketTarget;
+            SetBasketDragEffect(sender, e, target != null && TargetIsAvailable(target) && sources.Length > 0,
+                target == null ? DragDropEffects.None : SuggestedBasketDropEffect(e, sources, new[] { target }));
+        }
+
+        static void SetBasketDragEffect(object sender, DragEventArgs e, bool valid, DragDropEffects effect)
+        {
+            e.Effects = valid ? CoerceDropEffect(e.AllowedEffects, effect) : DragDropEffects.None;
+            if (sender is Border border) border.Opacity = valid ? 0.65 : 1;
+            if (sender is Button button) button.Opacity = valid ? 0.65 : 1;
+            e.Handled = true;
+        }
+
+        void BasketZone_DragLeave(object sender, DragEventArgs e)
+        {
+            if (sender is UIElement element) element.Opacity = 1;
+        }
+
+        void BasketAddZone_Drop(object sender, DragEventArgs e)
+        {
+            if (sender is UIElement element) element.Opacity = 1;
+            AddBasketTargets(GetDropSources(e));
+            e.Handled = true;
+        }
+
+        async void BasketUseZone_Drop(object sender, DragEventArgs e)
+        {
+            BasketUseZone.Opacity = 1;
+            var sources = GetDropSources(e);
+            var targets = BasketTargets.ToArray();
+            var defaultAction = SuggestedBasketTransferAction(e, sources, targets);
+            e.Effects = DropEffectFor(defaultAction);
+            await UseBasketTargets(sources, targets, defaultAction);
+            e.Handled = true;
+        }
+
+        async void BasketTarget_Drop(object sender, DragEventArgs e)
+        {
+            if (sender is not FrameworkElement { Tag: BasketTarget target }) return;
+            ((UIElement)sender).Opacity = 1;
+            var sources = GetDropSources(e);
+            var defaultAction = SuggestedBasketTransferAction(e, sources, new[] { target });
+            e.Effects = DropEffectFor(defaultAction);
+            await UseBasketTargets(sources, new[] { target }, defaultAction);
+            e.Handled = true;
+        }
+
+        async void PasteToBasket_Click(object sender, RoutedEventArgs e)
+        {
+            string[] paths;
+            try { paths = Clipboard.GetFileDropList().Cast<string>().ToArray(); }
+            catch (Exception ex) { Model.Status = $"Cannot read clipboard files: {ex.Message}"; return; }
+            await UseBasketTargets(paths, BasketTargets.ToArray(),
+                ClipboardRequestsMove() ? FileTransferAction.Move : FileTransferAction.Copy);
+        }
+
+        static bool TargetIsAvailable(BasketTarget target) =>
+            target.Kind == BasketTargetKind.Folder ? Directory.Exists(target.Path) : File.Exists(target.Path);
+
+        static FileTransferAction SuggestedBasketTransferAction(DragEventArgs e, string[] sources,
+            BasketTarget[] targets)
+        {
+            var folders = targets.Where(x => x.Kind == BasketTargetKind.Folder && TargetIsAvailable(x))
+                .Select(x => x.Path).ToArray();
+            if (folders.Length == 0) return FileTransferAction.Copy;
+            var modifiers = DragModifiers(e);
+            // A heterogeneous or multi-target operation has no Shell equivalent. Keep
+            // copy as the safe default unless the user explicitly requests an action.
+            if (targets.Length > 1 && modifiers == ModifierKeys.None)
+                return FileTransferAction.Copy;
+            return SuggestedTransferAction(modifiers, sources, folders);
+        }
+
+        static DragDropEffects SuggestedBasketDropEffect(DragEventArgs e, string[] sources,
+            BasketTarget[] targets) => DropEffectFor(SuggestedBasketTransferAction(e, sources, targets));
+
+        static ModifierKeys DragModifiers(DragEventArgs e)
+        {
+            var modifiers = ModifierKeys.None;
+            if (e.KeyStates.HasFlag(DragDropKeyStates.ControlKey)) modifiers |= ModifierKeys.Control;
+            if (e.KeyStates.HasFlag(DragDropKeyStates.ShiftKey)) modifiers |= ModifierKeys.Shift;
+            if (e.KeyStates.HasFlag(DragDropKeyStates.AltKey)) modifiers |= ModifierKeys.Alt;
+            return modifiers;
+        }
+
+        internal static FileTransferAction SuggestedTransferAction(ModifierKeys modifiers, string[] sources,
+            string[] destinations)
+        {
+            if (sources.Any(IsTemporaryDragPath)) return FileTransferAction.Copy;
+            if (modifiers.HasFlag(ModifierKeys.Alt)) return FileTransferAction.SymbolicLink;
+            if (modifiers.HasFlag(ModifierKeys.Control)) return FileTransferAction.Copy;
+            if (modifiers.HasFlag(ModifierKeys.Shift)) return FileTransferAction.Move;
+            if (destinations.Length != 1 || sources.Length == 0) return FileTransferAction.Copy;
+            try
+            {
+                var targetRoot = IOPath.GetPathRoot(IOPath.GetFullPath(destinations[0]));
+                return sources.All(source => string.Equals(
+                        IOPath.GetPathRoot(IOPath.GetFullPath(source)), targetRoot,
+                        StringComparison.OrdinalIgnoreCase))
+                    ? FileTransferAction.Move
+                    : FileTransferAction.Copy;
+            }
+            catch { return FileTransferAction.Copy; }
+        }
+
+        static bool IsTemporaryDragPath(string path) =>
+            IsBelow(path, App.TempFolder) || IsBelow(path, App.ClipboardTempFolder);
+
+        static bool IsBelow(string path, string root)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(root)) return false;
+            var prefix = root.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar) +
+                IOPath.DirectorySeparatorChar;
+            return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        }
+
+        static DragDropEffects DropEffectFor(FileTransferAction action) => action switch
+        {
+            FileTransferAction.Move => DragDropEffects.Move,
+            FileTransferAction.SymbolicLink or FileTransferAction.HardLink => DragDropEffects.Link,
+            _ => DragDropEffects.Copy
+        };
+
+        static DragDropEffects CoerceDropEffect(DragDropEffects allowed, DragDropEffects requested)
+        {
+            if (allowed.HasFlag(requested)) return requested;
+            if (allowed.HasFlag(DragDropEffects.Copy)) return DragDropEffects.Copy;
+            if (allowed.HasFlag(DragDropEffects.Move)) return DragDropEffects.Move;
+            if (allowed.HasFlag(DragDropEffects.Link)) return DragDropEffects.Link;
+            return DragDropEffects.None;
+        }
+
+        async Task UseBasketTargets(string[] sources, BasketTarget[] requestedTargets,
+            FileTransferAction defaultFolderAction = FileTransferAction.Copy)
+        {
+            sources = sources.Where(x => File.Exists(x) || Directory.Exists(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var targets = requestedTargets.Where(TargetIsAvailable).ToArray();
+            if (sources.Length == 0 || targets.Length == 0)
+            {
+                Model.Status = "No available sources or targets";
+                return;
+            }
+
+            var folders = targets.Where(x => x.Kind == BasketTargetKind.Folder).ToArray();
+            var archives = targets.Where(x => x.Kind == BasketTargetKind.Archive).ToArray();
+            var executables = targets.Where(x => x.Kind == BasketTargetKind.Executable).ToArray();
+            var unsupported = targets.Where(x => x.Kind == BasketTargetKind.File).ToArray();
+            var summary = $"Use {sources.Length} item(s) with {targets.Length} target(s)?\n\n" +
+                (folders.Length > 0 ? $"Folders: {folders.Length}\n" : "") +
+                (archives.Length > 0 ? $"Archives to update: {archives.Length}\n" : "") +
+                (executables.Length > 0 ? $"Programs to start: {executables.Length}\n" : "") +
+                (unsupported.Length > 0 ? $"Unsupported targets to skip: {unsupported.Length}\n" : "");
+            if ((targets.Length > 1 || executables.Length > 0 || archives.Length > 0) &&
+                MessageBox.Show(this, summary, "Use target basket", MessageBoxButton.OKCancel,
+                    MessageBoxImage.Question) != MessageBoxResult.OK)
+                return;
+
+            FileTransferAction? folderAction = null;
+            if (folders.Length > 0)
+            {
+                if (!TryChooseTransferAction(sources.Length, folders.Length, defaultFolderAction, out var selectedAction))
+                    return;
+                folderAction = selectedAction;
+            }
+
+            var errors = new List<string>();
+            foreach (var archive in archives)
+            {
+                try { await Task.Run(() => ZipExtensions.AddToArchive(archive.Path, sources)); }
+                catch (Exception ex) { errors.Add($"{archive.Path}: {ex.Message}"); }
+            }
+            foreach (var executable in executables)
+            {
+                try
+                {
+                    var start = new ProcessStartInfo
+                    {
+                        FileName = executable.Path,
+                        UseShellExecute = true,
+                        WorkingDirectory = IOPath.GetDirectoryName(executable.Path)
+                    };
+                    foreach (var source in sources) start.ArgumentList.Add(source);
+                    Process.Start(start);
+                }
+                catch (Exception ex) { errors.Add($"{executable.Path}: {ex.Message}"); }
+            }
+            if (folders.Length > 0)
+            {
+                if (!await TransferPaths(sources, folders.Select(x => x.Path).ToArray(), folderAction.Value))
+                    errors.Add("One or more folder transfers did not complete.");
+            }
+            Model.Status = errors.Count == 0
+                ? $"Used {sources.Length} item(s) with {targets.Length} target(s)"
+                : $"Target operations completed with {errors.Count} error(s): {string.Join(", ", errors)}";
         }
 
         private void ApplyWindowLayout()
@@ -584,6 +1132,8 @@ namespace search
 
         async void Name_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
+            if (inlineRenameEditor != null || e.OriginalSource is TextBox)
+                return;
             if (sender is FrameworkElement l && l.ParentControl() is ListViewItem i && i.Content is INode n)
             {
                 BeginMouseDrag(e, i, n, "Name");
@@ -670,7 +1220,8 @@ namespace search
             data.SetData(DataFormats.FileDrop, existingPaths);
             try
             {
-                DragDrop.DoDragDrop(filesView, data, DragDropEffects.Copy);
+                DragDrop.DoDragDrop(filesView, data,
+                    DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
             }
             catch (Exception ex)
             {
@@ -707,8 +1258,9 @@ namespace search
         void FileCell_DragOver(object sender, DragEventArgs e)
         {
             var sources = GetDropSources(e);
-            var validTarget = sources.Length > 0 &&
-                (TryGetExecutableDrop(sender, out _) || TryGetDropTargets(sender, out _));
+            var executableTarget = TryGetExecutableDrop(sender, out _);
+            var folderTarget = TryGetDropTargets(sender, out var targets);
+            var validTarget = sources.Length > 0 && (executableTarget || folderTarget);
             if (sender is not Border border || !validTarget)
             {
                 ClearDropHighlight();
@@ -724,7 +1276,10 @@ namespace search
                 dropHoverBorder.Background = SystemColors.HighlightBrush;
                 dropHoverBorder.Opacity = 0.35;
             }
-            e.Effects = DragDropEffects.Copy;
+            var requested = executableTarget
+                ? DragDropEffects.Copy
+                : DropEffectFor(SuggestedTransferAction(DragModifiers(e), sources, targets));
+            e.Effects = CoerceDropEffect(e.AllowedEffects, requested);
             e.Handled = true;
         }
 
@@ -745,10 +1300,10 @@ namespace search
                 return;
             }
 
-            e.Effects = DragDropEffects.Copy;
             e.Handled = true;
             if (TryGetExecutableDrop(sender, out var executable))
             {
+                e.Effects = DragDropEffects.Copy;
                 try
                 {
                     var start = new ProcessStartInfo
@@ -769,8 +1324,14 @@ namespace search
                 return;
             }
 
-            if (!TryGetDropTargets(sender, out var targets) ||
-                !TryChooseTransferAction(sources.Length, targets.Length, FileTransferAction.Copy, out var action))
+            if (!TryGetDropTargets(sender, out var targets))
+            {
+                e.Effects = DragDropEffects.None;
+                return;
+            }
+            var defaultAction = SuggestedTransferAction(DragModifiers(e), sources, targets);
+            e.Effects = CoerceDropEffect(e.AllowedEffects, DropEffectFor(defaultAction));
+            if (!TryChooseTransferAction(sources.Length, targets.Length, defaultAction, out var action))
             {
                 e.Effects = DragDropEffects.None;
                 return;
@@ -855,6 +1416,7 @@ namespace search
 
         async void ListViewItem_RightButtonDown(object sender, MouseButtonEventArgs e)
         {
+            contextTargetColumn = ContextTargetColumn(e.OriginalSource as DependencyObject);
             if (sender is ListViewItem item && item.Content is INode n)
             {
                 //CTRL + click => open the file by windows default action
@@ -907,6 +1469,23 @@ namespace search
             if (sender is not ContextMenu menu)
                 return;
             var nodes = ContextNodes();
+            var addTarget = menu.Items.OfType<MenuItem>().FirstOrDefault(i => Equals(i.Tag, "AddTarget"));
+            if (addTarget != null)
+            {
+                var paths = contextTargetColumn == "Name"
+                    ? nodes.Select(NameTargetPath).ToArray()
+                    : contextTargetColumn == "Folder"
+                        ? nodes.Select(x => IOPath.GetDirectoryName(x.FullName)).ToArray()
+                        : Array.Empty<string>();
+                var eligible = paths.Length > 0 && paths.All(IsEligibleTargetPath) &&
+                    paths.Any(path => !BasketTargets.Any(target =>
+                        string.Equals(target.Path, path, StringComparison.OrdinalIgnoreCase)));
+                addTarget.Visibility = eligible ? Visibility.Visible : Visibility.Collapsed;
+                addTarget.Header = contextTargetColumn == "Folder"
+                    ? "Add parent folder(s) to target basket"
+                    : "Add Name item(s) to target basket";
+                addTarget.InputGestureText = contextTargetColumn == "Folder" ? "Alt+F" : "Alt+N";
+            }
             PopulateOpenWith(menu, nodes);
             var canZip = nodes.Length > 0 &&
                 nodes.All(n => File.Exists(n.FullName) || Directory.Exists(n.FullName));
@@ -921,6 +1500,8 @@ namespace search
                     ? Visibility.Visible
                     : Visibility.Collapsed;
         }
+
+        void FilesContextMenu_Closed(object sender, RoutedEventArgs e) => contextTargetColumn = null;
 
         void PopulateOpenWith(ContextMenu menu, INode[] nodes)
         {
@@ -997,6 +1578,14 @@ namespace search
             openWith.IsEnabled = openWith.Items.Count > 0;
         }
 
+        static bool IsEligibleTargetPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || (!File.Exists(path) && !Directory.Exists(path)) ||
+                IsTemporaryDragPath(path))
+                return false;
+            return GetBasketTargetKind(path) != BasketTargetKind.File;
+        }
+
         static bool CanUnzip(INode node)
             => !node.IsDirectory && File.Exists(node.FullName) &&
                ArchiveExtensions.Contains(IOPath.GetExtension(node.Name));
@@ -1012,6 +1601,8 @@ namespace search
 
         private void ListView_KeyDown(object sender, KeyEventArgs e)
         {
+            if (ReferenceEquals(e.OriginalSource, inlineRenameEditor))
+                return;
             switch (e.Key)
             {
                 case Key.Up:
@@ -1037,6 +1628,8 @@ namespace search
         bool ClipBoardCut = false;
         async void ListView_PreviewKeyUp(object sender, KeyEventArgs e)
         {
+            if (ReferenceEquals(e.OriginalSource, inlineRenameEditor))
+                return;
             try
             {
                 e.Handled = filesViewCmd.KeyReleased(e.Key);
@@ -1051,6 +1644,22 @@ namespace search
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
+            if (ReferenceEquals(e.OriginalSource, inlineRenameEditor) ||
+                ReferenceEquals(e.OriginalSource, inlineActionTextBox) ||
+                e.OriginalSource is TextBox { DataContext: PinnedFilter { IsEditing: true } })
+                return;
+            if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.D)
+            {
+                PinFilter_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+            if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.V)
+            {
+                PasteToBasket_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
             switch (e.Key)
             {
                 case Key.Escape:
@@ -1348,6 +1957,19 @@ namespace search
 
         void Rename(IEnumerable<INode> nodes, IEnumerable<Key> arg)
         {
+            var nodeArray = nodes.ToArray();
+            var arguments = arg.ToArray();
+            var directRename = arguments.Length == 0 || arguments.All(x => x == Key.None);
+            if (directRename)
+            {
+                if (nodeArray.Length == 1)
+                    BeginInlineRename(nodeArray[0]);
+                else if (nodeArray.Length > 1)
+                    Model.Status = "Inline rename is available for one item. Use an F2 transformation command for multiple items.";
+                return;
+            }
+            nodes = nodeArray;
+            arg = arguments;
             string name = "", ext = "", subStr = "";
             int index = 0;
             var e = arg.GetEnumerator();
@@ -1451,11 +2073,8 @@ namespace search
                     }
                     else
                     {
-                        // Ask user in dialog
-                        var ed = new EditValueWindow($"Rename: {x.Name}");
-                        ed.Value.Text = System.IO.Path.GetFileName(x.Name);
-                        if (ed.ShowDialog() == true) dest = ed.Value.Text;
-                        else return;
+                        Model.Status = "No rename value was entered.";
+                        return;
                     }
                 }
                 else if (string.IsNullOrEmpty(ext)) dest += System.IO.Path.GetExtension(x.Name); // Replace only the name
@@ -1468,19 +2087,217 @@ namespace search
             Model.Status = errors.Count > 0 ? $"Rename failed with {errors.Count} errors: {string.Join(", ", errors)}" : "Rename done.";
         }
 
+        void BeginInlineRename(INode node)
+        {
+            if (node == null || node is ZipNode || (!File.Exists(node.FullName) && !Directory.Exists(node.FullName)))
+            {
+                Model.Status = "Only a physical file or folder can be renamed inline.";
+                return;
+            }
+            FinishInlineRename(commit: false);
+            filesView.ScrollIntoView(node);
+            filesView.UpdateLayout();
+            if (filesView.ItemContainerGenerator.ContainerFromItem(node) is not ListViewItem item)
+            {
+                Model.Status = "The selected item is not currently visible.";
+                return;
+            }
+            var editor = FindVisualChild<TextBox>(item, "InlineNameEditor");
+            var display = FindVisualChild<TextBlock>(item, "NameDisplay");
+            if (editor == null || display == null) return;
+
+            inlineRenameNode = node;
+            inlineRenameEditor = editor;
+            inlineRenameDisplay = display;
+            editor.Text = node.Name;
+            editor.BorderBrush = SystemColors.ControlDarkBrush;
+            editor.ToolTip = null;
+            display.Visibility = Visibility.Collapsed;
+            editor.Visibility = Visibility.Visible;
+            editor.Focus();
+            editor.Select(0, IOPath.GetFileNameWithoutExtension(node.Name).Length);
+        }
+
+        static T FindVisualChild<T>(DependencyObject parent, string name) where T : FrameworkElement
+        {
+            if (parent == null) return null;
+            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, index);
+                if (child is T match && match.Name == name) return match;
+                var nested = FindVisualChild<T>(child, name);
+                if (nested != null) return nested;
+            }
+            return null;
+        }
+
+        void InlineNameEditor_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                FinishInlineRename(commit: true);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                FinishInlineRename(commit: false);
+                e.Handled = true;
+            }
+        }
+
+        static string ContextTargetColumn(DependencyObject source)
+        {
+            for (var current = source; current != null;)
+            {
+                if (current is FrameworkElement { Tag: string tag } && tag is "Name" or "Folder")
+                    return tag;
+                try { current = VisualTreeHelper.GetParent(current); }
+                catch { current = LogicalTreeHelper.GetParent(current); }
+            }
+            return null;
+        }
+
+        void InlineNameEditor_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (!finishingInlineRename && ReferenceEquals(sender, inlineRenameEditor))
+                FinishInlineRename(commit: true);
+        }
+
+        bool FinishInlineRename(bool commit)
+        {
+            if (finishingInlineRename || inlineRenameEditor == null || inlineRenameNode == null) return true;
+            var editor = inlineRenameEditor;
+            var node = inlineRenameNode;
+            if (commit)
+            {
+                var newName = editor.Text;
+                var invalid = string.IsNullOrWhiteSpace(newName) || newName is "." or ".." ||
+                    newName.IndexOfAny(IOPath.GetInvalidFileNameChars()) >= 0 ||
+                    !string.Equals(IOPath.GetFileName(newName), newName, StringComparison.Ordinal);
+                if (invalid)
+                    return RejectInlineRename("Enter a valid file or folder name.");
+                var destination = IOPath.Combine(IOPath.GetDirectoryName(node.FullName), newName);
+                if (!string.Equals(destination, node.FullName, StringComparison.OrdinalIgnoreCase) &&
+                    (File.Exists(destination) || Directory.Exists(destination)))
+                    return RejectInlineRename($"'{newName}' already exists.");
+                if (!string.Equals(destination, node.FullName, StringComparison.Ordinal))
+                {
+                    var errors = node.FullName.UniversalCopyOrMove(destination, overwrite: false, move: true);
+                    if (errors.Count > 0)
+                        return RejectInlineRename(string.Join(", ", errors));
+                    Model.Status = $"Renamed '{node.Name}' to '{newName}'";
+                }
+            }
+
+            finishingInlineRename = true;
+            try
+            {
+                editor.Visibility = Visibility.Collapsed;
+                if (inlineRenameDisplay != null) inlineRenameDisplay.Visibility = Visibility.Visible;
+                inlineRenameNode = null;
+                inlineRenameEditor = null;
+                inlineRenameDisplay = null;
+                filesView.Focus();
+                return true;
+            }
+            finally { finishingInlineRename = false; }
+        }
+
+        bool RejectInlineRename(string message)
+        {
+            Model.Status = message;
+            inlineRenameEditor.BorderBrush = Brushes.IndianRed;
+            inlineRenameEditor.ToolTip = message;
+            Dispatcher.BeginInvoke(() => inlineRenameEditor?.Focus(), DispatcherPriority.Input);
+            return false;
+        }
+
         void NewFolders(IEnumerable<INode> nodes, IEnumerable<Key> arg)
         {
+            var targetNodes = nodes.ToArray();
             var e = arg.GetEnumerator();
             bool overwrite = e.MoveNext() && e.Current == Key.O;
             if (overwrite) e.MoveNext();
             var name = arg.ReadTill();
             if (string.IsNullOrWhiteSpace(name))
             {
-                var ed = new EditValueWindow($"Folder name to create in selected directories");
-                ed.Value.Text = "";
-                if (ed.ShowDialog() != true) return;
-                name = ed.Value.Text;
+                ShowNewFolderBar(targetNodes, overwrite);
+                return;
             }
+            CreateFolders(targetNodes, name, overwrite);
+        }
+
+        void ShowNewFolderBar(INode[] nodes, bool overwrite)
+        {
+            if (nodes.Length == 0)
+            {
+                Model.Status = "Select at least one destination for the new folder.";
+                return;
+            }
+            FinishInlineRename(commit: true);
+            CancelPinnedFilterEdit();
+            newFolderTargets = nodes;
+            newFolderOverwrite = overwrite;
+            inlineActionLabel.Text = nodes.Length == 1
+                ? $"Create folder in {nodes[0].FullName.Directory()}:"
+                : $"Create folder in {nodes.Length} selected destinations:";
+            inlineActionTextBox.Text = "";
+            inlineActionTextBox.BorderBrush = SystemColors.ControlDarkBrush;
+            inlineActionTextBox.ToolTip = null;
+            inlineActionBar.Visibility = Visibility.Visible;
+            inlineActionTextBox.Focus();
+        }
+
+        void InlineActionAccept_Click(object sender, RoutedEventArgs e) => AcceptInlineAction();
+
+        void InlineActionCancel_Click(object sender, RoutedEventArgs e) => CloseInlineActionBar();
+
+        void InlineActionTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                AcceptInlineAction();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                CloseInlineActionBar();
+                e.Handled = true;
+            }
+        }
+
+        void AcceptInlineAction()
+        {
+            if (newFolderTargets == null) return;
+            var name = inlineActionTextBox.Text;
+            if (string.IsNullOrWhiteSpace(name) || name is "." or ".." ||
+                name.IndexOfAny(IOPath.GetInvalidFileNameChars()) >= 0 ||
+                !string.Equals(IOPath.GetFileName(name), name, StringComparison.Ordinal))
+            {
+                const string error = "Enter a valid folder name.";
+                inlineActionTextBox.BorderBrush = Brushes.IndianRed;
+                inlineActionTextBox.ToolTip = error;
+                Model.Status = error;
+                inlineActionTextBox.Focus();
+                return;
+            }
+            var targets = newFolderTargets;
+            var overwrite = newFolderOverwrite;
+            CloseInlineActionBar();
+            CreateFolders(targets, name, overwrite);
+        }
+
+        void CloseInlineActionBar()
+        {
+            inlineActionBar.Visibility = Visibility.Collapsed;
+            newFolderTargets = null;
+            newFolderOverwrite = false;
+            filesView.Focus();
+        }
+
+        void CreateFolders(IEnumerable<INode> nodes, string name, bool overwrite)
+        {
+            var errors = new List<string>();
             // Create the folder in all selected directories or file parents
             foreach (var x in nodes)
                 try
@@ -1489,7 +2306,10 @@ namespace search
                     if (overwrite) dir.DeletePathIfExists();
                     System.IO.Directory.CreateDirectory(dir);
                 }
-                catch { }
+                catch (Exception ex) { errors.Add($"{x.FullName}: {ex.Message}"); }
+            Model.Status = errors.Count == 0
+                ? $"Created folder '{name}'"
+                : $"Folder creation completed with {errors.Count} error(s): {string.Join(", ", errors)}";
         }
 
         async Task Paste(IEnumerable<INode> nodes, IEnumerable<Key> arg)
@@ -1835,6 +2655,17 @@ namespace search
         {
             throw new NotImplementedException();
         }
+    }
+    public class ActiveFilterBrushConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+            => values.Length >= 2 && string.Equals(values[0] as string, values[1] as string,
+                StringComparison.Ordinal)
+                ? new SolidColorBrush(Color.FromRgb(190, 220, 250))
+                : SystemColors.ControlBrush;
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+            => throw new NotImplementedException();
     }
     #endregion
 }

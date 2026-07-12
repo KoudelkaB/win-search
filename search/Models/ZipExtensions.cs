@@ -10,6 +10,9 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Text;
 using System.Xml.Linq;
+using CompressionLevel = System.IO.Compression.CompressionLevel;
+using CompressionZipArchive = System.IO.Compression.ZipArchive;
+using CompressionZipArchiveMode = System.IO.Compression.ZipArchiveMode;
 
 namespace search.Models
 {
@@ -200,6 +203,69 @@ namespace search.Models
                 foreach (var f in entries) a.AddEntry(f.path, f.file);
                 a.SaveTo(zip, new ZipWriterOptions(CompressionType.Deflate));
             }
+        }
+
+        /// <summary>Add files and directory trees to an existing archive target.</summary>
+        public static void AddToArchive(string archive, params string[] sources)
+        {
+            if (!File.Exists(archive))
+                throw new FileNotFoundException("Archive target was not found.", archive);
+            sources = sources.Where(x => File.Exists(x) || Directory.Exists(x))
+                .Where(x => !search.Models.Extensions.PathsReferToSameLocation(x, archive))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (sources.Length == 0) return;
+
+            // 7-Zip can update every supported archive format. Use it when present;
+            // the built-in fallback deliberately handles ZIP only.
+            if (!string.IsNullOrWhiteSpace(Apps.SevenZip))
+            {
+                var args = new List<string> { "a", archive };
+                args.AddRange(sources);
+                var start = new ProcessStartInfo
+                {
+                    FileName = Apps.SevenZip,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                foreach (var arg in args) start.ArgumentList.Add(arg);
+                using var process = Process.Start(start) ??
+                    throw new InvalidOperationException("7-Zip could not be started.");
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                    throw new InvalidOperationException($"7-Zip exited with code {process.ExitCode}.");
+                return;
+            }
+
+            if (!archive.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Updating this archive format requires 7-Zip.");
+
+            using var stream = new FileStream(archive, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using var zip = new CompressionZipArchive(stream, CompressionZipArchiveMode.Update);
+            foreach (var source in sources)
+            {
+                if (File.Exists(source))
+                {
+                    AddOrReplaceZipEntry(zip, source, Path.GetFileName(source));
+                    continue;
+                }
+                var rootName = Path.GetFileName(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+                {
+                    var relative = Path.GetRelativePath(source, file);
+                    AddOrReplaceZipEntry(zip, file, Path.Combine(rootName, relative));
+                }
+            }
+        }
+
+        static void AddOrReplaceZipEntry(CompressionZipArchive archive, string file, string entryName)
+        {
+            entryName = entryName.Replace(Path.DirectorySeparatorChar, '/');
+            archive.GetEntry(entryName)?.Delete();
+            var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+            entry.LastWriteTime = File.GetLastWriteTime(file);
+            using var input = File.OpenRead(file);
+            using var output = entry.Open();
+            input.CopyTo(output);
         }
 
         /// <summary>
