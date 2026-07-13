@@ -143,6 +143,11 @@ namespace search
             };
 
             var overwrite = (Key.O, "Overwrite");
+            CommandTree.Command pasteToAllTargets = async (n, a) => await PasteToBasket(
+                a.Contains(Key.L) ? FileTransferAction.SymbolicLink :
+                a.Contains(Key.H) ? FileTransferAction.HardLink : null,
+                a.Contains(Key.O) ? FileCollisionAction.Overwrite : null);
+            var pasteToAllKeys = new CommandTree[] { overwrite, (Key.L, "as link", overwrite), (Key.H, "as hard link", overwrite) };
             filesViewCmd.Commands.Add(new CommandTree[] {
                 (Key.D, "Compare in diff tool", n => n.IsCount(2),  async (n,a) => await OpenDiff(n)),
                 (Key.Enter, "Filter folders", async (n,a)=> await FilterFolders(n.ToArray())),
@@ -173,6 +178,21 @@ namespace search
                     (Key.G, "Green rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == true))),
                     (Key.R, "Red rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == false))),
                     (Key.B, "Black rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == null))),
+                }),
+                (Key.T, "add selected as Targets", (n,a) => AddBasketTargets(n.Select(NameTargetPath)), new CommandTree[] {
+                    (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
+                    (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
+                    (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs()))
+                }),
+                (Key.LeftAlt, "ALT", new CommandTree[] {
+                    (Key.N, "add selected as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(NameTargetPath))),
+                    (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
+                    (Key.A, "send clipboard to All targets", pasteToAllTargets, pasteToAllKeys),
+                    (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
+                    (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs())),
+                    (Key.P, "Pin current filter", (n,a) => PinFilter_Click(this, new RoutedEventArgs())),
+                    (Key.I, "Import pinned filters and targets", (n,a) => ImportWorkspace_Click(this, new RoutedEventArgs())),
+                    (Key.E, "Export pinned filters and targets", (n,a) => ExportWorkspace_Click(this, new RoutedEventArgs()))
                 }),
                 (Key.LeftCtrl,"CTRL", new CommandTree[] {
                     (Key.A, "Select/Unselect all", (n,a) => filesView.ToogleSelectAll()),
@@ -531,6 +551,45 @@ namespace search
             catch (Exception ex) { Model.Status = $"Could not open target: {ex.Message}"; }
         }
 
+        // The two big drop zones are only shown while a drag is in progress: pinned for the
+        // whole drag when it originates in the files view, otherwise kept alive by drag-over
+        // activity on the bar and hidden by the timer shortly after the drag moves away.
+        DispatcherTimer basketOverlayHide;
+        bool basketOverlayPinned;
+
+        void ShowBasketDropOverlay(bool pinned = false)
+        {
+            basketOverlayPinned |= pinned;
+            BasketDropOverlay.Visibility = Visibility.Visible;
+            if (basketOverlayPinned) return;
+            if (basketOverlayHide == null)
+            {
+                basketOverlayHide = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+                basketOverlayHide.Tick += (o, e) => HideBasketDropOverlay();
+            }
+            basketOverlayHide.Stop();
+            basketOverlayHide.Start();
+        }
+
+        void HideBasketDropOverlay()
+        {
+            basketOverlayPinned = false;
+            basketOverlayHide?.Stop();
+            BasketDropOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        void TargetBar_PreviewDragOver(object sender, DragEventArgs e)
+        {
+            if (GetDropSources(e).Length > 0) ShowBasketDropOverlay();
+        }
+
+        void TargetBar_DragOver(object sender, DragEventArgs e)
+        {
+            // Reached only when no inner drop zone claimed the drag - the bar itself is not a drop spot
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+        }
+
         void BasketAddZone_DragOver(object sender, DragEventArgs e) => SetBasketDragEffect(sender, e,
             GetDropSources(e).Length > 0, DragDropEffects.Copy);
 
@@ -566,6 +625,7 @@ namespace search
         void BasketAddZone_Drop(object sender, DragEventArgs e)
         {
             if (sender is UIElement element) element.Opacity = 1;
+            HideBasketDropOverlay();
             AddBasketTargets(GetDropSources(e));
             e.Handled = true;
         }
@@ -573,6 +633,7 @@ namespace search
         async void BasketUseZone_Drop(object sender, DragEventArgs e)
         {
             BasketUseZone.Opacity = 1;
+            HideBasketDropOverlay();
             var sources = GetDropSources(e);
             var targets = BasketTargets.ToArray();
             var defaultAction = SuggestedBasketTransferAction(e, sources, targets);
@@ -585,6 +646,7 @@ namespace search
         {
             if (sender is not FrameworkElement { Tag: BasketTarget target }) return;
             ((UIElement)sender).Opacity = 1;
+            HideBasketDropOverlay();
             var sources = GetDropSources(e);
             var defaultAction = SuggestedBasketTransferAction(e, sources, new[] { target });
             e.Effects = DropEffectFor(defaultAction);
@@ -592,13 +654,16 @@ namespace search
             e.Handled = true;
         }
 
-        async void PasteToBasket_Click(object sender, RoutedEventArgs e)
+        async void PasteToBasket_Click(object sender, RoutedEventArgs e) => await PasteToBasket();
+
+        async Task PasteToBasket(FileTransferAction? action = null, FileCollisionAction? collision = null)
         {
             string[] paths;
             try { paths = Clipboard.GetFileDropList().Cast<string>().ToArray(); }
             catch (Exception ex) { Model.Status = $"Cannot read clipboard files: {ex.Message}"; return; }
             await UseBasketTargets(paths, BasketTargets.ToArray(),
-                ClipboardRequestsMove() ? FileTransferAction.Move : FileTransferAction.Copy);
+                action ?? (ClipboardRequestsMove() ? FileTransferAction.Move : FileTransferAction.Copy),
+                collision);
         }
 
         static bool TargetIsAvailable(BasketTarget target) =>
@@ -678,7 +743,8 @@ namespace search
         }
 
         async Task UseBasketTargets(string[] sources, BasketTarget[] requestedTargets,
-            FileTransferAction defaultFolderAction = FileTransferAction.Copy)
+            FileTransferAction defaultFolderAction = FileTransferAction.Copy,
+            FileCollisionAction? collisionForAll = null)
         {
             sources = sources.Where(x => File.Exists(x) || Directory.Exists(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -734,7 +800,7 @@ namespace search
             }
             if (folders.Length > 0)
             {
-                if (!await TransferPaths(sources, folders.Select(x => x.Path).ToArray(), folderAction.Value))
+                if (!await TransferPaths(sources, folders.Select(x => x.Path).ToArray(), folderAction.Value, collisionForAll))
                     errors.Add("One or more folder transfers did not complete.");
             }
             Model.Status = errors.Count == 0
@@ -1220,6 +1286,7 @@ namespace search
             data.SetData(DataFormats.FileDrop, existingPaths);
             try
             {
+                ShowBasketDropOverlay(pinned: true);
                 DragDrop.DoDragDrop(filesView, data,
                     DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
             }
@@ -1230,6 +1297,7 @@ namespace search
             finally
             {
                 dragStarted = false;
+                HideBasketDropOverlay();
             }
         }
 
@@ -1599,17 +1667,32 @@ namespace search
         async void ContextUnzip_Click(object sender, RoutedEventArgs e)
             => await Unzip(ContextNodes(), Array.Empty<Key>());
 
+        // Keys pressed or released while Alt is involved arrive as Key.System with the real key
+        // in SystemKey. Feeding raw Key.System into the commander shows a bogus <System> hint and,
+        // worse, unpairs press/release (AltGr = LeftCtrl+RightAlt releases LeftCtrl as Key.System),
+        // so the pressed-keys set never empties and the hint sticks. RightAlt maps to LeftAlt so
+        // AltGr layouts get the same ALT commands.
+        static Key CommandKey(KeyEventArgs e)
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            return key == Key.RightAlt ? Key.LeftAlt : key;
+        }
+
         private void ListView_KeyDown(object sender, KeyEventArgs e)
         {
             if (ReferenceEquals(e.OriginalSource, inlineRenameEditor))
                 return;
-            switch (e.Key)
+            var key = CommandKey(e);
+            switch (key)
             {
                 case Key.Up:
                 case Key.Down:
                 case Key.PageDown:
                 case Key.PageUp:
                     // Skip list view control keys
+                    return;
+                case Key.F4 when Keyboard.Modifiers.HasFlag(ModifierKeys.Alt):
+                    // Leave Alt+F4 to the system so the window can close
                     return;
             }
             // Auto-repeats of a held key carry no new command information - processing them
@@ -1620,8 +1703,8 @@ namespace search
                 return;
             }
             // Receive another command
-            filesViewCmd.KeyPressed(e.Key);
-            $"Key {e.Key} pressed => Still down: {string.Join(", ", filesViewCmd.KeysDown().Select(x => x.ToString()))}".Debug();
+            filesViewCmd.KeyPressed(key);
+            $"Key {key} pressed => Still down: {string.Join(", ", filesViewCmd.KeysDown().Select(x => x.ToString()))}".Debug();
             e.Handled = true;
         }
 
@@ -1632,8 +1715,9 @@ namespace search
                 return;
             try
             {
-                e.Handled = filesViewCmd.KeyReleased(e.Key);
-                $"Key {e.Key} released => Down: {string.Join(", ", filesViewCmd.KeysDown().Select(x => x.ToString()))}".Debug();
+                var key = CommandKey(e);
+                e.Handled = filesViewCmd.KeyReleased(key);
+                $"Key {key} released => Down: {string.Join(", ", filesViewCmd.KeysDown().Select(x => x.ToString()))}".Debug();
             }
             catch (Exception ex)
             {

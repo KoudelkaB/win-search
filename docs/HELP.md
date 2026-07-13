@@ -112,18 +112,20 @@ The target basket at the bottom keeps reusable drop targets:
 
 - **+ Name** adds selected Name-column items. Folders, supported archives, and executables have target-specific behavior.
 - **+ Folder** adds the selected items' parent folders.
-- Dropping paths on **Drop here to add targets** adds exactly the paths produced by the drag. A drag started in the Folder column therefore adds parent folders; a drag started in the Name column adds the named items.
-- Dropping on empty space after the target chips also adds targets. Dropping directly on a chip uses that target instead.
-- Dropping sources onto one target uses only that target. Drop onto the separate green **Use all (n)** zone to use every available target after showing a summary when needed.
+- While a drag is in progress the bar shows two large drop zones: **＋ Add as target** and **📤 Send to all (n) target(s)**. They appear as soon as a drag starts in the result list, or when an external drag hovers the bar, and disappear when the drag ends.
+- **Add as target** adds exactly the paths produced by the drag. A drag started in the Folder column therefore adds parent folders; a drag started in the Name column adds the named items. Dropping on empty space after the target chips also adds targets.
+- **Send to all** uses every available target after showing a summary when needed. Dropping directly on a chip uses only that target instead.
 - Folder targets show the copy, move, symbolic-link, and hard-link chooser.
 - Archive targets add the sources to the archive. Updating non-ZIP formats requires an installed `7z.exe` or `7zz.exe`.
 - Executable targets are started with the source paths as arguments and require confirmation.
-- **Paste to all…** uses file paths currently on the clipboard with every target.
-- Right-click a target to filter to it, open it, or remove it. **Clear** removes all targets.
+- **Send clipboard to all (n)…** is the same operation with the clipboard as the source; it is disabled while no targets are set.
+- Right-click a target to filter to it, open it, remove it, or clear all targets. Right-clicking the bar background also offers **Clear targets**.
 
 The basket is saved automatically between application runs. Missing targets remain in the saved configuration but are skipped until they become available again.
 
-Target-bar access keys are `Alt+N` (add Name), `Alt+F` (add Folder), `Alt+A` (paste to all), and `Alt+C` (clear). `Ctrl+Shift+V` also invokes **Paste to all…**. Filter controls use `Alt+P` or `Ctrl+D` to pin, `Alt+I` to import, and `Alt+E` to export.
+Target-bar access keys are `Alt+N` (add Name), `Alt+F` (add Folder), and `Alt+A` (send clipboard to all; in the result list `Alt+V` is an alias and both accept `L`/`H`/`O` for link, hard link, overwrite). `Alt+C` clears the targets while the result list is focused. `Ctrl+Shift+V` also invokes **Send clipboard to all…**. Filter controls use `Alt+P` or `Ctrl+D` to pin, `Alt+I` to import, and `Alt+E` to export. All `Alt` shortcuts also work while the result list is focused; holding `Alt` there shows the available options in the **Hints** panel.
+
+With the result list focused, the `T` key sequences manage targets as well: `T` adds the selected items as targets, `T` `F` adds their parent folders, `T` `V` sends the clipboard to all targets, and `T` `C` clears the targets. `T` `V` takes the same modifier keys as `V`: `L` sends as symbolic links, `H` as hard links, and `O` overwrites existing files.
 
 ## Keyboard Commands
 
@@ -150,6 +152,7 @@ Common commands:
 - `F`: copy selected folder paths.
 - `M`: show an inline bar for creating a directory in the selected folders.
 - `S`: selection commands.
+- `T`: target commands — add selected as targets; then `F` for parent folders, `V` to send clipboard to all targets (with `L`/`H`/`O` for link, hard link, overwrite), `C` to clear targets.
 - `U`: unzip selected archives.
 - `Z`: zip selected items.
 - `F12`: refresh from NTFS.

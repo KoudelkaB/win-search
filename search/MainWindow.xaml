@@ -48,34 +48,55 @@
     </Window.Resources>
     <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Bottom">
-            <Border BorderBrush="LightGray" BorderThickness="0,1,0,1" Padding="5,4" Background="#FFF8F8F8">
-                <DockPanel LastChildFill="True">
-                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                        <TextBlock Text="Targets:" FontWeight="DemiBold" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                        <Button Content="+ _Name" ToolTip="Add the selected Name-column items as targets (Alt+N)"
-                                Click="AddNameTargets_Click" Padding="5,1" Margin="0,0,3,0"/>
-                        <Button Content="+ _Folder" ToolTip="Add the selected items' parent folders as targets (Alt+F)"
-                                Click="AddFolderTargets_Click" Padding="5,1" Margin="0,0,3,0"/>
-                        <Button Content="Paste to _all…" ToolTip="Use clipboard files with every target (Alt+A or Ctrl+Shift+V)"
-                                Click="PasteToBasket_Click" Padding="5,1" Margin="0,0,3,0"/>
-                        <Button Content="_Clear" ToolTip="Remove every target (Alt+C)"
-                                Click="ClearTargets_Click" Padding="5,1" Margin="0,0,6,0"/>
-                    </StackPanel>
-                    <Border MinHeight="28" Padding="3,1" BorderBrush="#FF9A9A9A" BorderThickness="1" CornerRadius="3">
-                        <DockPanel>
-                            <Border DockPanel.Dock="Right" x:Name="BasketAddZone" AllowDrop="True"
-                                    Background="#FFE8F2FF" BorderBrush="#FF6A9BCB" BorderThickness="1"
-                                    CornerRadius="3" Padding="8,3" Margin="5,0,0,0"
-                                    DragOver="BasketAddZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketAddZone_Drop">
-                                <TextBlock Text="＋ Drop here to add targets" VerticalAlignment="Center"/>
-                            </Border>
-                            <Border DockPanel.Dock="Left" x:Name="BasketUseZone" AllowDrop="True"
-                                    Background="#FFEAF7EA" BorderBrush="#FF5B9B5B" BorderThickness="1"
-                                    CornerRadius="3" Padding="8,3" Margin="0,0,5,0"
-                                    ToolTip="Drop sources here to use every target in the basket"
-                                    DragOver="BasketUseZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketUseZone_Drop">
-                                <TextBlock VerticalAlignment="Center"><Run Text="↓ Use all ("/><Run Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay}"/><Run Text=")"/></TextBlock>
-                            </Border>
+            <Border x:Name="TargetBar" BorderBrush="LightGray" BorderThickness="0,1,0,1" Padding="5,4" Background="#FFF8F8F8"
+                    AllowDrop="True" PreviewDragOver="TargetBar_PreviewDragOver" DragOver="TargetBar_DragOver">
+                <Border.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Clear targets" Click="ClearTargets_Click"/>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <StackPanel>
+                    <Grid x:Name="BasketDropOverlay" Visibility="Collapsed" Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" x:Name="BasketAddZone" AllowDrop="True" MinHeight="34"
+                                Background="#FFE8F2FF" BorderBrush="#FF6A9BCB" BorderThickness="1"
+                                CornerRadius="3" Margin="0,0,2,0"
+                                DragOver="BasketAddZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketAddZone_Drop">
+                            <TextBlock Text="＋ Add as target" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <Border Grid.Column="1" x:Name="BasketUseZone" AllowDrop="True" MinHeight="34"
+                                Background="#FFEAF7EA" BorderBrush="#FF5B9B5B" BorderThickness="1"
+                                CornerRadius="3" Margin="2,0,0,0"
+                                DragOver="BasketUseZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketUseZone_Drop">
+                            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"><Run Text="📤 Send to all "/><Run Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay}"/><Run Text=" target(s)"/></TextBlock>
+                        </Border>
+                    </Grid>
+                    <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Left" Text="Targets:" FontWeight="DemiBold" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="+ _Name" ToolTip="Add the selected Name-column items as targets (Alt+N)"
+                                    Click="AddNameTargets_Click" Padding="5,1" Margin="6,0,0,0"/>
+                            <Button Content="+ _Folder" ToolTip="Add the selected items' parent folders as targets (Alt+F)"
+                                    Click="AddFolderTargets_Click" Padding="5,1" Margin="3,0,0,0"/>
+                            <Button Click="PasteToBasket_Click" Padding="5,1" Margin="9,0,0,0"
+                                    ToolTip="Send clipboard files to every target (Alt+A or Ctrl+Shift+V)"
+                                    ToolTipService.ShowOnDisabled="True">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding BasketTargets.Count, ElementName=Root}" Value="0">
+                                                <Setter Property="IsEnabled" Value="False"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                                <AccessText Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay, StringFormat='Send clipboard to _all ({0})…'}"/>
+                            </Button>
+                        </StackPanel>
+                        <Border MinHeight="28" Padding="3,1" Margin="0,0,0,0" BorderBrush="#FF9A9A9A" BorderThickness="1" CornerRadius="3">
                             <Border x:Name="BasketItemsZone" AllowDrop="True" Background="Transparent"
                                     ToolTip="Drop on empty space to add targets"
                                     DragOver="BasketAddZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketAddZone_Drop">
@@ -94,6 +115,7 @@
                                                         <MenuItem Header="Open target" Click="TargetOpen_Click"/>
                                                         <Separator/>
                                                         <MenuItem Header="Remove target" Click="TargetRemove_Click"/>
+                                                        <MenuItem Header="Clear all targets" Click="ClearTargets_Click"/>
                                                     </ContextMenu>
                                                 </Button.ContextMenu>
                                                 <TextBlock><Run Text="{Binding Icon, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Name, Mode=OneWay}"/></TextBlock>
@@ -102,9 +124,9 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </Border>
-                        </DockPanel>
-                    </Border>
-                </DockPanel>
+                        </Border>
+                    </DockPanel>
+                </StackPanel>
             </Border>
             <StackPanel Orientation="Horizontal">
                 <Ellipse Style="{StaticResource BusyIndicator}" Tag="{Binding Loading}" Margin="5,0,0,0"/>
