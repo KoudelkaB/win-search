@@ -31,6 +31,13 @@ namespace search.Models
         public bool IsDirectory => Attributes.HasFlag(FileAttributes.Directory);
 
         /// <summary>
+        /// False only when the node was built from a path that did not resolve on disk
+        /// (FileNode of a vanished or never-existing path). Such a node must never be
+        /// indexed - it carries no metadata (FILETIME 0 = 1601 times, zero size).
+        /// </summary>
+        public virtual bool Exists => true;
+
+        /// <summary>
         /// Adjust the size by a signed watcher-event delta. Saturates at 0 - aggregated
         /// directory sizes are best-effort between MFT reloads and a missed event must not
         /// wrap the unsigned size to exabytes.

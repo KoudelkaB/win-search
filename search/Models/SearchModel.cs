@@ -382,6 +382,9 @@ namespace search.Models
         /// </summary>
         INode[] RemoveTree(string path)
         {
+            //Never uproot a whole drive from an event - only a drive scan may do that.
+            //A drive-root path here is a half-delivered watcher rename/delete (see IsDriveRoot).
+            if (IsDriveRoot(path)) return Array.Empty<INode>();
             if (!files.TryGetValue(path, out var root)) return Array.Empty<INode>();
             var prefix = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var candidates = files.Values.AsParallel()
@@ -458,6 +461,12 @@ namespace search.Models
         INode GetOrAddNew(string path)
         {
             var added = new FileNode(path);
+            //A path that does not resolve on disk must never enter the index: it carries no
+            //metadata (1601 times, empty size) and would shadow nothing real. It happens for
+            //watcher events of already-vanished temp files and for the ghost paths built from
+            //half-delivered renames - the vanished file's delete event (or the next scan)
+            //rules the index, not this stat miss.
+            if (!added.Exists) return files.TryGetValue(path, out var indexed) ? indexed : added;
             var node = files.GetOrAdd(path, added);
             //Only a first sighting contributes - an already indexed node was counted by the scan
             if (ReferenceEquals(node, added) && !node.IsDirectory) PropagateSizeDelta(path, (long)node.Size);
@@ -728,6 +737,16 @@ namespace search.Models
                         case WatcherChangeTypes.Renamed:
                             //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
                             var renamed = (RenamedEventArgs)e;
+                            //Under watcher buffer pressure ReadDirectoryChangesW can lose one half
+                            //of a rename pair; .NET then raises Renamed with an empty name whose
+                            //FullPath/OldFullPath is the watcher root. Tree surgery keyed on the
+                            //drive root would remove the whole index and re-add it under ghost
+                            //paths (1601 times, empty sizes) - rescan the drive instead.
+                            if (IsDriveRoot(renamed.OldFullPath) || IsDriveRoot(e.FullPath))
+                            {
+                                _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                                break;
+                            }
                             var oldRoot = files.TryGetValue(renamed.OldFullPath, out var indexedOld) ? indexedOld : null;
                             if (oldRoot?.IsDirectory == true || HasArchiveChildren(oldRoot))
                             {
@@ -743,6 +762,13 @@ namespace search.Models
                             break;
                         case WatcherChangeTypes.Deleted:
                             //Trace.WriteLine($"-{e.FullPath}");
+                            //A drive-root delete is a mangled event (see the rename case) - a
+                            //really vanished drive is handled by its own scan, never from here
+                            if (IsDriveRoot(e.FullPath))
+                            {
+                                _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                                break;
+                            }
                             var deletedRoot = files.TryGetValue(e.FullPath, out var indexedDeleted) ? indexedDeleted : null;
                             if (deletedRoot?.IsDirectory == true || HasArchiveChildren(deletedRoot))
                             {
@@ -763,6 +789,14 @@ namespace search.Models
                 }
             });
         }
+
+        /// <summary>
+        /// True for "C:\" (any drive/watcher root) and for null/empty. Watcher events carrying
+        /// such a path are half-delivered renames/deletes - ReadDirectoryChangesW lost the other
+        /// half of the pair to buffer pressure and .NET substituted the watcher root.
+        /// </summary>
+        internal static bool IsDriveRoot(string path)
+            => string.IsNullOrEmpty(path) || string.IsNullOrEmpty(Path.GetDirectoryName(path));
 
         /// <summary>
         /// Find file by name

@@ -13,6 +13,29 @@ namespace search.Tests
 {
     public class AppRegressionTests
     {
+        [Theory]
+        [InlineData(null, true)]
+        [InlineData("", true)]
+        [InlineData(@"C:\", true)]                       // .NET substitutes the watcher root for a rename half lost to buffer pressure
+        [InlineData(@"C:", true)]
+        [InlineData(@"C:\Users", false)]
+        [InlineData(@"C:\Users\Bohdan\Downloads\a.zip", false)]
+        public void HalfDeliveredWatcherEventsAreRecognizedByTheirRootPath(string path, bool root)
+            => Assert.Equal(root, SearchModel.IsDriveRoot(path));
+
+        [Fact]
+        public void NodeOfAVanishedPathReportsNotExisting()
+        {
+            // The ghost signature of the reported bug: FileInfo on a missing path yields
+            // FILETIME 0 (1601 times) and zero size - such a node must never be indexed
+            var node = new FileNode(Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "ghost.zip"));
+            Assert.False(node.Exists);
+
+            var real = new FileNode(Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar));
+            Assert.True(real.Exists);
+            Assert.True(real.IsDirectory);
+        }
+
         [Fact]
         public void ContentSearchFindsNeedlesLargerThanTheDefaultBuffer()
         {

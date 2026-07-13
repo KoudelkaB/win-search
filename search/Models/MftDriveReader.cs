@@ -356,8 +356,11 @@ namespace search.Models
         static uint U32(ReadOnlySpan<byte> bytes) => BinaryPrimitives.ReadUInt32LittleEndian(bytes);
         static ulong U64(ReadOnlySpan<byte> bytes) => BinaryPrimitives.ReadUInt64LittleEndian(bytes);
 
+        // Local time, not UTC: FileNode (watcher/walk) reports FileSystemInfo local times
+        // and the grid binds the values directly - UTC here showed MFT rows shifted by the
+        // whole UTC offset against the same file re-indexed by the watcher
         static DateTime Time(ulong fileTime)
-            => fileTime == 0 || fileTime > MaxFileTime ? DateTime.MinValue : DateTime.FromFileTimeUtc((long)fileTime);
+            => fileTime == 0 || fileTime > MaxFileTime ? DateTime.MinValue : DateTime.FromFileTime((long)fileTime);
 
         /// <summary>
         /// A file counts once per hard link (per non-DOS $FILE_NAME), so folder sizes

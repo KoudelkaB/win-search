@@ -41,9 +41,11 @@ namespace search.Tests
             Assert.False(file.IsDirectory);
             Assert.Equal(@"Q:\Docs\a.txt", file.FullName);
             Assert.Equal(123UL, file.Size);
-            Assert.Equal(Created, file.CreationTime);   // $STANDARD_INFORMATION wins over $FILE_NAME
-            Assert.Equal(Modified, file.LastChangeTime);
-            Assert.Equal(Accessed, file.LastAccessTime);
+            // Local times - the grid mixes MFT rows with watcher/walk FileNodes, whose
+            // FileSystemInfo times are local
+            Assert.Equal(Created.ToLocalTime(), file.CreationTime);   // $STANDARD_INFORMATION wins over $FILE_NAME
+            Assert.Equal(Modified.ToLocalTime(), file.LastChangeTime);
+            Assert.Equal(Accessed.ToLocalTime(), file.LastAccessTime);
 
             var docs = nodes.Single(n => n.Name == "Docs");
             Assert.True(docs.IsDirectory);

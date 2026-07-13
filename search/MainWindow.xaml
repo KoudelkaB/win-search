@@ -390,7 +390,9 @@
                     <GridViewColumn Header="Size" Width="Auto">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding Size, StringFormat={}{0:### ### ### ###}}" TextAlignment="Right" />
+                                <!-- ##0 so a real zero-byte file shows "0" - the all-# format rendered it
+                                     as an empty cell, indistinguishable from a missing value -->
+                                <TextBlock Text="{Binding Size, StringFormat={}{0:### ### ### ##0}}" TextAlignment="Right" />
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>

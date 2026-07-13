@@ -163,6 +163,7 @@ namespace search.Models
         public FileNode(string path)
         {
             this.path = path;
+            Exists = false; //Set only from a successful stat below
             try
             {
                 FileSystemInfo fi = new FileInfo(path);
@@ -176,6 +177,7 @@ namespace search.Models
                     fi = new DirectoryInfo(path);
                     if (fi.Exists) Attributes |= FileAttributes.Directory;
                 }
+                Exists = fi.Exists;
                 CreationTime = fi.CreationTime;
                 LastChangeTime = fi.LastWriteTime;
                 LastAccessTime = fi.LastAccessTime;
@@ -188,7 +190,7 @@ namespace search.Models
         /// </summary>
         public FileNode(FileSystemInfo info)
         {
-            path = info.FullName;
+            path = info.FullName; //Enumerated entries exist by definition => Exists stays true
             try
             {
                 Attributes = info.Attributes;
@@ -202,6 +204,7 @@ namespace search.Models
 
         public void AddSize(ulong size) => Size += size;
 
+        override public bool Exists { get; } = true; //ZipNodes and enumerated entries exist
         override public FileAttributes Attributes { get; protected set; } = 0;
         override public string Name => Path.GetFileName(path);
         override public ulong Size { get; protected set; }
