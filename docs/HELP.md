@@ -121,11 +121,15 @@ The target basket at the bottom keeps reusable drop targets:
 - Archive targets add the sources to the archive. Updating non-ZIP formats requires an installed `7z.exe` or `7zz.exe`.
 - Executable targets are started with the source paths as arguments and require confirmation.
 - **Send clipboard to all (n)…** is the same operation with the clipboard as the source; it is disabled while no targets are set.
-- Right-click a target to filter to it, open it, remove it, or clear all targets. Right-clicking the bar background also offers **Clear targets**.
+- Double-click a target to open it. Right-click a target to filter to it, open it, remove it, or clear all targets. Right-clicking the bar background also offers **Clear targets**.
 
 The basket is saved automatically between application runs. Missing targets remain in the saved configuration but are skipped until they become available again.
 
-Target-bar access keys are `Alt+N` (add Name), `Alt+F` (add Folder), and `Alt+A` (send clipboard to all; in the result list `Alt+V` is an alias and both accept `L`/`H`/`O` for link, hard link, overwrite). `Alt+C` clears the targets while the result list is focused. `Ctrl+Shift+V` also invokes **Send clipboard to all…**. Filter controls use `Alt+P` or `Ctrl+D` to pin, `Alt+I` to import, and `Alt+E` to export. All `Alt` shortcuts also work while the result list is focused; holding `Alt` there shows the available options in the **Hints** panel.
+All target and filter commands live under `Alt` and behave the same everywhere in the window: hold `Alt` to see them in the **Hints** panel, then press `N` (add selected Names as targets), `F` (add parent Folders), `V` (send clipboard to all targets - keep holding and add `L`/`H`/`O` for link, hard link, overwrite), `C` (clear targets), `P` (pin the filter), `I`/`E` (import/export pinned filters and targets). Keyboard sequences transfer directly with the chosen action; only the toolbar button and mouse drops open the action chooser dialog.
+
+While a keyboard sequence is active, **Hints** shows only valid next keys. `Esc` is offered only when releasing the held keys would execute an action and `Alt` is not currently held. This also works in an `Alt` sequence after releasing `Alt` while keeping another sequence key held. `Backspace` always returns by one step. Flow controls are separated from the command choices by a line.
+
+Entries ending in `›` have another level of command choices; keep a sequence key held and press that key to show the submenu.
 
 With the result list focused, the `T` key sequences manage targets as well: `T` adds the selected items as targets, `T` `F` adds their parent folders, `T` `V` sends the clipboard to all targets, and `T` `C` clears the targets. `T` `V` takes the same modifier keys as `V`: `L` sends as symbolic links, `H` as hard links, and `O` overwrites existing files.
 

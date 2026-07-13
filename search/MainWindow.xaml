@@ -7,7 +7,7 @@
         xmlns:local="clr-namespace:search"
         mc:Ignorable="d"
         Title="File Search Manager" Height="450" Width="800"
-        Loaded="Window_Loaded" PreviewKeyDown="Window_KeyDown">
+        Loaded="Window_Loaded" PreviewKeyDown="Window_KeyDown" PreviewKeyUp="Window_KeyUp">
     <Window.Resources>
         <local:Bool2VisibilityConverter x:Key="Bool2VisibilityConverter" />
         <local:IsDirectoryBooleanConverter x:Key="IsDirectoryBooleanConverter" />
@@ -82,7 +82,7 @@
                             <Button Content="+ _Folder" ToolTip="Add the selected items' parent folders as targets (Alt+F)"
                                     Click="AddFolderTargets_Click" Padding="5,1" Margin="3,0,0,0"/>
                             <Button Click="PasteToBasket_Click" Padding="5,1" Margin="9,0,0,0"
-                                    ToolTip="Send clipboard files to every target (Alt+A or Ctrl+Shift+V)"
+                                    ToolTip="Send clipboard files to every target (Alt+V)"
                                     ToolTipService.ShowOnDisabled="True">
                                 <Button.Style>
                                     <Style TargetType="Button">
@@ -93,7 +93,7 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Button.Style>
-                                <AccessText Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay, StringFormat='Send clipboard to _all ({0})…'}"/>
+                                <AccessText Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay, StringFormat='Send clipboard to all ({0})…'}"/>
                             </Button>
                         </StackPanel>
                         <Border MinHeight="28" Padding="3,1" Margin="0,0,0,0" BorderBrush="#FF9A9A9A" BorderThickness="1" CornerRadius="3">
@@ -108,7 +108,8 @@
                                         <DataTemplate>
                                             <Button Tag="{Binding}" AllowDrop="True" Margin="0,0,4,0" Padding="5,2"
                                                     ToolTip="{Binding Path}" DragOver="BasketTarget_DragOver"
-                                                    DragLeave="BasketZone_DragLeave" Drop="BasketTarget_Drop">
+                                                    DragLeave="BasketZone_DragLeave" Drop="BasketTarget_Drop"
+                                                    MouseDoubleClick="Target_MouseDoubleClick">
                                                 <Button.ContextMenu>
                                                     <ContextMenu>
                                                         <MenuItem Header="Filter to target" Click="TargetFilter_Click"/>
@@ -140,10 +141,52 @@
         </StackPanel>
         <StackPanel Name="help" DockPanel.Dock="Right" Orientation="Vertical" Margin="5">
             <TextBlock FontWeight="DemiBold">Hints</TextBlock>
-            <TextBlock x:Name="filterTextBoxCmd" Visibility="{Binding ElementName=filterTextBox, Path=IsKeyboardFocusWithin, Converter={StaticResource Bool2VisibilityConverter}}"/>
-            <TextBlock x:Name="findCmd" Visibility="{Binding ElementName=findTextBox, Path=IsKeyboardFocusWithin, Converter={StaticResource Bool2VisibilityConverter}}"/>
+            <TextBlock x:Name="filterTextBoxCmd">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding ElementName=filterTextBox, Path=IsKeyboardFocusWithin}" Value="True"/>
+                                    <Condition Binding="{Binding ElementName=globalCmd, Path=IsReceivingCommandKeys}" Value="False"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            <TextBlock x:Name="findCmd">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding ElementName=findTextBox, Path=IsKeyboardFocusWithin}" Value="True"/>
+                                    <Condition Binding="{Binding ElementName=globalCmd, Path=IsReceivingCommandKeys}" Value="False"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
             <local:KeysCommander x:Name="filesViewCmd" Visibility=
                                  "{Binding ElementName=filesView, Path=IsKeyboardFocusWithin, Converter={StaticResource Bool2VisibilityConverter}}" />
+            <local:KeysCommander x:Name="globalCmd" Margin="0,8,0,0">
+                <local:KeysCommander.Style>
+                    <Style TargetType="local:KeysCommander">
+                        <Style.Triggers>
+                            <!-- The focused result list shows its own commander incl. the ALT tree -->
+                            <DataTrigger Binding="{Binding ElementName=filesView, Path=IsKeyboardFocusWithin}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </local:KeysCommander.Style>
+            </local:KeysCommander>
         </StackPanel>
         <Grid DockPanel.Dock="Top" Margin="5,5,5,2">
             <Grid.RowDefinitions>
@@ -167,7 +210,7 @@
                                        TextChanged="TextBox_TextChanged" PreviewKeyDown="filterTextBox_PreviewKeyDown" 
                                        Margin="0,0,0,1"/>
             <Button Grid.Row="0" Grid.Column="2" Content="📌 _Pin…" Click="PinFilter_Click"
-                    Margin="3,0,0,1" Padding="6,0" ToolTip="Save this filter under a name (Alt+P or Ctrl+D)"/>
+                    Margin="3,0,0,1" Padding="6,0" ToolTip="Save this filter under a name (Alt+P)"/>
             <StackPanel Grid.Row="0" Grid.Column="3" Orientation="Horizontal">
                 <Button Content="_Import…" Click="ImportWorkspace_Click" Margin="3,0,0,1" Padding="5,0"
                         ToolTip="Replace pinned filters and targets from a settings file (Alt+I)"/>

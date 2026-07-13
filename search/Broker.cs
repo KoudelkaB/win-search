@@ -36,6 +36,7 @@ namespace search
         static PipeStream pipe;
         static readonly object channel = new object(); // Single serialized request channel
         static Task startup = Task.CompletedTask;
+        static volatile bool elevationAccepted;
 
         /// <summary>
         /// True once the elevated broker is connected and answered the handshake
@@ -46,6 +47,18 @@ namespace search
         /// True when the user declined the UAC prompt for the broker
         /// </summary>
         public static bool Declined { get; private set; }
+
+        /// <summary>
+        /// True once the startup UAC prompt was accepted, independently of whether the
+        /// elevated broker subsequently completed its pipe handshake.
+        /// </summary>
+        public static bool ElevationAccepted => elevationAccepted;
+
+        /// <summary>
+        /// Raised on a worker thread as soon as the startup UAC prompt is accepted and the
+        /// elevated broker process has been launched.
+        /// </summary>
+        public static event Action StartupElevationAccepted;
 
         /// <summary>
         /// Spawn the elevated broker in the background. Never blocks the UI:
@@ -73,6 +86,9 @@ namespace search
                         UseShellExecute = true,
                         CreateNoWindow = true
                     });
+                    elevationAccepted = true;
+                    try { StartupElevationAccepted?.Invoke(); }
+                    catch (Exception e) { $"broker elevation notification failed: {e.Message}".Debug(); }
 
                     var connect = server.WaitForConnectionAsync();
                     if (!connect.Wait(TimeSpan.FromSeconds(30)))

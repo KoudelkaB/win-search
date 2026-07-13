@@ -52,6 +52,7 @@ namespace search
         TextBox inlineRenameEditor;
         TextBlock inlineRenameDisplay;
         bool finishingInlineRename;
+        bool elevationForegroundRestored;
         INode[] newFolderTargets;
         bool newFolderOverwrite;
         string contextTargetColumn;
@@ -82,12 +83,14 @@ namespace search
         public MainWindow()
         {
             InitializeComponent();
+            Broker.StartupElevationAccepted += Broker_StartupElevationAccepted;
             ApplyWorkspaceSettings(WorkspaceSettingsStore.Load());
             ApplyWindowLayout();
             AttachColumnWidthHandlers();
             SizeChanged += (_, __) => UpdateFolderColumnWidth();
             Closing += (_, __) =>
             {
+                Broker.StartupElevationAccepted -= Broker_StartupElevationAccepted;
                 WindowLayoutStore.Save(this, CaptureColumnWidths());
                 SaveWorkspaceSettings();
             };
@@ -143,11 +146,25 @@ namespace search
             };
 
             var overwrite = (Key.O, "Overwrite");
+            //Keyboard names the action explicitly (L/H or the copy/move default) => transfer
+            //directly; only the mouse paths (toolbar button, drop) ask with the action dialog
             CommandTree.Command pasteToAllTargets = async (n, a) => await PasteToBasket(
                 a.Contains(Key.L) ? FileTransferAction.SymbolicLink :
                 a.Contains(Key.H) ? FileTransferAction.HardLink : null,
-                a.Contains(Key.O) ? FileCollisionAction.Overwrite : null);
+                a.Contains(Key.O) ? FileCollisionAction.Overwrite : null,
+                chooseAction: false);
             var pasteToAllKeys = new CommandTree[] { overwrite, (Key.L, "as link", overwrite), (Key.H, "as hard link", overwrite) };
+            //One ALT command set - the result-list commander and the window-wide commander
+            //(hints panel) share it, so the same sequences behave the same everywhere
+            var altCommands = new CommandTree[] {
+                (Key.N, "add selected as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(NameTargetPath))),
+                (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
+                (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
+                (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs())),
+                (Key.P, "Pin current filter", (n,a) => PinFilter_Click(this, new RoutedEventArgs())),
+                (Key.I, "Import pinned filters and targets", (n,a) => ImportWorkspace_Click(this, new RoutedEventArgs())),
+                (Key.E, "Export pinned filters and targets", (n,a) => ExportWorkspace_Click(this, new RoutedEventArgs()))
+            };
             filesViewCmd.Commands.Add(new CommandTree[] {
                 (Key.D, "Compare in diff tool", n => n.IsCount(2),  async (n,a) => await OpenDiff(n)),
                 (Key.Enter, "Filter folders", async (n,a)=> await FilterFolders(n.ToArray())),
@@ -184,16 +201,7 @@ namespace search
                     (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
                     (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs()))
                 }),
-                (Key.LeftAlt, "ALT", new CommandTree[] {
-                    (Key.N, "add selected as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(NameTargetPath))),
-                    (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
-                    (Key.A, "send clipboard to All targets", pasteToAllTargets, pasteToAllKeys),
-                    (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
-                    (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs())),
-                    (Key.P, "Pin current filter", (n,a) => PinFilter_Click(this, new RoutedEventArgs())),
-                    (Key.I, "Import pinned filters and targets", (n,a) => ImportWorkspace_Click(this, new RoutedEventArgs())),
-                    (Key.E, "Export pinned filters and targets", (n,a) => ExportWorkspace_Click(this, new RoutedEventArgs()))
-                }),
+                (Key.LeftAlt, "ALT", altCommands),
                 (Key.LeftCtrl,"CTRL", new CommandTree[] {
                     (Key.A, "Select/Unselect all", (n,a) => filesView.ToogleSelectAll()),
                     (Key.C, "Copy", (n,a) => Copy(n,a)),
@@ -208,14 +216,27 @@ namespace search
                 }),
                 (Key.RightShift, "Focus filter", (n,a)=>filterTextBox.Focus()),
                 (Key.U, "Unzip archive", async (n,a)=>await Unzip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")}),
-                (Key.Z, "Zip selected", async (n,a)=>await Zip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")}),
-                (Key.F12, "Refresh from NTFS", (n,a)=> FSChangeProcessor.RefreshFromNFT())
+                (Key.Z, "Zip selected", async (n,a)=>await Zip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")})
+                //F12 (refresh) is window-wide - handled in Window_KeyDown, listed in the global hints
             });
 
-            // Save filter to history on any command 
+            // Save filter to history on any command
             filesViewCmd.OnCommand += () => filters.Used(filterTextBox.Text);
             filesViewCmd.nodes = () => filesView.SelectedItems?.Cast<INode>() ?? Enumerable.Empty<INode>();
             filesView.SelectionChanged += (o, e) => filesViewCmd.OnChange();
+
+            //The window-wide commander: the same ALT tree (and behavior) as the result list,
+            //fed from Window_KeyDown/KeyUp whenever the list itself does not have the focus.
+            //F12/Escape execute in Window_KeyDown - listed here so the hints show them
+            globalCmd.Commands.Add(new CommandTree[] {
+                (Key.F12, "Refresh from NTFS"),
+                (Key.Escape, "Filter level up"),
+                (Key.LeftAlt, "ALT", altCommands)
+            });
+            globalCmd.OnCommand += () => filters.Used(filterTextBox.Text);
+            globalCmd.nodes = () => filesView.SelectedItems?.Cast<INode>() ?? Enumerable.Empty<INode>();
+            filesView.SelectionChanged += (o, e) => globalCmd.OnChange();
+            globalCmd.OnChange();
 
             // Preserver selection on Items update
             INode[] selected = null;
@@ -553,6 +574,18 @@ namespace search
         void TargetOpen_Click(object sender, RoutedEventArgs e)
         {
             var target = TargetFromMenu(sender);
+            OpenTarget(target);
+        }
+
+        void Target_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left) return;
+            OpenTarget((sender as FrameworkElement)?.Tag as BasketTarget);
+            e.Handled = true;
+        }
+
+        void OpenTarget(BasketTarget target)
+        {
             if (target == null) return;
             try { Process.Start(new ProcessStartInfo(target.Path) { UseShellExecute = true }); }
             catch (Exception ex) { Model.Status = $"Could not open target: {ex.Message}"; }
@@ -663,14 +696,15 @@ namespace search
 
         async void PasteToBasket_Click(object sender, RoutedEventArgs e) => await PasteToBasket();
 
-        async Task PasteToBasket(FileTransferAction? action = null, FileCollisionAction? collision = null)
+        async Task PasteToBasket(FileTransferAction? action = null, FileCollisionAction? collision = null,
+            bool chooseAction = true)
         {
             string[] paths;
             try { paths = Clipboard.GetFileDropList().Cast<string>().ToArray(); }
             catch (Exception ex) { Model.Status = $"Cannot read clipboard files: {ex.Message}"; return; }
             await UseBasketTargets(paths, BasketTargets.ToArray(),
                 action ?? (ClipboardRequestsMove() ? FileTransferAction.Move : FileTransferAction.Copy),
-                collision);
+                collision, chooseAction);
         }
 
         static bool TargetIsAvailable(BasketTarget target) =>
@@ -751,7 +785,8 @@ namespace search
 
         async Task UseBasketTargets(string[] sources, BasketTarget[] requestedTargets,
             FileTransferAction defaultFolderAction = FileTransferAction.Copy,
-            FileCollisionAction? collisionForAll = null)
+            FileCollisionAction? collisionForAll = null,
+            bool chooseFolderAction = true)
         {
             sources = sources.Where(x => File.Exists(x) || Directory.Exists(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -779,9 +814,14 @@ namespace search
             FileTransferAction? folderAction = null;
             if (folders.Length > 0)
             {
-                if (!TryChooseTransferAction(sources.Length, folders.Length, defaultFolderAction, out var selectedAction))
+                //Keyboard sequences name the action explicitly and transfer directly;
+                //the chooser dialog belongs to the mouse paths (toolbar button, drop)
+                if (!chooseFolderAction)
+                    folderAction = defaultFolderAction;
+                else if (TryChooseTransferAction(sources.Length, folders.Length, defaultFolderAction, out var selectedAction))
+                    folderAction = selectedAction;
+                else
                     return;
-                folderAction = selectedAction;
             }
 
             var errors = new List<string>();
@@ -936,6 +976,8 @@ namespace search
         async private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             filterTextBox.Focus();
+            // UAC may have been accepted before this window subscribed or became visible.
+            if (Broker.ElevationAccepted) RestoreForegroundAfterElevation();
             await Model.Update("");
             ApplySavedColumnWidths();
             UpdateFolderColumnWidth();
@@ -1685,6 +1727,39 @@ namespace search
             return key == Key.RightAlt ? Key.LeftAlt : key;
         }
 
+        void Broker_StartupElevationAccepted()
+        {
+            try
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (IsLoaded) RestoreForegroundAfterElevation();
+                }, DispatcherPriority.ApplicationIdle);
+            }
+            catch (InvalidOperationException)
+            {
+                // The application is already shutting down.
+            }
+        }
+
+        void RestoreForegroundAfterElevation()
+        {
+            if (elevationForegroundRestored) return;
+            elevationForegroundRestored = true;
+            if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+
+            // Activate normally first. If Windows rejects that foreground request, briefly
+            // enter the topmost z-order so the window is at least restored above other apps.
+            if (!Activate())
+            {
+                var wasTopmost = Topmost;
+                Topmost = true;
+                Activate();
+                Topmost = wasTopmost;
+            }
+            Focus();
+        }
+
         private void ListView_KeyDown(object sender, KeyEventArgs e)
         {
             if (ReferenceEquals(e.OriginalSource, inlineRenameEditor))
@@ -1739,17 +1814,21 @@ namespace search
                 ReferenceEquals(e.OriginalSource, inlineActionTextBox) ||
                 e.OriginalSource is TextBox { DataContext: PinnedFilter { IsEditing: true } })
                 return;
-            if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.D)
+            //ALT command chords work window-wide through the global commander - the same tree,
+            //hints and behavior as in the result list (which feeds its own commander instead)
+            if (!filesView.IsKeyboardFocusWithin)
             {
-                PinFilter_Click(this, new RoutedEventArgs());
-                e.Handled = true;
-                return;
-            }
-            if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.V)
-            {
-                PasteToBasket_Click(this, new RoutedEventArgs());
-                e.Handled = true;
-                return;
+                var key = e.Key == Key.System ? e.SystemKey : e.Key;
+                //Only pure LeftAlt starts a chord: AltGr (RightAlt/Ctrl+Alt) must keep typing
+                //special characters into the text boxes, and F4/Space stay with the system
+                //(close window, system menu)
+                var starts = key == Key.LeftAlt && Keyboard.Modifiers == ModifierKeys.Alt;
+                if ((starts || globalCmd.IsReceivingCommandKeys) && key != Key.F4 && key != Key.Space)
+                {
+                    if (!e.IsRepeat) globalCmd.KeyPressed(key);
+                    e.Handled = true;
+                    return;
+                }
             }
             switch (e.Key)
             {
@@ -1759,6 +1838,10 @@ namespace search
                     e.Handled = true;
                     return;
                 case Key.Escape:
+                    // An active grid sequence owns Escape. Leave the event unhandled here so
+                    // ListView_KeyDown can cancel the pending command instead of navigating
+                    // the filter one level up.
+                    if (filesView.IsKeyboardFocusWithin && filesViewCmd.IsReceivingCommandKeys) return;
                     //Let the suggestion popup close itself first
                     if (filterTextBox.IsListOpen || findTextBox.IsListOpen) return;
                     //Escape from current directory level up
@@ -1788,6 +1871,17 @@ namespace search
                     return;
             }
             e.Handled = true;
+        }
+
+        void Window_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (ReferenceEquals(e.OriginalSource, inlineRenameEditor) ||
+                ReferenceEquals(e.OriginalSource, inlineActionTextBox) ||
+                e.OriginalSource is TextBox { DataContext: PinnedFilter { IsEditing: true } })
+                return;
+            //Complete the global commander's chord - the command runs when all keys are released
+            if (!filesView.IsKeyboardFocusWithin && globalCmd.IsReceivingCommandKeys)
+                e.Handled = globalCmd.KeyReleased(e.Key == Key.System ? e.SystemKey : e.Key);
         }
 
         /// <summary>

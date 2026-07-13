@@ -22,23 +22,36 @@ namespace search
         public IEnumerable<Key> KeysDown() => keysDown.AsEnumerable();
         public IEnumerable<Key> CommandKeys() => commandKeys.AsEnumerable();
 
-        public bool IsReceivingCommandKeys => keysDown.Count > 0;
+        public static readonly DependencyProperty IsReceivingCommandKeysProperty = DependencyProperty.Register(
+            nameof(IsReceivingCommandKeys), typeof(bool), typeof(KeysCommander), new PropertyMetadata(false));
+
+        public bool IsReceivingCommandKeys
+        {
+            get => (bool)GetValue(IsReceivingCommandKeysProperty);
+            private set => SetValue(IsReceivingCommandKeysProperty, value);
+        }
 
         HashSet<Key> keysDown = new();
         List<Key> commandKeys = new(); //All kayes pressed druring this command in time order
+        bool commandCanceled;
 
         public void KeyPressed(Key key)
         {
             if (keysDown.Contains(key)) return; // If you want to press the key again you need to release it first!
             keysDown.Add(key);
+            IsReceivingCommandKeys = true;
+            // Keep consuming releases after cancellation so no partially held sequence can run.
+            if (commandCanceled) return;
             switch (key)
             {
                 case Key.Escape:
-                    Cancel();
+                    CancelPendingCommand();
                     return;
                 case Key.Back: // Backspace => remove last key
-                    if (commandKeys.Count > 0) commandKeys.RemoveAt(commandKeys.Count - 1);
-                    else Cancel();
+                    // Keep the first key (normally Alt/Ctrl/Shift) as the sequence root.
+                    // At the root there is no previous step, so Backspace cancels.
+                    if (commandKeys.Count > 1) commandKeys.RemoveAt(commandKeys.Count - 1);
+                    else CancelPendingCommand();
                     break;
                 default: // Add key to the command
                     commandKeys.Add(key);
@@ -55,20 +68,23 @@ namespace search
         public bool KeyReleased(Key key)
         {
             var handled = false;
-            keysDown.Remove(key);
+            var wasTracked = keysDown.Remove(key);
+            IsReceivingCommandKeys = keysDown.Count > 0;
             if (keysDown.Count == 0)
             {
                 //IsOpen = false;
                 // Run the command action
-                var cmd = Commands.Find(commandKeys);
-                if (cmd.cmd != null)
+                (CommandTree.Command cmd, IEnumerable<Key> arg) command = commandCanceled
+                    ? (null, Enumerable.Empty<Key>())
+                    : Commands.Find(commandKeys);
+                if (command.cmd != null)
                 {
                     OnCommand?.Invoke();
                     var c = Cursor;
                     try
                     {
                         Cursor = Cursors.Wait;
-                        cmd.cmd(nodes().ToArray(), cmd.arg);
+                        command.cmd(nodes().ToArray(), command.arg);
                     }
                     finally
                     {
@@ -79,15 +95,26 @@ namespace search
 
                 // Load the main menu
                 commandKeys.Clear();
+                commandCanceled = false;
                 OnChange();
             }
             else OnChange();
-            return handled;
+            return handled || wasTracked;
+        }
+
+        public void CancelPendingCommand()
+        {
+            if (!IsReceivingCommandKeys) return;
+            commandKeys.Clear();
+            commandCanceled = true;
+            OnChange();
         }
 
         public void Cancel()
         {
             keysDown.Clear();
+            IsReceivingCommandKeys = false;
+            commandCanceled = false;
 
             // Load the main menu
             commandKeys.Clear();
@@ -98,7 +125,13 @@ namespace search
         public CommandTree Commands = new(Key.Apps, "Main Help");
         public void OnChange()
         {
-            var filtered = Commands.Children.AsEnumerable().Where(x => x.Visible(nodes())).ToArray();
+            if (commandCanceled)
+            {
+                Text = "Sequence canceled\nRelease all keys";
+                return;
+            }
+            var currentNodes = nodes().ToArray();
+            var filtered = Commands.Children.AsEnumerable().Where(x => x.Visible(currentNodes)).ToArray();
             var title = "";
             var level = 1;
             foreach (var key in commandKeys.ToArray())
@@ -107,7 +140,7 @@ namespace search
                 {
                     title += " " + x.Help;
                     return x.Children;
-                }).Where(x => x.Visible(nodes())).ToArray();
+                }).Where(x => x.Visible(currentNodes)).ToArray();
                 if (filtered.Count() > 1) level++;
             }
             StringBuilder sb = new();
@@ -119,7 +152,20 @@ namespace search
                     $" {title} {textArg}")); // description 'text'
                 if (filtered.Count() > 0) sb.AppendLine("==--->");
             }
-            foreach (var h in filtered) sb.AppendLine(h.Key == Key.None ? h.Help : $"<{GetKeyDisplayName(h.Key)}> {h.Help}");
+            foreach (var h in filtered)
+            {
+                var submenu = h.Children.Any(x => x.Visible(currentNodes)) ? " ›" : "";
+                sb.AppendLine(h.Key == Key.None ? h.Help + submenu : $"<{GetKeyDisplayName(h.Key)}> {h.Help}{submenu}");
+            }
+            var canGoBack = commandKeys.Count > 1;
+            var altIsDown = keysDown.Contains(Key.LeftAlt) || keysDown.Contains(Key.RightAlt);
+            var canCancelWithEscape = !altIsDown && commandKeys.Count > 0 && Commands.Find(commandKeys).cmd != null;
+            if (canGoBack || canCancelWithEscape)
+            {
+                sb.AppendLine("────────────");
+                if (canGoBack) sb.AppendLine("<Backspace> previous step");
+                if (canCancelWithEscape) sb.AppendLine("<Esc> cancel sequence");
+            }
             Text = sb.ToString();
         }
 
