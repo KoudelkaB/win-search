@@ -18,6 +18,14 @@ namespace search.Models
         static Func<FileSystemEventArgs, Task> Changed;
         static int started = 0;
 
+        /// <summary>
+        /// Which drive roots should be indexed (set by the model to the user's drive
+        /// selection). A drive that is not indexed is not watched either - its scan still
+        /// runs once so a newly deselected drive gets its stale entries pruned.
+        /// May block on flaky network drives - only called from a drive's own task.
+        /// </summary>
+        public static Func<string, bool> ShouldIndex = _ => true;
+
         public static bool Run(Action<string> Started, Func<FileSystemEventArgs, Task> Changed)
         {
             // Ensure the following code is run only once
@@ -44,11 +52,10 @@ namespace search.Models
                 }
             }, TaskCreationOptions.LongRunning).Start();
 
-            //Watch all drives
-            Task.Run(() =>
-            {
-                foreach (var d in DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName).Distinct()) AddFolder(d);
-            });
+            //Watch all drives - each on its own task: creating a watcher on a dead network
+            //mapping blocks in SMB timeouts and must not delay the local drives behind it
+            foreach (var d in DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName).Distinct())
+                Task.Run(() => AddFolder(d));
             return true;
         }
 
@@ -59,9 +66,12 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Refresh all active drives from NTF
+        /// Refresh all drives from NTFS - every current drive plus any previously watched
+        /// root (a vanished drive gets one last scan that prunes its stale entries)
         /// </summary>
-        public static void RefreshFromNFT() => watchers.ToList().ForEach(x => AddFolder(x.Key));
+        public static void RefreshFromNFT() => DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName)
+            .Union(watchers.Keys, StringComparer.OrdinalIgnoreCase).ToList()
+            .ForEach(d => Task.Run(() => AddFolder(d)));
         
         static void DisposeWatcher(this string path)
         {
@@ -78,6 +88,8 @@ namespace search.Models
             try
             {
                 path.DisposeWatcher(); // Dispose the old watcher
+
+                if (!ShouldIndex(path)) return; //Not indexed => not watched; Started below still prunes it
 
                 //var d = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 var w = new FileSystemWatcher(path)
@@ -111,9 +123,11 @@ namespace search.Models
                 //Start watching
                 w.EnableRaisingEvents = true;
                 while (!watchers.TryAdd(path, w)) path.DisposeWatcher(); // Remove the old in case of raise condition
-                Started(path);
             }
             catch (Exception) { }
+            //Request the (re)scan even when watching failed (missing or dead drive) - the
+            //scan prunes its stale entries and a later refresh can revive the watcher
+            finally { try { Started(path); } catch { } }
         }
     }
 }

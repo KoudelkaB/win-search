@@ -9,7 +9,9 @@ The result list is designed for keyboard use. When the list has focus, the **Hin
 
 ## Indexing and Elevation
 
-On startup, File Search Manager loads ready drives and watches for file-system changes.
+On startup, File Search Manager loads ready drives and watches for file-system changes. Each drive loads independently, so a slow network drive never delays the others.
+
+By default only NTFS drives are indexed - other file systems (network mounts, FAT sticks) cannot use the fast MFT read, and walking them file by file can dominate the whole load. Use the **💽 Drives…** button in the status bar to choose exactly which drives are indexed; unchecked drives are neither scanned nor watched.
 
 For NTFS drives, the fastest path is reading the NTFS Master File Table. File Search Manager can do that in one of these ways:
 
@@ -155,7 +157,7 @@ Common commands:
 - `T`: target commands — add selected as targets; then `F` for parent folders, `V` to send clipboard to all targets (with `L`/`H`/`O` for link, hard link, overwrite), `C` to clear targets.
 - `U`: unzip selected archives.
 - `Z`: zip selected items.
-- `F12`: refresh from NTFS.
+- `F12`: refresh from NTFS. Works anywhere in the window, no selection needed; each drive refreshes independently, so a slow network drive never delays the others.
 - `Right Shift`: move focus back to the filter field.
 
 Open targets after `O` or `A`:

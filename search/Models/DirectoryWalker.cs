@@ -46,48 +46,60 @@ namespace search.Models
             var cts = new CancellationTokenSource();
             var token = cts.Token;
 
-            var workers = Enumerable.Range(0, Math.Max(2, Environment.ProcessorCount)).Select(_ => Task.Run(() =>
+            // Dedicated below-normal threads, never the pool: the workers sit blocked in
+            // (network) I/O for the whole walk, and a pool-thread version occupies the pool's
+            // entire warm size - starving the grid publish and every other task in the app
+            // for the minutes a network walk takes
+            var workers = Enumerable.Range(0, Math.Max(2, Environment.ProcessorCount)).Select(_ =>
             {
-                while (Volatile.Read(ref pending) > 0 && !token.IsCancellationRequested)
+                var worker = new Thread(() =>
                 {
-                    if (!queue.TryDequeue(out var dir))
+                    while (Volatile.Read(ref pending) > 0 && !token.IsCancellationRequested)
                     {
-                        token.WaitHandle.WaitOne(1); // Brief blocking wait - not a busy spin - while another worker fills the queue
-                        continue;
-                    }
-                    try
-                    {
-                        foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
+                        if (!queue.TryDequeue(out var dir))
                         {
-                            if (token.IsCancellationRequested) break;
-                            var node = new FileNode(info);
-                            result.Add(node);
-                            Volatile.Write(ref lastProgress, Environment.TickCount64);
-                            if (node.IsDirectory && !info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                            token.WaitHandle.WaitOne(1); // Brief blocking wait - not a busy spin - while another worker fills the queue
+                            continue;
+                        }
+                        try
+                        {
+                            foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
                             {
-                                Interlocked.Increment(ref pending);
-                                queue.Enqueue(info.FullName);
+                                if (token.IsCancellationRequested) break;
+                                var node = new FileNode(info);
+                                result.Add(node);
+                                Volatile.Write(ref lastProgress, Environment.TickCount64);
+                                if (node.IsDirectory && !info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                                {
+                                    Interlocked.Increment(ref pending);
+                                    queue.Enqueue(info.FullName);
+                                }
                             }
                         }
+                        catch { } // Whole directory unreadable => skip it
+                        finally
+                        {
+                            Interlocked.Decrement(ref pending);
+                        }
                     }
-                    catch { } // Whole directory unreadable => skip it
-                    finally
-                    {
-                        Interlocked.Decrement(ref pending);
-                    }
-                }
-            })).ToArray();
+                })
+                { IsBackground = true, Priority = ThreadPriority.BelowNormal };
+                worker.Start();
+                return worker;
+            }).ToArray();
 
             // Stall watchdog: cancel once the walk stops producing entries for stallTimeout.
-            var done = Task.WhenAll(workers);
-            while (!done.Wait(1000))
+            while (workers.Any(w => w.IsAlive))
             {
                 if (Environment.TickCount64 - Volatile.Read(ref lastProgress) > stallTimeout.TotalMilliseconds)
                 {
-                    cts.Cancel();               // Workers not stuck in a syscall exit at once
-                    done.Wait(TimeSpan.FromSeconds(3)); // Brief grace, then abandon any stuck in an uninterruptible read
+                    cts.Cancel(); // Workers not stuck in a syscall exit at once
+                    // Brief grace, then abandon any stuck in an uninterruptible read
+                    var grace = Environment.TickCount64 + 3000;
+                    foreach (var w in workers) w.Join((int)Math.Max(0, grace - Environment.TickCount64));
                     break;
                 }
+                Thread.Sleep(1000);
             }
 
             AggregateFolderSizes(result);

@@ -67,6 +67,7 @@ namespace search.Models
         volatile object lastUpdate = DateTime.MinValue;
         volatile bool itemsComplete = true; //false => Items hold only a part of the filtered result (publishing was canceled)
         int refreshQueued = 0; //1 => a data refresh is already queued and covers all changes arriving before it runs
+        volatile Task dataRefreshPublished = Task.CompletedTask; //Completes when the queued data refresh has really hit the grid
         const int MaxItems = 100000; //Publish just the first 100 000 filtered items
 
         public Action BeforeItemsExchange = () => { };
@@ -85,12 +86,17 @@ namespace search.Models
                 var dataRefresh = (newFilter ?? newSort) == null;
                 var created = DateTime.Now;
                 object update = created;
+                TaskCompletionSource published = null;
                 if (dataRefresh)
                 {
                     //Coalesce data refreshes - the single queued one covers all changes arriving before it runs
                     //and it never cancels a running update (a canceled publish would leave Items partial forever
                     //under a steady stream of file system events)
                     if (Interlocked.Exchange(ref refreshQueued, 1) == 1) return;
+                    //This run owns the queued refresh - its end is the moment the refreshed
+                    //data is really on the grid, which the "Loaded" status waits for
+                    published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    dataRefreshPublished = published.Task;
                     await Task.Delay(1000); //Batch bursts of changes
                 }
                 else
@@ -174,6 +180,7 @@ namespace search.Models
                 {
                     if (!IsCanceled()) Filtering = false; //When canceled the newer update owns the indicator
                     Updating.Release(); //Allow next change
+                    published?.SetResult();
                 }
             });
         }
@@ -692,7 +699,10 @@ namespace search.Models
             }
         }
 
-        public SearchModel() => FSChangeProcessor.Run(async d => await InitFromNTFS()
+        public SearchModel()
+        {
+            FSChangeProcessor.ShouldIndex = DriveSelectionStore.IsEnabled;
+            FSChangeProcessor.Run(async d => await InitFromNTFS(d)
             , async e =>
             {
                 try
@@ -752,6 +762,7 @@ namespace search.Models
                     await Log($"FS change {e} failed: {ex}");
                 }
             });
+        }
 
         /// <summary>
         /// Find file by name
@@ -788,107 +799,189 @@ namespace search.Models
             return null;
         }
 
-        int initRequests = 0;
-        bool firstLoadPublished; //false until the first scan has shown results => publish each finished drive as it lands
+        // Per-drive pending scan requests - each drive loads and publishes independently, so a
+        // hung network walk can never gate an NTFS drive's results or block its refresh
+        readonly NonBlocking.ConcurrentDictionary<string, int[]> driveRequests = new(StringComparer.OrdinalIgnoreCase);
+        // Per-drive load origin for the status tooltip - survives across scans
+        readonly NonBlocking.ConcurrentDictionary<string, MftOrigin> origins = new(StringComparer.OrdinalIgnoreCase);
+        readonly object publishLock = new();     //Serializes finished-drive merges into files
+        readonly object loadStatusLock = new();  //Guards the load burst bookkeeping below
+        int scanningDrives;                      //Number of drives currently scanning
+        long loadingNodes;                       //Nodes streamed in by running scans, not yet published to files
+        Stopwatch loadWatch;                     //Duration of the load burst (first drive in => last drive out)
+        CancellationTokenSource loadProgress;
+        Task loadProgressTask;
 
         /// <summary>
-        /// Refresh files
-        /// Concurrent requests (e.g. one per drive on startup) are coalesced into a single scan
+        /// Refresh the files of one drive (root form "C:\"). Concurrent requests for the same
+        /// drive are coalesced into a single scan; different drives scan independently, so a
+        /// slow or hung drive (dead network mapping, SSHFS walk) only ever costs itself.
         /// </summary>
-        Task InitFromNTFS()
+        Task InitFromNTFS(string root)
         {
-            //The already queued/running scan covers this request too
-            if (Interlocked.Increment(ref initRequests) > 1) return Task.CompletedTask;
+            var pending = driveRequests.GetOrAdd(root, _ => new int[1]);
+            //The already queued/running scan of this drive covers this request too
+            if (Interlocked.Increment(ref pending[0]) > 1) return Task.CompletedTask;
             return Task.Run(async () =>
             {
-                Loading = true;
-                LoadStatusTooltip = null;
-                var watch = Stopwatch.StartNew();
-                var origins = new NonBlocking.ConcurrentDictionary<string, MftOrigin>();
-                var progress = new CancellationTokenSource();
-                var progressTask = ContinualUpdate(progress.Token, () =>
-                    LoadStatus = $"Loading drives - {files.Count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s",
-                    refreshUI: false);
+                BeginDriveScan();
                 try
                 {
                     while (true)
                     {
-                        await Task.Delay(500); //Give the remaining drives time to report in
-                        var requested = Volatile.Read(ref initRequests);
-                        $"drive scan started (covering {requested} requests)".Debug();
-                        origins.Clear();
-                        ntfsWalked = false;
+                        await Task.Delay(500); //Batch the burst of watcher (re)starts
+                        var requested = Volatile.Read(ref pending[0]);
+                        $"drive {root} scan started (covering {requested} requests)".Debug();
+                        var key = root.TrimEnd(Path.DirectorySeparatorChar);
+                        var streamed = 0L;
                         try
                         {
-                            //Add files from all NTFS drives - each drive loads in parallel into a shared dictionary
-                            var loaded = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
-                            // First load => publish every finished drive immediately, so a fast MFT drive
-                            // shows at once instead of waiting on the slowest drive's walk (which may hang).
-                            // Must NOT key off files.Count: the FileSystemWatcher pre-populates files on any
-                            // startup churn, which would silently disable the progressive publish.
-                            var publishPartial = !firstLoadPublished;
-                            await Task.WhenAll(DriveInfo.GetDrives().Select(d => Task.Run(() =>
+                            var fresh = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+                            var drive = new DriveInfo(root);
+                            //IsReady of an unreachable network drive blocks in SMB timeouts for
+                            //tens of seconds - probe with a deadline so a dead mapping only costs
+                            //itself; the readiness probe must run before the selection check,
+                            //whose DriveFormat query would block on the same dead mappings
+                            var skip = !IsReadyFast(drive) ? "not ready"
+                                : !DriveSelectionStore.IsEnabled(root) ? "not selected for indexing"
+                                : null;
+                            if (skip == null)
                             {
-                                try
+                                var entries = DriveEntries(drive, out var origin);
+                                //The node itself is the key - no full path string is ever built or stored
+                                foreach (var n in entries)
                                 {
-                                    //IsReady of an unreachable network drive blocks in SMB timeouts
-                                    //for tens of seconds - probe once with a deadline so a dead
-                                    //mapping can never stall the whole scan
-                                    if (!IsReadyFast(d))
-                                    {
-                                        $"drive {d.Name} not ready => skipped".Debug();
-                                        return;
-                                    }
-                                    var entries = DriveEntries(d, out var origin);
-                                    origins[d.Name.TrimEnd(Path.DirectorySeparatorChar)] = origin;
-                                    //The node itself is the key - no full path string is ever built or stored
-                                    foreach (var n in entries) loaded[n] = n;
-                                    if (publishPartial)
-                                    {
-                                        files = loaded;
-                                        _ = Update(); //Do not await - the publish must not delay the remaining drives
-                                    }
+                                    fresh[n] = n;
+                                    //Feed the loading status while the drive streams in
+                                    streamed++;
+                                    Interlocked.Increment(ref loadingNodes);
                                 }
-                                catch { }
-                            })));
-                            files = loaded;
-
-                            // Add previously added zipNodes that still exist
-                            var zn = zipNodes.ToArray();
-                            zipNodes.Clear();
-                            zn.Select(x => x.ZIP.FullName).Distinct().OrderBy(x => x).ForEach(x =>
-                              {
-                                  if (files.TryGetValue(x, out var n)) AddArchive(n);
-                              });
-                            exes = files.Values.AsParallel()
-                                .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
+                                origins[key] = origin;
+                            }
+                            else
+                            {
+                                $"drive {root} {skip} => its entries are dropped".Debug();
+                                origins.TryRemove(key, out _);
+                            }
+                            PublishDrive(root, fresh, streamed); //Empty for a skipped drive => stale entries pruned
+                            streamed = 0; //Deducted from the loading counter at the publish
                         }
-                        catch { }
-                        
+                        catch { } //A failed scan keeps the drive's last good entries
+                        finally { Interlocked.Add(ref loadingNodes, -streamed); } //Not published => not counted by files
+
                         //Update filtered files
                         await Update();
 
-                        // Clean freed memory
-                        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-
-                        //Results are on screen now => later scans rebuild silently and swap at the end
-                        firstLoadPublished = true;
-                        //Quit when no new request arrived during the scan
-                        if (Interlocked.CompareExchange(ref initRequests, 0, requested) == requested) return;
-                        $"drive scan rerun: {Volatile.Read(ref initRequests) - requested} new requests arrived during the scan".Debug();
+                        //Quit when no new request for this drive arrived during the scan
+                        if (Interlocked.CompareExchange(ref pending[0], 0, requested) == requested) return;
+                        $"drive {root} scan rerun: {Volatile.Read(ref pending[0]) - requested} new requests arrived during the scan".Debug();
                     }
                 }
                 finally
                 {
-                    progress.Cancel();
-                    await progressTask;
-                    Loading = false;
-                    LoadStatus = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s";
-                    LoadStatusTooltip = OriginsInfo(origins).Trim();
-                    LoadStatus.Debug();
-                    UIRefreshRequested?.Invoke();
+                    await EndDriveScan();
                 }
             });
+        }
+
+        /// <summary>
+        /// Swap one drive's subtree in the shared index: everything indexed under the drive is
+        /// replaced by the fresh scan while all other drives' entries stay untouched. A finished
+        /// drive shows immediately - a fast MFT drive never waits on the slowest drive's walk.
+        /// </summary>
+        void PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh, long streamed = 0)
+        {
+            //Nothing new and nothing indexed under the drive => skip the index rebuild
+            //(the common case for skipped/deselected drives on every refresh)
+            if (fresh.IsEmpty && !files.ContainsKey(root))
+            {
+                Interlocked.Add(ref loadingNodes, -streamed);
+                return;
+            }
+            lock (publishLock)
+            {
+                files.TryGetValue(root, out var oldRoot); //Indexed drive root => identity checks on chained nodes
+                var merged = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+                foreach (var kv in files)
+                    if (!NodePath.IsUnder(kv.Value, oldRoot, root)) merged[kv.Key] = kv.Value;
+                foreach (var kv in fresh) merged[kv.Key] = kv.Value;
+                files = merged;
+                //files counts the streamed nodes from this very moment => deduct them from the
+                //streaming counter in the same breath, or the loading status double-counts them
+                //for as long as the archive re-add and exe recompute below take
+                Interlocked.Add(ref loadingNodes, -streamed);
+
+                // Re-add previously expanded archives that still exist
+                var zn = zipNodes.ToArray();
+                zipNodes.Clear();
+                zn.Select(x => x.ZIP.FullName).Distinct().OrderBy(x => x).ForEach(x =>
+                  {
+                      if (files.TryGetValue(x, out var n)) AddArchive(n);
+                  });
+            }
+            exes = files.Values.AsParallel()
+                .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
+            LoadStatusTooltip = OriginsInfo(origins).Trim();
+        }
+
+        /// <summary>
+        /// First drive of a load burst => show the loading status and start its ticker
+        /// </summary>
+        void BeginDriveScan()
+        {
+            lock (loadStatusLock)
+            {
+                if (++scanningDrives != 1) return;
+                Loading = true;
+                LoadStatusTooltip = null;
+                ntfsWalked = false;
+                loadWatch = Stopwatch.StartNew();
+                loadProgress = new CancellationTokenSource();
+                var ct = loadProgress.Token;
+                var watch = loadWatch;
+                //A dedicated thread, not an async pool loop: the drive walks can saturate the
+                //thread pool at startup and a starved ticker freezes the status at "0 files - 0s"
+                //(LoadStatus binds via INPC => no UI refresh needed)
+                loadProgressTask = Task.Factory.StartNew(() =>
+                {
+                    while (!ct.IsCancellationRequested)
+                    {
+                        //The larger of indexed vs streaming-in: their sum would double-count a
+                        //rescan, whose fresh nodes replace indexed ones instead of adding to them
+                        var count = Math.Max(files.Count, Volatile.Read(ref loadingNodes));
+                        LoadStatus = $"Loading drives - {count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s";
+                        ct.WaitHandle.WaitOne(1000);
+                    }
+                }, TaskCreationOptions.LongRunning);
+            }
+        }
+
+        /// <summary>
+        /// Last drive of a load burst => final status + memory cleanup. Drives still scanning
+        /// (e.g. a hung network walk) keep the ticker alive without blocking anything else.
+        /// </summary>
+        async Task EndDriveScan()
+        {
+            Task ticker;
+            Stopwatch watch;
+            lock (loadStatusLock)
+            {
+                if (--scanningDrives != 0) return;
+                loadProgress.Cancel();
+                ticker = loadProgressTask;
+                watch = loadWatch;
+                Loading = false;
+            }
+            await ticker;
+            //The scan's last Update may have been covered by an already queued refresh =>
+            //report "Loaded" only once the refreshed results are actually on the grid
+            await dataRefreshPublished;
+            LoadStatus = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s";
+            LoadStatusTooltip = OriginsInfo(origins).Trim();
+            LoadStatus.Debug();
+            // Clean freed memory
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            UIRefreshRequested?.Invoke();
         }
 
         async Task Log(string text)
@@ -899,12 +992,24 @@ namespace search.Models
 
         /// <summary>
         /// DriveInfo.IsReady with a deadline: an unreachable network drive blocks the query
-        /// in SMB timeouts for tens of seconds - abandon the probe and report not ready
+        /// in SMB timeouts for tens of seconds - abandon the probe and report not ready.
+        /// Local fixed drives are queried directly: they cannot hang, and they must never be
+        /// lost to a probe that started late - after a reboot the network mappings' probes
+        /// can occupy the whole thread pool long enough to time the deadline out for C: itself
         /// </summary>
         static bool IsReadyFast(DriveInfo d)
         {
-            var probe = Task.Run(() => { try { return d.IsReady; } catch { return false; } });
-            return probe.Wait(TimeSpan.FromSeconds(5)) && probe.Result;
+            try
+            {
+                if (d.DriveType == DriveType.Fixed) return d.IsReady;
+                //A dedicated thread, not the pool: the deadline must measure the probe itself,
+                //not its queue time, and an abandoned probe must not hold a pool thread
+                var ready = false;
+                var probe = new Thread(() => { try { ready = d.IsReady; } catch { } }) { IsBackground = true };
+                probe.Start();
+                return probe.Join(TimeSpan.FromSeconds(5)) && ready;
+            }
+            catch { return false; }
         }
 
         volatile bool ntfsWalked; //An NTFS drive had to fall back to the walk => hint how to get MFT indexing

@@ -263,6 +263,13 @@ namespace search
             catch (Exception ex) { Model.Status = $"Could not save workspace settings: {ex.Message}"; }
         }
 
+        void Drives_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new DrivesWindow { Owner = this };
+            //A changed selection reflects on the next scan => refresh right away
+            if (dialog.ShowDialog() == true) FSChangeProcessor.RefreshFromNFT();
+        }
+
         void PinFilter_Click(object sender, RoutedEventArgs e)
         {
             CancelPinnedFilterEdit();
@@ -1746,6 +1753,11 @@ namespace search
             }
             switch (e.Key)
             {
+                case Key.F12:
+                    //Refresh needs no selection => works window-wide, wherever the focus is
+                    FSChangeProcessor.RefreshFromNFT();
+                    e.Handled = true;
+                    return;
                 case Key.Escape:
                     //Let the suggestion popup close itself first
                     if (filterTextBox.IsListOpen || findTextBox.IsListOpen) return;
