@@ -50,7 +50,8 @@ Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
 Name: "portuguesebrazil"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; Simplified Chinese has no translation bundled with Inno Setup, so the installer wizard
+; falls back to English for it. The app UI and help are still fully localized to zh-Hans.
 
 [CustomMessages]
 english.InstallService=Install the background service for prompt-free NTFS indexing (advanced; most users can skip this)
@@ -63,7 +64,6 @@ italian.InstallService=Installa il servizio in background per l’indicizzazione
 portuguesebrazil.InstallService=Instalar o serviço em segundo plano para indexação NTFS sem solicitações (avançado; a maioria dos usuários pode ignorar)
 japanese.InstallService=確認なしで NTFS をインデックス化するバックグラウンドサービスをインストールします（上級者向け。ほとんどのユーザーは不要です）
 korean.InstallService=확인 없이 NTFS를 색인화하는 백그라운드 서비스를 설치합니다(고급, 대부분의 사용자는 건너뛰어도 됩니다)
-chinesesimplified.InstallService=安装后台服务以实现免提示的 NTFS 索引（高级；大多数用户可跳过）
 english.HelpShortcut=File Search Manager Help
 czech.HelpShortcut=Nápověda File Search Manager
 german.HelpShortcut=File Search Manager Hilfe
@@ -74,7 +74,6 @@ italian.HelpShortcut=Guida di File Search Manager
 portuguesebrazil.HelpShortcut=Ajuda do File Search Manager
 japanese.HelpShortcut=File Search Manager ヘルプ
 korean.HelpShortcut=File Search Manager 도움말
-chinesesimplified.HelpShortcut=File Search Manager 帮助
 english.ServiceFailed=The File Search Manager service could not be installed or started (code %1).%nFile Search Manager will still work: approve the startup prompt for instant indexing, or it will use a slower folder scan.
 czech.ServiceFailed=Službu File Search Manager se nepodařilo nainstalovat nebo spustit (kód %1).%nAplikace bude nadále fungovat: potvrďte úvodní výzvu pro okamžité indexování, jinak použije pomalejší procházení složek.
 german.ServiceFailed=Der File Search Manager-Dienst konnte nicht installiert oder gestartet werden (Code %1).%nDie Anwendung funktioniert weiterhin mit der Startabfrage oder der langsameren Ordnersuche.
@@ -85,7 +84,6 @@ italian.ServiceFailed=Impossibile installare o avviare il servizio File Search M
 portuguesebrazil.ServiceFailed=Não foi possível instalar ou iniciar o serviço File Search Manager (código %1).%nO aplicativo continuará funcionando: aprove a solicitação na inicialização para indexação instantânea ou será usada uma verificação de pastas mais lenta.
 japanese.ServiceFailed=File Search Manager サービスをインストールまたは開始できませんでした（コード %1）。%nアプリは引き続き動作します。起動時の確認を承認すると即時インデックス化が行われ、承認しない場合は低速なフォルダースキャンが使用されます。
 korean.ServiceFailed=File Search Manager 서비스를 설치하거나 시작할 수 없습니다(코드 %1).%n앱은 계속 작동합니다. 시작 시 표시되는 확인을 승인하면 즉시 색인화되고, 그렇지 않으면 느린 폴더 검색이 사용됩니다.
-chinesesimplified.ServiceFailed=无法安装或启动 File Search Manager 服务（代码 %1）。%n应用仍可正常工作：在启动时批准提示可立即建立索引，否则将使用较慢的文件夹扫描。
 
 [Files]
 ; The two self-contained publishes MUST stay in separate directories -
