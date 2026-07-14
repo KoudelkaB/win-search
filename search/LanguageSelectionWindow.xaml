@@ -1,0 +1,3 @@
+<Window x:Class="search.LanguageSelectionWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:search" Title="{local:Loc Key=Language}" SizeToContent="WidthAndHeight" ResizeMode="NoResize" WindowStartupLocation="CenterScreen">
+  <StackPanel Margin="16" MinWidth="330"><TextBlock Text="{local:Loc Key=ChooseLanguage}" TextWrapping="Wrap" Margin="0,0,0,10"/><ComboBox x:Name="languages" MinWidth="280"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0"><Button Content="{local:Loc Key=OK}" IsDefault="True" Click="Ok_Click" MinWidth="80"/></StackPanel></StackPanel>
+</Window>

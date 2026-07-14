@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Globalization;
 
 namespace search
 {
@@ -47,6 +48,7 @@ namespace search
 
         public App()
         {
+            Startup += (_, __) => ConfigureLanguage();
             int minWorker, minIOC;
             // Get the current settings.
             ThreadPool.GetMinThreads(out minWorker, out minIOC);
@@ -67,7 +69,7 @@ namespace search
             DispatcherUnhandledException += (o, e) =>
             {
                 $"UI exception: {e.Exception}".Debug();
-                MessageBox.Show(e.Exception.Message, "Command failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(e.Exception.Message, L.Text("CommandFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
                 e.Handled = true;
             };
 
@@ -86,6 +88,39 @@ namespace search
                 }
                 catch { } // Keep clipboard files when clipboard access is temporarily unavailable.
             };
+        }
+
+        void ConfigureLanguage()
+        {
+            var saved = LanguageSettingsStore.Load();
+            if (!string.IsNullOrWhiteSpace(saved))
+            {
+                ApplyCulture(saved);
+                return;
+            }
+            // Language is a per-Windows-user preference. A supported system language is
+            // selected silently; ask only when there is no matching translation.
+            var systemCulture = CultureInfo.CurrentUICulture;
+            var initial = Languages.ForSystemCulture(systemCulture);
+            if (!string.IsNullOrWhiteSpace(initial))
+            {
+                LanguageSettingsStore.Save(initial);
+                ApplyCulture(initial);
+                return;
+            }
+            var picker = new LanguageSelectionWindow(initial);
+            var selected = picker.ShowDialog() == true ? picker.SelectedCulture : "en";
+            LanguageSettingsStore.Save(selected);
+            ApplyCulture(selected);
+        }
+
+        internal static void ApplyCulture(string name)
+        {
+            var culture = CultureInfo.GetCultureInfo(name);
+            CultureInfo.DefaultThreadCurrentCulture = culture;
+            CultureInfo.DefaultThreadCurrentUICulture = culture;
+            CultureInfo.CurrentCulture = culture;
+            CultureInfo.CurrentUICulture = culture;
         }
     }
 }

@@ -161,7 +161,8 @@ Common commands:
 - `T`: target commands — add selected as targets; then `F` for parent folders, `V` to send clipboard to all targets (with `L`/`H`/`O` for link, hard link, overwrite), `C` to clear targets.
 - `U`: unzip selected archives.
 - `Z`: zip selected items.
-- `F12`: refresh from NTFS. Works anywhere in the window, no selection needed; each drive refreshes independently, so a slow network drive never delays the others.
+- `F1`: open this help file. Works anywhere in the window.
+- `F12`: refresh from NTFS. Works anywhere in the window, no selection needed; each drive refreshes independently, so a slow network drive never delays the others. Both `F1` and `F12` remain visible in **Hints** when the result grid has focus.
 - `Right Shift`: move focus back to the filter field.
 
 Open targets after `O` or `A`:

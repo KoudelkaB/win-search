@@ -15,7 +15,7 @@ namespace search
         public FileTransferDialog(int sourceCount, int destinationCount, FileTransferAction defaultAction = FileTransferAction.Copy)
         {
             InitializeComponent();
-            Prompt.Text = $"{sourceCount} item(s) to {destinationCount} folder(s):";
+            Prompt.Text = L.Format("ItemsToFolders", sourceCount, destinationCount);
             CopyAction.IsChecked = defaultAction == FileTransferAction.Copy;
             MoveAction.IsChecked = defaultAction == FileTransferAction.Move;
             SymbolicLinkAction.IsChecked = defaultAction == FileTransferAction.SymbolicLink;

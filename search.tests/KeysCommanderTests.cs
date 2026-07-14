@@ -36,18 +36,18 @@ namespace search.Tests
 
                 commander.KeyPressed(Key.V);
 
-                Assert.Contains("<L> as link", commander.Text);
-                Assert.DoesNotContain("<L> as link ›", commander.Text);
+                Assert.Contains($"<L> {L.Text("as link")}", commander.Text);
+                Assert.DoesNotContain($"<L> {L.Text("as link")} ›", commander.Text);
                 Assert.DoesNotContain("<C> copy", commander.Text);
-                Assert.Contains("<Backspace> previous step", commander.Text);
+                Assert.Contains($"<Backspace> {L.Text("PreviousStep")}", commander.Text);
                 Assert.DoesNotContain("<Esc>", commander.Text);
 
                 // Escape becomes available as soon as Alt is released while another
                 // sequence key remains held.
                 Assert.True(commander.KeyReleased(Key.LeftAlt));
-                Assert.Contains("<Esc> cancel sequence", commander.Text);
+                Assert.Contains($"<Esc> {L.Text("CancelSequence")}", commander.Text);
                 commander.KeyPressed(Key.Escape);
-                Assert.Contains("Sequence canceled", commander.Text);
+                Assert.Contains(L.Text("SequenceCanceled").Split('\n')[0], commander.Text);
                 Assert.True(commander.KeyReleased(Key.Escape));
                 Assert.True(commander.KeyReleased(Key.V));
                 Assert.False(executed);
@@ -67,11 +67,11 @@ namespace search.Tests
                 Assert.False(executed);
 
                 commander.KeyPressed(Key.C);
-                Assert.Contains("<Esc> cancel sequence", commander.Text);
+                Assert.Contains($"<Esc> {L.Text("CancelSequence")}", commander.Text);
 
                 commander.KeyPressed(Key.Escape);
                 Assert.True(commander.IsReceivingCommandKeys);
-                Assert.Contains("Sequence canceled", commander.Text);
+                Assert.Contains(L.Text("SequenceCanceled").Split('\n')[0], commander.Text);
                 Assert.True(commander.KeyReleased(Key.Escape));
                 Assert.True(commander.KeyReleased(Key.C));
 

@@ -8,6 +8,7 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <StartupObject>search.Program</StartupObject>
+    <NeutralLanguage>en</NeutralLanguage>
     <NoWin32Manifest>true</NoWin32Manifest>
   </PropertyGroup>
 
@@ -24,6 +25,7 @@
 
   <ItemGroup>
     <None Include="FodyWeavers.xsd" />
+    <None Include="..\docs\HELP*.md" Link="Docs\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

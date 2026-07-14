@@ -561,7 +561,7 @@ namespace search.Models
 
             // Search
             var update = ContinualUpdate(thisFind.Token, () =>
-                Status = $"Searching for '{text}' - {searched.Count} files checked in {watch.Elapsed.TotalSeconds:0.0}s");
+                Status = search.L.Format("StatusSearching", text, searched.Count, watch.Elapsed.TotalSeconds));
             var searchText = caseInsensitive ? text.ToLowerInvariant() : text;
 
             // Convert search text to bytes based on encoding
@@ -572,7 +572,7 @@ namespace search.Models
             }
             catch (Exception ex)
             {
-                Status = $"Search failed: {ex.Message}";
+                Status = search.L.Format("StatusSearchFailed", ex.Message);
                 Searching = false;
                 return;
             }
@@ -589,14 +589,14 @@ namespace search.Models
             catch (OperationCanceledException) { }
 
             // Show results
-            var result = thisFind.IsCancellationRequested ? "canceled" : "done";
+            var result = search.L.Text(thisFind.IsCancellationRequested ? "SearchCanceled" : "SearchDone");
             var counts = searched.Values.GroupBy(x => x).ToDictionary(x => $"{x.Key}", x => x.Count()); // null can not be key in dictionary => string
             thisFind.Cancel();
             await update;
             if (ReferenceEquals(thisFind, lastFind)) //Do not overwrite state of a newer search
             {
                 Searching = false;
-                Status = $"Search of '{text}' {result} => file counts (found/not/failed): {counts.Get("True")}/{counts.Get("False")}/{counts.Get("")} in {watch.Elapsed.TotalSeconds:0.0}s";
+                Status = search.L.Format("StatusSearchFinished", text, result, counts.Get("True"), counts.Get("False"), counts.Get(""), watch.Elapsed.TotalSeconds);
                 UIRefreshRequested?.Invoke();
 
                 // The parallel search and its result aggregation can leave substantial
@@ -983,7 +983,7 @@ namespace search.Models
                         //The larger of indexed vs streaming-in: their sum would double-count a
                         //rescan, whose fresh nodes replace indexed ones instead of adding to them
                         var count = Math.Max(files.Count, Volatile.Read(ref loadingNodes));
-                        LoadStatus = $"Loading drives - {count:# ### ###} files - {(int)watch.Elapsed.TotalSeconds}s";
+                        LoadStatus = search.L.Format("StatusLoadingDrives", count, (int)watch.Elapsed.TotalSeconds);
                         ct.WaitHandle.WaitOne(1000);
                     }
                 }, TaskCreationOptions.LongRunning);
@@ -1010,7 +1010,7 @@ namespace search.Models
             //The scan's last Update may have been covered by an already queued refresh =>
             //report "Loaded" only once the refreshed results are actually on the grid
             await dataRefreshPublished;
-            LoadStatus = $"Loaded {files.Count:# ### ###} files in {watch.Elapsed.TotalSeconds:0.0}s";
+            LoadStatus = search.L.Format("StatusLoadedDrives", files.Count, watch.Elapsed.TotalSeconds);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
             LoadStatus.Debug();
             // Clean freed memory

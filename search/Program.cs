@@ -21,6 +21,7 @@ namespace search
         /// Role tag for logging
         /// </summary>
         public static string Role { get; private set; } = "UI";
+        public static bool OpenHelpRequested { get; private set; }
 
         [STAThread]
         public static void Main(string[] args)
@@ -42,6 +43,9 @@ namespace search
                 App.Main();
                 return;
             }
+
+            if (args.Length == 1 && args[0].Equals("--help", StringComparison.OrdinalIgnoreCase))
+                OpenHelpRequested = true;
 
             // Normal start: offer one optional UAC prompt for the elevated broker;
             // declining it leaves the app fully functional (per-task prompts, service/walk indexing)

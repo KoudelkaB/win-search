@@ -45,6 +45,10 @@ winget install BohdanKoudelka.FileSearchManager
 5. Select results with the mouse or keyboard.
 6. Use the right-click menu, drag-and-drop, standard clipboard shortcuts, or commands shown in the **Hints** panel.
 
+Press `F1` anywhere to open the complete keyboard help. Press `F12` to refresh the NTFS index; both shortcuts are always shown in **Hints**, including while the result grid has focus.
+
+The user interface follows the Windows display language. English is used as a fallback; Czech, German, French, Spanish, and Polish are also included.
+
 See [docs/HELP.md](docs/HELP.md) for filter syntax and detailed controls.
 
 ## Build

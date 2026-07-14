@@ -39,6 +39,39 @@ Compression=lzma2
 SolidCompression=yes
 UninstallDisplayIcon={app}\File Search Manager.exe
 
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "czech"; MessagesFile: "compiler:Languages\Czech.isl"
+Name: "german"; MessagesFile: "compiler:Languages\German.isl"
+Name: "french"; MessagesFile: "compiler:Languages\French.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+Name: "polish"; MessagesFile: "compiler:Languages\Polish.isl"
+Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
+Name: "portuguesebrazil"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
+Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
+Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
+Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+[CustomMessages]
+english.InstallService=Install the background service for prompt-free NTFS indexing (advanced; most users can skip this)
+czech.InstallService=Nainstalovat službu na pozadí pro indexování NTFS bez dalších výzev (pokročilé; většina uživatelů ji nepotřebuje)
+german.InstallService=Hintergrunddienst für NTFS-Indizierung ohne Rückfragen installieren (erweitert; meist nicht erforderlich)
+french.InstallService=Installer le service d’arrière-plan pour indexer NTFS sans demande (avancé ; généralement inutile)
+spanish.InstallService=Instalar el servicio en segundo plano para indexar NTFS sin avisos (avanzado; normalmente no es necesario)
+polish.InstallService=Zainstaluj usługę indeksowania NTFS w tle bez monitów (zaawansowane; zwykle niepotrzebne)
+english.HelpShortcut=File Search Manager Help
+czech.HelpShortcut=Nápověda File Search Manager
+german.HelpShortcut=File Search Manager Hilfe
+french.HelpShortcut=Aide de File Search Manager
+spanish.HelpShortcut=Ayuda de File Search Manager
+polish.HelpShortcut=Pomoc File Search Manager
+english.ServiceFailed=The File Search Manager service could not be installed or started (code %1).%nFile Search Manager will still work: approve the startup prompt for instant indexing, or it will use a slower folder scan.
+czech.ServiceFailed=Službu File Search Manager se nepodařilo nainstalovat nebo spustit (kód %1).%nAplikace bude nadále fungovat: potvrďte úvodní výzvu pro okamžité indexování, jinak použije pomalejší procházení složek.
+german.ServiceFailed=Der File Search Manager-Dienst konnte nicht installiert oder gestartet werden (Code %1).%nDie Anwendung funktioniert weiterhin mit der Startabfrage oder der langsameren Ordnersuche.
+french.ServiceFailed=Le service File Search Manager n’a pas pu être installé ou démarré (code %1).%nL’application fonctionnera avec la demande au démarrage ou l’analyse plus lente des dossiers.
+spanish.ServiceFailed=No se pudo instalar o iniciar el servicio File Search Manager (código %1).%nLa aplicación seguirá funcionando con el aviso inicial o el análisis de carpetas más lento.
+polish.ServiceFailed=Nie udało się zainstalować lub uruchomić usługi File Search Manager (kod %1).%nAplikacja nadal będzie działać z monitem startowym lub wolniejszym skanowaniem folderów.
+
 [Files]
 ; The two self-contained publishes MUST stay in separate directories -
 ; they contain same-named runtime DLLs with different content
@@ -47,7 +80,7 @@ Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs 
 Source: "..\LICENSE"; DestDir: "{app}"
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"
 Source: "..\README.md"; DestDir: "{app}"
-Source: "..\docs\HELP.md"; DestDir: "{app}\Docs"
+Source: "..\docs\HELP*.md"; DestDir: "{app}\Docs"
 Source: "..\docs\WINGET.md"; DestDir: "{app}\Docs"
 
 [InstallDelete]
@@ -64,11 +97,11 @@ Type: files; Name: "{autoprograms}\Win Search Help.lnk"
 ; Off by default - most users never need it. The service lets File Search Manager index NTFS
 ; drives instantly without any admin prompt; without it the app still works (accept the
 ; startup admin prompt for instant indexing, or it falls back to a slower folder walk).
-Name: "installservice"; Description: "Install the background service for prompt-free NTFS indexing (advanced; most users can skip this)"; Flags: unchecked
+Name: "installservice"; Description: "{cm:InstallService}"; Flags: unchecked
 
 [Icons]
 Name: "{autoprograms}\File Search Manager"; Filename: "{app}\File Search Manager.exe"
-Name: "{autoprograms}\File Search Manager Help"; Filename: "{win}\notepad.exe"; Parameters: """{app}\Docs\HELP.md"""
+Name: "{autoprograms}\{cm:HelpShortcut}"; Filename: "{app}\File Search Manager.exe"; Parameters: "--help"
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcStop"
@@ -88,6 +121,14 @@ end;
 function ServiceExists(): Boolean;
 begin
   Result := Exec2(ExpandConstant('{sys}\sc.exe'), 'query {#MyServiceName}') = 0;
+end;
+
+function GetHelpFile(Param: String): String;
+begin
+  if ActiveLanguage = 'czech' then
+    Result := ExpandConstant('{app}\Docs\HELP.cs.md')
+  else
+    Result := ExpandConstant('{app}\Docs\HELP.md');
 end;
 
 { Stop the service before file copy so the exe is not locked on upgrade }
@@ -131,8 +172,6 @@ begin
     end;
     if Code <> 0 then
       { Never abort the install - the app still works via the admin prompt or the folder scan }
-      MsgBox('The File Search Manager service could not be installed or started (code ' + IntToStr(Code) + ').' + #13#10 +
-             'File Search Manager will still work: accept the admin prompt at startup for instant indexing, ' +
-             'or it falls back to a slower folder scan.', mbInformation, MB_OK);
+      MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbInformation, MB_OK);
   end;
 end;

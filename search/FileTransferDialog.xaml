@@ -1,20 +1,21 @@
 <Window x:Class="search.FileTransferDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Choose file action"
+        xmlns:local="clr-namespace:search"
+        Title="{local:Loc Key=ChooseAction}"
         SizeToContent="WidthAndHeight"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner">
     <StackPanel Margin="12" MinWidth="260">
         <TextBlock x:Name="Prompt" Margin="0,0,0,8" TextWrapping="Wrap"/>
-        <RadioButton x:Name="CopyAction" Content="Copy" IsChecked="True" Margin="0,2"/>
-        <RadioButton x:Name="MoveAction" Content="Move" Margin="0,2"/>
-        <RadioButton x:Name="SymbolicLinkAction" Content="Symbolic link" Margin="0,2"/>
-        <RadioButton x:Name="HardLinkAction" Content="Hard link / directory junction" Margin="0,2"/>
-        <TextBlock Text="Existing destinations will be handled separately." Foreground="Gray" Margin="0,8"/>
+        <RadioButton x:Name="CopyAction" Content="{local:Loc Key=Copy}" IsChecked="True" Margin="0,2"/>
+        <RadioButton x:Name="MoveAction" Content="{local:Loc Key=Move}" Margin="0,2"/>
+        <RadioButton x:Name="SymbolicLinkAction" Content="{local:Loc Key=SymbolicLink}" Margin="0,2"/>
+        <RadioButton x:Name="HardLinkAction" Content="{local:Loc Key=HardLink}" Margin="0,2"/>
+        <TextBlock Text="{local:Loc Key=DestinationsSeparate}" Foreground="Gray" Margin="0,8"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="Cancel" Width="70" Margin="0,0,6,0" IsCancel="True"/>
-            <Button Content="OK" Width="70" IsDefault="True" Click="Ok_Click"/>
+            <Button Content="{local:Loc Key=Cancel}" Width="70" Margin="0,0,6,0" IsCancel="True"/>
+            <Button Content="{local:Loc Key=OK}" Width="70" IsDefault="True" Click="Ok_Click"/>
         </StackPanel>
     </StackPanel>
 </Window>

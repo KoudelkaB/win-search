@@ -105,11 +105,11 @@ namespace search
             findTextBox.TextSelected += t => searchTerms.Add2History(findTextBox.Text);
             findTextBox.DeleteItem = item => searchTerms.Delete(item);
 
-            filterTextBoxCmd.Text = "<CTRL><Left> previous filter\r\n<CTRL><Right> next filter\r\n<Down> show suggestions\r\n<Del> delete selected suggestion";
-            findCmd.Text = "Search in files\r\n\r\nEncoding options:\r\n• UTF-8 (text)\r\n• UTF-16 (text)\r\n• HEX (space-separated bytes)\r\n\r\nControls:\r\n• Case sensitivity checkbox\r\n• <Down> show suggestions\r\n• <Del> delete selected item";
+            filterTextBoxCmd.Text = L.Text("FilterFieldHints");
+            findCmd.Text = L.Text("SearchFieldHints");
 
             // Add commander
-            CommandTree Enter(string hint) => (Key.None, $"enter {hint}\nwhile leaving any key pressed");
+            CommandTree Enter(string hint) => (Key.None, L.Format("EnterValueKeepingKey", L.Text(hint)));
             var openIn = new CommandTree[] {
                 (Key.T, "Text viever (LogReader id installed)", n => n.AtLeast(1) && Apps.TextViever !=null),
                 (Key.B, "File browser", n => n.AtLeast(1) && Apps.Explorer !=null),
@@ -166,6 +166,10 @@ namespace search
                 (Key.E, "Export pinned filters and targets", (n,a) => ExportWorkspace_Click(this, new RoutedEventArgs()))
             };
             filesViewCmd.Commands.Add(new CommandTree[] {
+                //F1/F12 execute in Window_KeyDown before the grid sees them. Keeping them
+                //in this tree makes the working window-wide shortcuts visible in grid hints.
+                (Key.F1, "HintF1"),
+                (Key.F12, "HintF12"),
                 (Key.D, "Compare in diff tool", n => n.IsCount(2),  async (n,a) => await OpenDiff(n)),
                 (Key.Enter, "Filter folders", async (n,a)=> await FilterFolders(n.ToArray())),
                 (Key.Delete, "Delete", async (n,a)=>await Delete(n)),
@@ -196,7 +200,7 @@ namespace search
                     (Key.R, "Red rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == false))),
                     (Key.B, "Black rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == null))),
                 }),
-                (Key.T, "add selected as Targets", (n,a) => AddBasketTargets(n.Select(NameTargetPath)), new CommandTree[] {
+                (Key.T, "add selected as targets", (n,a) => AddBasketTargets(n.Select(NameTargetPath)), new CommandTree[] {
                     (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
                     (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
                     (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs()))
@@ -217,7 +221,6 @@ namespace search
                 (Key.RightShift, "Focus filter", (n,a)=>filterTextBox.Focus()),
                 (Key.U, "Unzip archive", async (n,a)=>await Unzip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")}),
                 (Key.Z, "Zip selected", async (n,a)=>await Zip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")})
-                //F12 (refresh) is window-wide - handled in Window_KeyDown, listed in the global hints
             });
 
             // Save filter to history on any command
@@ -229,8 +232,9 @@ namespace search
             //fed from Window_KeyDown/KeyUp whenever the list itself does not have the focus.
             //F12/Escape execute in Window_KeyDown - listed here so the hints show them
             globalCmd.Commands.Add(new CommandTree[] {
-                (Key.F12, "Refresh from NTFS"),
-                (Key.Escape, "Filter level up"),
+                (Key.F1, "HintF1"),
+                (Key.F12, "HintF12"),
+                (Key.Escape, "HintEscape"),
                 (Key.LeftAlt, "ALT", altCommands)
             });
             globalCmd.OnCommand += () => filters.Used(filterTextBox.Text);
@@ -575,6 +579,17 @@ namespace search
         {
             var target = TargetFromMenu(sender);
             OpenTarget(target);
+        }
+
+        void Language_Click(object sender, RoutedEventArgs e)
+        {
+            var picker = new LanguageSelectionWindow(CultureInfo.CurrentUICulture.Name) { Owner = this };
+            if (picker.ShowDialog() != true || picker.SelectedCulture == CultureInfo.CurrentUICulture.Name) return;
+            LanguageSettingsStore.Save(picker.SelectedCulture);
+            var start = new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = true };
+            foreach (var argument in Environment.GetCommandLineArgs().Skip(1)) start.ArgumentList.Add(argument);
+            Process.Start(start);
+            Application.Current.Shutdown();
         }
 
         void Target_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -976,6 +991,7 @@ namespace search
         async private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             filterTextBox.Focus();
+            if (Program.OpenHelpRequested) OpenHelp();
             // UAC may have been accepted before this window subscribed or became visible.
             if (Broker.ElevationAccepted) RestoreForegroundAfterElevation();
             await Model.Update("");
@@ -1832,6 +1848,10 @@ namespace search
             }
             switch (e.Key)
             {
+                case Key.F1:
+                    OpenHelp();
+                    e.Handled = true;
+                    return;
                 case Key.F12:
                     //Refresh needs no selection => works window-wide, wherever the focus is
                     FSChangeProcessor.RefreshFromNFT();
@@ -1871,6 +1891,41 @@ namespace search
                     return;
             }
             e.Handled = true;
+        }
+
+        internal static string HelpFilePath => FindHelpFile(CultureInfo.CurrentUICulture);
+
+        internal static string FindHelpFile(CultureInfo culture)
+        {
+            var docs = IOPath.Combine(AppContext.BaseDirectory, "Docs");
+            var candidates = new[]
+            {
+                IOPath.Combine(docs, $"HELP.{culture.Name}.md"),
+                IOPath.Combine(docs, $"HELP.{culture.TwoLetterISOLanguageName}.md"),
+                IOPath.Combine(docs, "HELP.md")
+            };
+            return candidates.FirstOrDefault(File.Exists) ?? candidates[^1];
+        }
+
+        void OpenHelp()
+        {
+            var helpFile = HelpFilePath;
+            if (!File.Exists(helpFile))
+            {
+                MessageBox.Show(this, L.Text("HelpNotFound"), L.Text("Help"),
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                new HelpWindow(helpFile) { Owner = this }.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"{L.Text("HelpFailed")}: {ex.Message}", L.Text("Help"),
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         void Window_KeyUp(object sender, KeyEventArgs e)

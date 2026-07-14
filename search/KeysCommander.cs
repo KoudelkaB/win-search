@@ -127,7 +127,7 @@ namespace search
         {
             if (commandCanceled)
             {
-                Text = "Sequence canceled\nRelease all keys";
+                Text = L.Text("SequenceCanceled");
                 return;
             }
             var currentNodes = nodes().ToArray();
@@ -163,8 +163,8 @@ namespace search
             if (canGoBack || canCancelWithEscape)
             {
                 sb.AppendLine("────────────");
-                if (canGoBack) sb.AppendLine("<Backspace> previous step");
-                if (canCancelWithEscape) sb.AppendLine("<Esc> cancel sequence");
+                if (canGoBack) sb.AppendLine($"<Backspace> {L.Text("PreviousStep")}");
+                if (canCancelWithEscape) sb.AppendLine($"<Esc> {L.Text("CancelSequence")}");
             }
             Text = sb.ToString();
         }
@@ -227,7 +227,9 @@ namespace search
         public CommandTree(Key key, string help, Command command = null)
         {
             Key = key;
-            Help = help;
+            // Command descriptions use their English source text as a RESX key. This
+            // also keeps plug-in/test commands safe: unknown keys simply display as-is.
+            Help = L.Text(help);
             Cmd = command;
         }
 

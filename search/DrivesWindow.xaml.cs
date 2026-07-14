@@ -47,7 +47,7 @@ namespace search
                 {
                     Key = key,
                     Root = drive.Name,
-                    Details = "checking…",
+                    Details = L.Text("Checking"),
                     IsChecked = known && enabled
                 };
                 choices.Add(choice);
@@ -70,7 +70,7 @@ namespace search
                     var ntfs = string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase);
                     Dispatcher.Invoke(() =>
                     {
-                        choice.Details = $"{format ?? "not ready"} · {TypeName(drive.DriveType)}"
+                        choice.Details = $"{format ?? L.Text("NotReady")} · {TypeName(drive.DriveType)}"
                             + (size > 0 ? $" · {size >> 30} GB" : "")
                             + (drive.VolumeLabelSafe() is string l && l.Length > 0 ? $" · {l}" : "");
                         if (!known) choice.IsChecked = ntfs; //No explicit choice => the NTFS-only default
@@ -82,12 +82,12 @@ namespace search
 
         static string TypeName(DriveType t) => t switch
         {
-            DriveType.Fixed => "local",
-            DriveType.Network => "network",
-            DriveType.Removable => "removable",
+            DriveType.Fixed => L.Text("Local"),
+            DriveType.Network => L.Text("Network"),
+            DriveType.Removable => L.Text("Removable"),
             DriveType.CDRom => "CD/DVD",
             DriveType.Ram => "RAM disk",
-            _ => "unknown"
+            _ => L.Text("Unknown")
         };
 
         void Ok_Click(object sender, RoutedEventArgs e)
