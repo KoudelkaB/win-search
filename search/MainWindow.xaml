@@ -135,7 +135,6 @@
                 <Label Content="{Binding LoadStatus}" ToolTip="{Binding LoadStatusTooltip}" Padding="0,0,5,0" />
                 <Button Content="{local:Loc Key=Drives}" Click="Drives_Click" Padding="6,0" Margin="0,0,5,0"
                         ToolTip="Choose which drives are indexed (NTFS drives by default)"/>
-                <TextBlock Text="|" VerticalAlignment="Center" Margin="0,0,5,0" />
                 <Label Content="{Binding Status}" Padding="0" />
             </StackPanel>
         </StackPanel>
