@@ -21,6 +21,13 @@ namespace search.Models
 
         public event Action UIRefreshRequested;
 
+        /// <summary>
+        /// Repaint just the rows of these nodes (their displayed values changed in place).
+        /// Unlike UIRefreshRequested this never regenerates the whole view - unrelated file
+        /// system activity must not blink the grid or disturb keyboard selection.
+        /// </summary>
+        public event Action<INode[]> RowsRefreshRequested;
+
         public string Status { get; set; }
 
         /// <summary>
@@ -66,6 +73,7 @@ namespace search.Models
         NodeFilter nodeFilter = new NodeFilter("");
         volatile object lastUpdate = DateTime.MinValue;
         volatile bool itemsComplete = true; //false => Items hold only a part of the filtered result (publishing was canceled)
+        volatile bool refreshPending = false; //true => files changed and no refresh published since => Items lag behind files
         int refreshQueued = 0; //1 => a data refresh is already queued and covers all changes arriving before it runs
         volatile Task dataRefreshPublished = Task.CompletedTask; //Completes when the queued data refresh has really hit the grid
         const int MaxItems = 100000; //Publish just the first 100 000 filtered items
@@ -93,6 +101,9 @@ namespace search.Models
                     //and it never cancels a running update (a canceled publish would leave Items partial forever
                     //under a steady stream of file system events)
                     if (Interlocked.Exchange(ref refreshQueued, 1) == 1) return;
+                    //Items lag behind files until a refresh from files really publishes - a user
+                    //update superseding this one must refilter, never resort the stale window in place
+                    refreshPending = true;
                     //This run owns the queued refresh - its end is the moment the refreshed
                     //data is really on the grid, which the "Loaded" status waits for
                     published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -132,8 +143,12 @@ namespace search.Models
                     newSort ??= sort;
                     var refresh = dataRefresh
                         | filter != newFilter //refilter also on new filter
-                        | sort != newSort //a new ordering needs the full filtered source, not the current result window
-                        | !itemsComplete; //previous publishing was canceled => Items are partial and can not be resorted in place
+                        | !itemsComplete //previous publishing was canceled => Items are partial and can not be resorted in place
+                        | refreshPending //files changed since the last published refresh => Items are stale
+                        //A sort-only change just reorders the published Items - they already hold the
+                        //complete filtered result. Only a window truncated at MaxItems needs the full
+                        //filtered source: the top of the new ordering may lie outside the window.
+                        | (sort != newSort && Items.Count >= MaxItems);
 
                     // Set current filter/sorter before possible canceling
                     filter = newFilter;
@@ -143,6 +158,9 @@ namespace search.Models
                     if (IsCanceled()) return;
                     var items = GetItems(refresh, IsCanceled);
                     if (items == null || IsCanceled()) return;
+                    //These items were filtered from the current files => Items catch up on publish.
+                    //Changes arriving from now on queue their own refresh and set the flag again.
+                    if (refresh) refreshPending = false;
                     //Items is mutated on the UI thread (incremental updates) => the comparison may
                     //see a torn list; publish on any doubt instead of dropping the refresh
                     try { if (items.IsIdentical(Items)) return; } catch { }
@@ -226,16 +244,35 @@ namespace search.Models
                 if (!itemsComplete || currentFilter != filter || currentSort != sort) return false;
                 var items = Items;
                 var updated = false;
-                //Remove+Insert silently drops the row from the view's selection => snapshot it
-                //and restore after (same INode instances get re-inserted), so a selected file
-                //stays selected while it keeps changing on disk
-                BeforeItemsExchange();
+                var exchanging = false; //Selection snapshot taken - only once a row really moves
+                List<INode> repaint = null; //Rows changed in place - repaint without touching the list
                 foreach (var node in changed)
                 {
                     var index = items.IndexOf(node);
                     //Present in files under its path and matching the filter => it belongs to the result
                     //(the node itself is a valid key - no full path is materialized here)
                     var include = files.TryGetValue(node, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
+                    //Not shown and not entering the result => the view is unaffected. Most watcher
+                    //events land here - they must leave the grid (and its selection) alone.
+                    if (index < 0 && !include) continue;
+                    //Still shown at a position consistent with the sort => only its displayed values
+                    //changed. Repaint that row in place - remove+insert would churn the selection
+                    //(and the SHIFT+Up/Down anchor) for a row that does not move.
+                    if (index >= 0 && include
+                        && (index == 0 || compare(items[index - 1], node) <= 0)
+                        && (index == items.Count - 1 || compare(node, items[index + 1]) <= 0))
+                    {
+                        (repaint ??= new List<INode>()).Add(node);
+                        continue;
+                    }
+                    //Remove+Insert silently drops the row from the view's selection => snapshot it
+                    //once and restore after (same INode instances get re-inserted), so a selected file
+                    //stays selected while it keeps changing on disk
+                    if (!exchanging)
+                    {
+                        exchanging = true;
+                        BeforeItemsExchange();
+                    }
                     if (index >= 0)
                     {
                         items.RemoveAt(index);
@@ -251,9 +288,13 @@ namespace search.Models
                         }
                     }
                 }
-                while (items.Count > MaxItems) items.RemoveAt(items.Count - 1);
-                AfterItemsExchange();
+                if (exchanging)
+                {
+                    while (items.Count > MaxItems) items.RemoveAt(items.Count - 1);
+                    AfterItemsExchange();
+                }
                 if (updated) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                if (repaint != null) RowsRefreshRequested?.Invoke(repaint.ToArray());
                 return true;
             });
         }
@@ -481,15 +522,25 @@ namespace search.Models
         void PropagateSizeDelta(string path, long delta)
         {
             if (delta == 0) return;
+            var changed = false;
             for (var dir = Path.GetDirectoryName(path); dir != null; dir = Path.GetDirectoryName(dir))
-                if (files.TryGetValue(dir, out var d) && d.IsDirectory) d.AddSizeDelta(delta);
-            RefreshSizesSoon();
+                if (files.TryGetValue(dir, out var d) && d.IsDirectory)
+                {
+                    d.AddSizeDelta(delta);
+                    pendingSizeRows[d] = 0;
+                    changed = true;
+                }
+            if (changed) RefreshSizesSoon();
         }
 
-        int sizeRefreshQueued = 0; //1 => a UI repaint covering all size changes so far is already queued
+        int sizeRefreshQueued = 0; //1 => a row repaint covering all size changes so far is already queued
+        //Directories whose aggregated size changed since the last coalesced repaint
+        readonly NonBlocking.ConcurrentDictionary<INode, byte> pendingSizeRows = new();
         /// <summary>
-        /// Repaint visible rows so changed directory sizes show, coalesced to one refresh
-        /// per 2s - never per event, which would saturate the dispatcher during change storms
+        /// Repaint the rows of directories whose aggregated size changed, coalesced to one
+        /// refresh per 2s - never per event, which would saturate the dispatcher during change
+        /// storms. Only the affected rows are repainted (and only when actually on screen) -
+        /// unrelated file system activity must never redraw or disturb the current view.
         /// </summary>
         void RefreshSizesSoon()
         {
@@ -497,8 +548,12 @@ namespace search.Models
             Task.Run(async () =>
             {
                 await Task.Delay(2000);
+                //Reset before the snapshot: a directory added after the snapshot finds the
+                //flag cleared and queues the next round - no size change is ever dropped
                 Interlocked.Exchange(ref sizeRefreshQueued, 0);
-                UIRefreshRequested?.Invoke();
+                var changed = pendingSizeRows.Keys.ToArray();
+                foreach (var node in changed) pendingSizeRows.TryRemove(node, out _);
+                if (changed.Length > 0) RowsRefreshRequested?.Invoke(changed);
             });
         }
 

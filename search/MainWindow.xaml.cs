@@ -256,6 +256,23 @@ namespace search
                 filesView.Items.Refresh();
                 UpdateFolderColumnWidth();
             });
+            //Repaint just the changed rows, and only when they are actually realized on screen.
+            //A full Items.Refresh() regenerates every visible row (blink) and resets the keyboard
+            //navigation state, breaking SHIFT+Up/Down selection on unrelated file system changes.
+            Model.RowsRefreshRequested += nodes => Dispatcher.Invoke(() =>
+            {
+                foreach (var node in nodes)
+                {
+                    if (filesView.ItemContainerGenerator.ContainerFromItem(node) is ListViewItem row)
+                    {
+                        //INode raises no change notifications => rebind the row to re-read its values.
+                        //Off-screen rows need nothing: virtualization rebinds them when realized.
+                        var context = row.DataContext;
+                        row.DataContext = null;
+                        row.DataContext = context;
+                    }
+                }
+            });
         }
 
         WorkspaceSettings CaptureWorkspaceSettings() => new()
