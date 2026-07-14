@@ -452,6 +452,9 @@ namespace search.Models
             /// <summary>This record's sequence number - stale references to a reused entry are detected against it</summary>
             public ushort SequenceNumber { get; init; }
 
+            /// <summary>Full NTFS file reference (sequence + entry) - the key USN journal records carry</summary>
+            public override ulong Frn => ((ulong)SequenceNumber << 48) | EntryNumber;
+
             /// <summary>The sequence number embedded in the parent reference of the chosen $FILE_NAME</summary>
             public ushort ParentSequence { get; set; }
 

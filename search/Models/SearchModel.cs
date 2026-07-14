@@ -443,9 +443,9 @@ namespace search.Models
 
         /// <summary>
         /// Re-index descendants after a directory rename. Windows reports the directory
-        /// rename but does not report a rename for every child.
+        /// rename but does not report a rename for every child. Returns the added nodes.
         /// </summary>
-        void ReindexRenamedTree(string oldPath, string newPath, IEnumerable<INode> removed)
+        List<INode> ReindexRenamedTree(string oldPath, string newPath, IEnumerable<INode> removed)
         {
             var removedItems = removed.ToArray();
             var archivePaths = removedItems.OfType<ZipNode>()
@@ -453,7 +453,7 @@ namespace search.Models
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path.Length)
                 .ToArray();
-            GetOrAddNew(newPath);
+            var added = new List<INode> { GetOrAddNew(newPath) };
             var oldPrefix = oldPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var newPrefix = newPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             foreach (var old in removedItems
@@ -463,7 +463,7 @@ namespace search.Models
                 .ThenBy(n => n.FullName.Length))
             {
                 if (!old.FullName.StartsWith(oldPrefix + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-                GetOrAddNew(newPrefix + old.FullName.Substring(oldPrefix.Length));
+                added.Add(GetOrAddNew(newPrefix + old.FullName.Substring(oldPrefix.Length)));
             }
             // Re-open renamed archives so their entries remain real ZipNodes rather than
             // path-only FileNodes that do not exist on disk.
@@ -473,10 +473,60 @@ namespace search.Models
                 var newArchive = newPrefix + oldArchive.Substring(oldPrefix.Length);
                 if (files.TryGetValue(newArchive, out var archive)) AddArchive(archive);
             }
+            return added;
         }
 
         static bool HasArchiveChildren(INode node)
             => node != null && zipNodes.Any(z => ReferenceEquals(z.ZIP, node));
+
+        /// <summary>
+        /// Diff these directories against the disk: prune indexed entries that no longer
+        /// exist, index files that appeared. The USN watcher's safety net for journal
+        /// records it could not resolve to a path (no names in the unprivileged read, file
+        /// reference not in the map) - the watcher batches a storm's worth of misses into
+        /// one call with the affected directories deduplicated.
+        /// </summary>
+        async Task ReconcileDirectories(string[] dirs)
+        {
+            var changed = new List<INode>();
+            foreach (var dir in dirs)
+            {
+                //Deletes directly in a drive root are rare; a reconcile there would diff the
+                //whole drive - hand it to the drive scan instead
+                if (IsDriveRoot(dir)) { _ = InitFromNTFS(Path.GetPathRoot(dir)); continue; }
+                if (!files.TryGetValue(dir, out var dirNode)) continue; //Unindexed parent => nothing stale under it
+
+                HashSet<string> onDisk;
+                try
+                {
+                    onDisk = new HashSet<string>(Directory.EnumerateFileSystemEntries(dir), StringComparer.OrdinalIgnoreCase);
+                }
+                catch { continue; } //Directory gone or unreadable - its own delete record handles it
+
+                //Indexed descendants whose direct-child ancestor no longer exists on disk
+                var prefix = dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var stale = files.Values.AsParallel()
+                    .Where(n => !ReferenceEquals(n, dirNode) && NodePath.IsUnder(n, dirNode, prefix))
+                    .Where(n =>
+                    {
+                        var full = n.FullName;
+                        var end = full.IndexOf(Path.DirectorySeparatorChar, prefix.Length);
+                        return !onDisk.Contains(end < 0 ? full : full.Substring(0, end));
+                    })
+                    .ToArray();
+                foreach (var candidate in stale)
+                {
+                    if (!files.TryRemove(candidate, out var actual)) continue;
+                    changed.Add(actual);
+                    if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
+                }
+
+                //Files that appeared without a resolvable record (or before the map was filled)
+                foreach (var entry in onDisk)
+                    if (!files.ContainsKey(entry)) changed.Add(GetOrAddNew(entry));
+            }
+            if (changed.Count > 0) await UpdateSmall(changed);
+        }
 
         /// <summary>
         /// Refresh node and apply its size change to ancestor directory sizes
@@ -766,6 +816,8 @@ namespace search.Models
         public SearchModel()
         {
             FSChangeProcessor.ShouldIndex = DriveSelectionStore.IsEnabled;
+            FSChangeProcessor.Lookup = FindByPath;
+            FSChangeProcessor.ReconcileDirs = ReconcileDirectories;
             FSChangeProcessor.Run(async d => await InitFromNTFS(d)
             , async e =>
             {
@@ -791,28 +843,27 @@ namespace search.Models
                             break;
                         case WatcherChangeTypes.Renamed:
                             //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
-                            var renamed = (RenamedEventArgs)e;
                             //Under watcher buffer pressure ReadDirectoryChangesW can lose one half
                             //of a rename pair; .NET then raises Renamed with an empty name whose
                             //FullPath/OldFullPath is the watcher root. Tree surgery keyed on the
                             //drive root would remove the whole index and re-add it under ghost
                             //paths (1601 times, empty sizes) - rescan the drive instead.
-                            if (IsDriveRoot(renamed.OldFullPath) || IsDriveRoot(e.FullPath))
+                            if (IsDriveRoot(e.OldFullPath) || IsDriveRoot(e.FullPath))
                             {
                                 _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
                                 break;
                             }
-                            var oldRoot = files.TryGetValue(renamed.OldFullPath, out var indexedOld) ? indexedOld : null;
+                            var oldRoot = files.TryGetValue(e.OldFullPath, out var indexedOld) ? indexedOld : null;
                             if (oldRoot?.IsDirectory == true || HasArchiveChildren(oldRoot))
                             {
-                                var removedTree = RemoveTree(renamed.OldFullPath);
-                                ReindexRenamedTree(renamed.OldFullPath, e.FullPath, removedTree);
-                                await Update();
+                                var removedTree = RemoveTree(e.OldFullPath);
+                                var added = ReindexRenamedTree(e.OldFullPath, e.FullPath, removedTree);
+                                await UpdateSmall(removedTree.Concat(added));
                             }
                             else
                             {
                                 //Remove first so a same-directory rename nets to zero on the shared ancestors
-                                await UpdateFor(Remove(renamed.OldFullPath), GetOrAddNew(e.FullPath));
+                                await UpdateFor(Remove(e.OldFullPath), GetOrAddNew(e.FullPath));
                             }
                             break;
                         case WatcherChangeTypes.Deleted:
@@ -827,8 +878,7 @@ namespace search.Models
                             var deletedRoot = files.TryGetValue(e.FullPath, out var indexedDeleted) ? indexedDeleted : null;
                             if (deletedRoot?.IsDirectory == true || HasArchiveChildren(deletedRoot))
                             {
-                                RemoveTree(e.FullPath);
-                                await Update();
+                                await UpdateSmall(RemoveTree(e.FullPath));
                             }
                             else
                             {
@@ -843,6 +893,19 @@ namespace search.Models
                     await Log($"FS change {e} failed: {ex}");
                 }
             });
+        }
+
+        /// <summary>
+        /// Publish a batch of added/removed nodes to the grid: a small batch updates the
+        /// published rows in place (a deleted folder vanishes instantly), a large one -
+        /// where per-row surgery would saturate the UI thread - queues the coalesced full
+        /// refresh (1s batching) instead.
+        /// </summary>
+        async Task UpdateSmall(IEnumerable<INode> changed)
+        {
+            var nodes = changed.Take(101).ToArray();
+            if (nodes.Length <= 100) await UpdateFor(nodes);
+            else await Update();
         }
 
         /// <summary>
@@ -1010,6 +1073,9 @@ namespace search.Models
             }
             exes = files.Values.AsParallel()
                 .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
+            //MFT nodes carry their file reference numbers - hand them to the drive's USN
+            //watcher so deleted/renamed files resolve to paths (journal records have no names)
+            FSChangeProcessor.PopulateFrnMap(root, fresh.Values);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
         }
 

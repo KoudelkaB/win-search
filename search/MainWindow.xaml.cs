@@ -2021,6 +2021,7 @@ namespace search
                                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
                                 Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+                        Models.Extensions.EchoDeleted(n);
                     }
                     catch (Exception ex)
                     {

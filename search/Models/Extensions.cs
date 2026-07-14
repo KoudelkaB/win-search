@@ -182,6 +182,7 @@ namespace search.Models
                     if (!Broker.Available)
                         throw new UnauthorizedAccessException($"Access denied to '{file}' - the elevated helper is not running (it was declined at startup).");
                     Broker.CopyFromElevated(file, dest, overwrite, move);
+                    EchoTransferred(file, dest, move);
                 }
                 catch (Exception ex)
                 {
@@ -214,6 +215,7 @@ namespace search.Models
                     if (move) File.Move(file, dest, overwrite);
                     else File.Copy(file, dest, overwrite);
                 }
+                EchoTransferred(file, dest, move);
             }
             catch (Exception e)
             {
@@ -221,6 +223,32 @@ namespace search.Models
                 errors.Add(e.Message);
             }
             return errors;
+        }
+
+        /// <summary>
+        /// Report the app's own successful delete to the index so the row leaves the grid
+        /// instantly - the watcher/journal event confirming it later is idempotent. Guarded
+        /// by a stat: a delete the user canceled in an error dialog must not echo.
+        /// </summary>
+        public static void EchoDeleted(INode n)
+        {
+            if (n is ZipNode) return; //Archive entries are not file-system items
+            var path = n.FullName;
+            if (!File.Exists(path) && !System.IO.Directory.Exists(path))
+                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Deleted, path));
+        }
+
+        /// <summary>
+        /// Report the app's own successful copy/move (rename included) to the index - see
+        /// <see cref="EchoDeleted"/>. A move echoes as a rename, so a moved directory's
+        /// descendants are re-indexed under the new path at once.
+        /// </summary>
+        internal static void EchoTransferred(string source, string dest, bool move)
+        {
+            if (move && !File.Exists(source) && !System.IO.Directory.Exists(source))
+                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Renamed, dest, source));
+            else if (!move && (File.Exists(dest) || System.IO.Directory.Exists(dest)))
+                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Created, dest));
         }
 
         /// <summary>

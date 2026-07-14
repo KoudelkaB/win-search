@@ -38,6 +38,14 @@ namespace search.Models
         public virtual bool Exists => true;
 
         /// <summary>
+        /// NTFS file reference number (MFT entry + sequence) when known - lets the USN
+        /// journal watcher name deleted files, whose records carry no path. 0 = unknown
+        /// (walked/watcher-added nodes); the watcher then falls back to resolving by id
+        /// or reconciling the parent directory.
+        /// </summary>
+        public virtual ulong Frn => 0;
+
+        /// <summary>
         /// Adjust the size by a signed watcher-event delta. Saturates at 0 - aggregated
         /// directory sizes are best-effort between MFT reloads and a missed event must not
         /// wrap the unsigned size to exabytes.

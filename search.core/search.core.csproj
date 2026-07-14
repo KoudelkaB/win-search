@@ -5,4 +5,8 @@
     <RootNamespace>search.Core</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="search.tests" />
+  </ItemGroup>
+
 </Project>
