@@ -40,6 +40,7 @@ Folder matching:
 
 - `src\` matches items whose immediate parent folder name matches `src`.
 - `src\\` matches items with `src` anywhere in the full path.
+- Name anchors work per path component, so `:src:\\` matches items with a folder named exactly `src` anywhere in the path.
 - `"C:\Work"` matches items directly inside `C:\Work`.
 - `"C:\Work\\"` matches items recursively under `C:\Work`.
 

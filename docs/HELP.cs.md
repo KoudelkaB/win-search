@@ -26,6 +26,7 @@ Filtr nerozlišuje velikost písmen. Dvojtečka tedy určuje, ke kterému okraji
 
 - `src\` – položky, jejichž bezprostřední nadřazená složka odpovídá `src`.
 - `src\\` – položky s `src` kdekoli v celé cestě.
+- Kotvy názvu platí pro každou část cesty, takže `:src:\\` najde položky se složkou přesně pojmenovanou `src` kdekoli v cestě.
 - `"C:\Work"` – položky přímo uvnitř `C:\Work`.
 - `"C:\Work\\"` – všechny položky rekurzivně pod `C:\Work`.
 

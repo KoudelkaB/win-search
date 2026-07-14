@@ -9,6 +9,7 @@ Los términos se separan con espacios y se combinan mediante **Y**. Use comillas
 - `report` contiene el texto; `:report` empieza por él; `report:` termina por él; `:report:` es exacto.
 - `.pdf:|.docx:` coincide con nombres que terminan en una de esas extensiones; `report .pdf:` combina ambas condiciones.
 - `src\` busca el directorio padre inmediato; `src\\` busca en toda la ruta.
+- Los anclajes de nombre se aplican a cada componente de la ruta, por lo que `:src:\\` encuentra elementos con una carpeta llamada exactamente `src` en cualquier lugar de la ruta.
 - `"C:\Work"` busca directamente en esa carpeta; `"C:\Work\\"` busca recursivamente debajo.
 
 Ejemplos: `invoice .pdf:`, `:IMG_ .jpg:|.jpeg:`, `C:\Projects\\ .cs:`. `Ctrl+Left` y `Ctrl+Right` recorren el historial; `Down` muestra sugerencias.

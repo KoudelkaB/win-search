@@ -53,10 +53,25 @@ namespace search.Tests
         }
 
         [Fact]
-        public void AnchoredParentsPatternFallsBackToTheFullPath()
+        public void AnchoredParentsPatternBindsToASingleComponent()
         {
-            // ".txt:" anchored at the end => must match the materialized full path
+            // ".txt:" anchored at the end => some path component ends with ".txt"
             Assert.Equal(new[] { "a.txt", "b.txt", "c.txt" }, Matching(@".txt:\\"));
+
+            // ":docs:" fully anchored => some path component named exactly "docs"
+            // (regression: used to be matched against the whole path and matched nothing)
+            Assert.Equal(new[] { "a.txt", "b.txt", "Docs", "Sub" }, Matching(@":docs:\\"));
+            Assert.Equal(new[] { "b.txt", "Sub" }, Matching(@":sub:\\"));
+            Assert.Empty(Matching(@":doc:\\")); // exact component name only
+        }
+
+        [Fact]
+        public void AnchoredParentsPatternWorksOnPathBackedNodes()
+        {
+            var entry = new FileNode(@"Q:\Docs\arch.zip\inner.txt");
+            Assert.True(new NodeFilter(@":docs:\\").Matches(entry));
+            Assert.True(new NodeFilter(@":arch.zip:\\").Matches(entry));
+            Assert.False(new NodeFilter(@":doc:\\").Matches(entry));
         }
 
         [Fact]

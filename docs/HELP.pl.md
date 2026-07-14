@@ -9,6 +9,7 @@ Terminy są oddzielane spacjami i łączone jako **AND**. Terminy lub ścieżki 
 - `report` zawiera tekst; `:report` zaczyna się od niego; `report:` kończy się nim; `:report:` jest dokładny.
 - `.pdf:|.docx:` oznacza nazwę kończącą się jednym z tych rozszerzeń; `report .pdf:` łączy warunki.
 - `src\` wskazuje bezpośredni folder nadrzędny; `src\\` wyszukuje w całej ścieżce.
+- Kotwice nazwy działają dla każdego składnika ścieżki, więc `:src:\\` znajduje elementy z folderem o dokładnej nazwie `src` w dowolnym miejscu ścieżki.
 - `"C:\Work"` wskazuje elementy bezpośrednio w folderze; `"C:\Work\\"` wskazuje elementy rekurencyjnie poniżej.
 
 Przykłady: `invoice .pdf:`, `:IMG_ .jpg:|.jpeg:`, `C:\Projects\\ .cs:`. `Ctrl+Left` i `Ctrl+Right` przechodzą po historii, a `Down` pokazuje podpowiedzi.

@@ -7,6 +7,7 @@
 - `report` contém o texto; `:report` começa com ele; `report:` termina com ele; `:report:` é exato.
 - `.pdf:|.docx:` corresponde a nomes que terminam com uma dessas extensões; termos separados por espaço são combinados com **E**.
 - `src\` procura a pasta pai; `src\\` procura no caminho completo.
+- As âncoras de nome se aplicam a cada componente do caminho, portanto `:src:\\` encontra itens com uma pasta chamada exatamente `src` em qualquer lugar do caminho.
 - `"C:\Work"` procura diretamente na pasta; `"C:\Work\\"` procura recursivamente abaixo dela.
 
 Use aspas para caminhos com espaços. `Ctrl+Left` e `Ctrl+Right` percorrem o histórico; `Down` mostra sugestões.

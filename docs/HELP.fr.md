@@ -9,6 +9,7 @@ Les termes sont séparés par des espaces et combinés avec **ET**. Employez des
 - `report` contient le texte ; `:report` commence par lui ; `report:` finit par lui ; `:report:` est exact.
 - `.pdf:|.docx:` correspond aux noms se terminant par l’une de ces extensions ; `report .pdf:` combine les deux conditions.
 - `src\` vise le dossier parent immédiat ; `src\\` cherche dans le chemin complet.
+- Les ancres de nom s’appliquent à chaque composant du chemin ; `:src:\\` trouve donc les éléments dont un dossier s’appelle exactement `src`, où qu’il soit dans le chemin.
 - `"C:\Work"` vise directement ce dossier ; `"C:\Work\\"` vise tous ses descendants.
 
 Exemples : `invoice .pdf:`, `:IMG_ .jpg:|.jpeg:`, `C:\Projects\\ .cs:`. `Ctrl+Left` et `Ctrl+Right` parcourent l’historique ; `Down` affiche les suggestions.

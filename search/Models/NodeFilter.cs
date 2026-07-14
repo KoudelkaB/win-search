@@ -55,10 +55,19 @@ namespace search.Models
             /// </summary>
             public readonly bool PlainContains;
 
+            /// <summary>
+            /// True when no alternative contains '\' - the pattern cannot span a path
+            /// separator, so it is matched against each path component, with anchors
+            /// binding to a single component name (e.g. ":download:" = a component named
+            /// exactly "download") rather than to the whole path string.
+            /// </summary>
+            public readonly bool ComponentMatch;
+
             public Pattern(string pattern)
             {
                 this.pattern = pattern;
                 PlainContains = pattern.Split('|').All(x => !x.StartsWith(':') && !x.EndsWith(':') && !x.Contains('\\'));
+                ComponentMatch = !pattern.Contains('\\');
 
                 //Create and compile expression for comparison
                 ParameterExpression text = Ex.Parameter(typeof(string));
@@ -202,14 +211,15 @@ namespace search.Models
         }
 
         /// <summary>
-        /// The pattern matched against the full path, without building it: a plain
-        /// contains-term cannot span a '\', so testing each component (and the terminal
-        /// path prefix) is equivalent. Anchored or '\'-crossing patterns keep the exact
-        /// old semantics on the materialized path.
+        /// The pattern matched against the path's components, without building the path:
+        /// a '\'-less pattern cannot span a separator, so each component is tested on its
+        /// own - plain terms behave exactly as a full-path contains, and anchors bind to
+        /// a single component name (":download:" = a component named exactly "download").
+        /// Only '\'-crossing patterns are matched against the materialized full path.
         /// </summary>
         static bool MatchesPath(Pattern p, INode n)
         {
-            if (!p.PlainContains) return p.Matches(n.FullName);
+            if (!p.ComponentMatch) return p.Matches(n.FullName);
 
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < 512; guard++)
@@ -217,7 +227,12 @@ namespace search.Models
                 if (p.Matches(m.Name)) return true;
                 m = m.PathParent;
             }
-            return p.Matches(m.FullName);
+            if (p.PlainContains) return p.Matches(m.FullName);
+
+            // Anchored: test the remaining path-backed prefix component by component
+            foreach (var part in m.FullName.Split('\\'))
+                if (part.Length > 0 && p.Matches(part)) return true;
+            return false;
         }
 
         /// <summary>

@@ -7,6 +7,7 @@
 - `report` contiene il testo; `:report` inizia con esso; `report:` termina con esso; `:report:` è esatto.
 - `.pdf:|.docx:` cerca nomi che terminano con una di queste estensioni; i termini separati da spazi sono in **AND**.
 - `src\` cerca la cartella padre; `src\\` cerca nell’intero percorso.
+- Gli ancoraggi del nome si applicano a ogni componente del percorso, quindi `:src:\\` trova gli elementi con una cartella chiamata esattamente `src` in qualsiasi punto del percorso.
 - `"C:\Work"` cerca direttamente nella cartella; `"C:\Work\\"` cerca ricorsivamente sotto di essa.
 
 Usare le virgolette per percorsi con spazi. `Ctrl+Left` e `Ctrl+Right` percorrono la cronologia; `Down` mostra i suggerimenti.

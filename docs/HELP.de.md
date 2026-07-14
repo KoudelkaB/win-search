@@ -9,6 +9,7 @@ Filterbegriffe werden mit Leerzeichen getrennt und als **UND** verknüpft. Begri
 - `report` – Name enthält `report`; `:report` beginnt damit; `report:` endet damit; `:report:` ist exakt.
 - `.pdf:|.docx:` – Dateinamen mit einer dieser Erweiterungen; `report .pdf:` kombiniert beide Bedingungen.
 - `src\` – unmittelbarer Elternordner heißt `src`; `src\\` sucht `src` im gesamten Pfad.
+- Namensanker gelten für jede Pfadkomponente; `:src:\\` findet daher Elemente mit einem Ordner, der an beliebiger Stelle im Pfad genau `src` heißt.
 - `"C:\Work"` – direkt in diesem Ordner; `"C:\Work\\"` – rekursiv darunter.
 
 Beispiele: `invoice .pdf:`, `:IMG_ .jpg:|.jpeg:`, `C:\Projects\\ .cs:`. `Ctrl+Left` und `Ctrl+Right` wechseln die Filterhistorie; `Down` zeigt Vorschläge.
