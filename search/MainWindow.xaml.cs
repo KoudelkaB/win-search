@@ -2837,8 +2837,12 @@ namespace search
                             }
                         }
 
+                        // The sort field must be language-independent: the column header text is
+                        // localized, so fall back to it only when no stable key/binding is set.
                         var columnBinding = headerClicked.Column.DisplayMemberBinding as Binding;
-                        var sortBy = columnBinding?.Path.Path ?? headerClicked.Column.Header as string;
+                        var sortBy = GridViewSort.GetSortKey(headerClicked.Column)
+                            ?? columnBinding?.Path.Path
+                            ?? headerClicked.Column.Header as string;
 
                         await Model.Update(newSort: (direction == ListSortDirection.Ascending ? '+' : '-') + sortBy);
 

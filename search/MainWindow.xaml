@@ -367,14 +367,14 @@
             </ListView.ItemContainerStyle>
             <ListView.View>
                 <GridView AllowsColumnReorder="True">
-                    <GridViewColumn Header="C" Width="20">
+                    <GridViewColumn Header="C" Width="20" local:GridViewSort.SortKey="C">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <Border Background="{Binding Foreground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ListViewItem}}}"/>
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
-                    <GridViewColumn Header="{local:Loc Key=Name}" Width="Auto">
+                    <GridViewColumn Header="{local:Loc Key=Name}" Width="Auto" local:GridViewSort.SortKey="Name">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <Border Tag="Name" Background="Transparent" AllowDrop="True"
@@ -391,7 +391,7 @@
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
-                    <GridViewColumn Header="{local:Loc Key=Size}" Width="Auto">
+                    <GridViewColumn Header="{local:Loc Key=Size}" Width="Auto" local:GridViewSort.SortKey="Size">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <!-- ##0 so a real zero-byte file shows "0" - the all-# format rendered it
@@ -400,8 +400,8 @@
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
-                    <GridViewColumn Header="{local:Loc Key=Changed}" DisplayMemberBinding="{Binding LastChangeTime, StringFormat={}{0:g}}" Width="Auto"/>
-                    <GridViewColumn Header="{local:Loc Key=Folder}" Width="Auto">
+                    <GridViewColumn Header="{local:Loc Key=Changed}" DisplayMemberBinding="{Binding LastChangeTime, StringFormat={}{0:g}}" Width="Auto" local:GridViewSort.SortKey="LastChangeTime"/>
+                    <GridViewColumn Header="{local:Loc Key=Folder}" Width="Auto" local:GridViewSort.SortKey="Folder">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <Border Tag="Folder" Background="Transparent" AllowDrop="True"
