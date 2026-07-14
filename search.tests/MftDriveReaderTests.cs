@@ -137,6 +137,70 @@ namespace search.Tests
         }
 
         [Fact]
+        public void RecoversTheWin32NameFromAnExtensionRecord()
+        {
+            // A crowded base record kept only the DOS 8.3 name; the Win32 name overflowed
+            // into an extension record. The file must show its full Windows name - and
+            // count once in folder sizes (the DOS name shadows the extension's Win32 pair).
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[]                                                                       // 6
+                {
+                    FakeMft.FileName(FakeMft.RootEntry, "DOTNET~4.EXE", ns: 2),
+                    FakeMft.ResidentData(100)
+                })
+                .AddRecord(baseReference: 6, attributes: new[]                                                     // 7
+                {
+                    FakeMft.FileName(FakeMft.RootEntry, "dotnet-sdk-10.0.100-preview.7.25380.108-win-x64.exe", ns: 1)
+                })
+                .Parse(chunkBytes: 1024); // base and extension never share a chunk
+
+            var file = nodes.Single(n => n.Name == "dotnet-sdk-10.0.100-preview.7.25380.108-win-x64.exe");
+            Assert.Equal(@"Q:\dotnet-sdk-10.0.100-preview.7.25380.108-win-x64.exe", file.FullName);
+            Assert.DoesNotContain(nodes, n => n.Name == "DOTNET~4.EXE");
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size); // one link, counted once
+        }
+
+        [Fact]
+        public void AFileWhoseNamesAllOverflowedIsStillIndexed()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[] { FakeMft.StandardInfo(Created, Modified, Accessed), FakeMft.ResidentData(123) }) // 6: no $FILE_NAME at all
+                .AddRecord(baseReference: 6, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "overflowed.txt", ns: 1) }) // 7
+                .Parse(chunkBytes: 1024);
+
+            var file = nodes.Single(n => n.Name == "overflowed.txt");
+            Assert.Equal(@"Q:\overflowed.txt", file.FullName);
+            Assert.Equal(123UL, file.Size);
+        }
+
+        [Fact]
+        public void AnEquallyRankedExtensionNameDoesNotReplaceTheBaseName()
+        {
+            // Both names are Win32 hard links - the base record's own name stays
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Other") })   // 6
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "kept.bin", ns: 1), FakeMft.ResidentData(50) }) // 7
+                .AddRecord(baseReference: 7, attributes: new[] { FakeMft.FileName(6, "overflow-link.bin", ns: 1) })                // 8
+                .Parse(chunkBytes: 1024);
+
+            Assert.Contains(nodes, n => n.Name == "kept.bin");
+            Assert.DoesNotContain(nodes, n => n.Name == "overflow-link.bin");
+            Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size); // both links still counted
+        }
+
+        [Fact]
+        public void AStaleExtensionNameDoesNotPoisonAReusedBaseIndex()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(sequence: 5, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "NEWFIL~1.TXT", ns: 2) }) // 6: reused base
+                .AddRecord(baseReference: 6 | (2UL << 48), attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "old name.txt", ns: 1) }) // 7: stale extension
+                .Parse(chunkBytes: 1024);
+
+            Assert.Contains(nodes, n => n.Name == "NEWFIL~1.TXT");
+            Assert.DoesNotContain(nodes, n => n.Name == "old name.txt");
+        }
+
+        [Fact]
         public void SkipsFreeCorruptAndExtensionRecords()
         {
             var nodes = WithRoot(1024)

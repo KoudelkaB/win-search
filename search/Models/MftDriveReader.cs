@@ -52,6 +52,7 @@ namespace search.Models
             // the $MFT streamed by) are rejected instead of mixing two unrelated files.
             var extensionSizes = new NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)>();
             var extensionLinks = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)>();
+            var extensionNames = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)>();
             var pendingSizes = new ConcurrentQueue<MftNode>();
 
             MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
@@ -70,7 +71,7 @@ namespace search.Models
                             // Only in-use extensions - a freed one may point at a base index
                             // that has since been reused by a different file
                             if ((U16(record[22..]) & 0x1) != 0)
-                                ScanExtension(record, baseReference, extensionSizes, extensionLinks);
+                                ScanExtension(record, baseReference, extensionSizes, extensionLinks, extensionNames);
                             continue;
                         }
 
@@ -87,9 +88,20 @@ namespace search.Models
                 if (extensionSizes.TryGetValue(node.EntryNumber, out var e) && SequencesMatch(e.Sequence, node.SequenceNumber))
                     node.SetSize(e.Size);
 
-            var nodes = new Dictionary<uint, MftNode>(parsed.Count(n => n != null));
+            // $FILE_NAMEs overflow into extension records too - without this a file whose
+            // Win32 name moved out of a crowded base record shows up under its DOS 8.3
+            // name (DOTNET~4.EXE), or not at all when the base kept no name
+            foreach (var (baseIndex, n) in extensionNames)
+            {
+                if (baseIndex >= (uint)parsed.Length || baseIndex == RootEntryNumber) continue;
+                var node = parsed[baseIndex];
+                if (node != null && SequencesMatch(n.Sequence, node.SequenceNumber) && n.Rank < node.NameRank)
+                    node.SetName(n.Name, n.Parent);
+            }
+
+            var nodes = new Dictionary<uint, MftNode>(parsed.Count(n => n?.Name != null));
             foreach (var node in parsed)
-                if (node != null)
+                if (node?.Name != null) // Still nameless - every $FILE_NAME lost, path unknowable
                     nodes.TryAdd(node.EntryNumber, node);
 
             foreach (var node in nodes.Values)
@@ -110,7 +122,9 @@ namespace search.Models
                     continue;
                 var links = new List<ulong>(1 + contribution.Parents.Count);
                 if (node.LinkParents != null) links.AddRange(node.LinkParents);
-                else links.Add((ulong)node.ParentSequence << 48 | node.ParentEntryNumber);
+                // A base record holding only the DOS name counts no link of its own - its
+                // Win32 pair is one of the extension's names and must not count twice
+                else if (node.OwnLinkReference != 0) links.Add(node.OwnLinkReference);
                 links.AddRange(contribution.Parents);
                 node.LinkParents = links.ToArray();
             }
@@ -212,9 +226,9 @@ namespace search.Models
                 offset += length;
             }
 
-            if (name == null)
-                return null;
-
+            // No usable $FILE_NAME in the base record - keep the node anyway: the name may
+            // live in an extension record and is merged in after the last chunk. A node
+            // still nameless then is dropped before the parent pass.
             if (!isDirectory && !hasDataSize)
                 dataSize = fileNameSize;
 
@@ -237,7 +251,9 @@ namespace search.Models
             {
                 SequenceNumber = sequenceNumber,
                 ParentSequence = (ushort)(parentReference >> 48),
-                LinkParents = linkParents?.ToArray()
+                LinkParents = linkParents?.ToArray(),
+                NameRank = nameRank,
+                OwnLinkReference = linkCount == 1 ? firstLinkParent : 0
             };
 
             // The unnamed $DATA lives in an extension record - resolve after the last chunk
@@ -249,14 +265,18 @@ namespace search.Models
 
         /// <summary>
         /// Collect what an extension record contributes to its base: the unnamed $DATA
-        /// size (resident, or the non-resident instance starting at VCN 0) and the
-        /// parents of any non-DOS $FILE_NAME (hard-link names overflowed from the base)
+        /// size (resident, or the non-resident instance starting at VCN 0), the parents
+        /// of any non-DOS $FILE_NAME (hard-link names overflowed from the base), and the
+        /// best-ranked name itself - the base may have kept only its DOS 8.3 name
         /// </summary>
-        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference, NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes, NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links)
+        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference, NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes, NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links, NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)> names)
         {
             var baseIndex = (uint)(baseReference & FileReferenceMask);
             var baseSequence = (ushort)(baseReference >> 48);
             List<ulong> parents = null;
+            string bestName = null;
+            var bestRank = int.MaxValue;
+            ulong bestParent = 0;
             var offset = (int)U16(record[20..]);
             while (offset + 24 <= record.Length)
             {
@@ -284,6 +304,15 @@ namespace search.Models
                         var value = record.Slice(offset + valueOffset, valueLength);
                         if (value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
                             (parents ??= new List<ulong>(2)).Add(U64(value));
+
+                        var nameBytes = value[64] * 2;
+                        var rank = value[65] switch { 1 => 0, 3 => 1, 0 => 2, _ => 3 }; // Win32, Win32+DOS, POSIX, DOS
+                        if (rank < bestRank && 66 + nameBytes <= valueLength)
+                        {
+                            bestRank = rank;
+                            bestName = new string(MemoryMarshal.Cast<byte, char>(value.Slice(66, nameBytes)));
+                            bestParent = U64(value);
+                        }
                     }
                 }
 
@@ -299,6 +328,10 @@ namespace search.Models
                         merged.AddRange(parents);
                         return (old.Sequence, merged);
                     });
+
+            if (bestName != null)
+                names.AddOrUpdate(baseIndex, (baseSequence, bestRank, bestName, bestParent),
+                    (_, old) => old.Rank <= bestRank ? old : (baseSequence, bestRank, bestName, bestParent));
         }
 
         /// <summary>
@@ -397,13 +430,14 @@ namespace search.Models
         sealed class MftNode : INode
         {
             readonly string driveRoot;
+            string name;
 
             public MftNode(string driveRoot, uint entryNumber, uint parentEntryNumber, string name, FileAttributes attributes, ulong size, DateTime creationTime, DateTime lastChangeTime, DateTime lastAccessTime)
             {
                 this.driveRoot = driveRoot;
                 EntryNumber = entryNumber;
                 ParentEntryNumber = parentEntryNumber;
-                Name = name;
+                this.name = name;
                 Attributes = attributes;
                 Size = size;
                 CreationTime = creationTime;
@@ -412,14 +446,24 @@ namespace search.Models
             }
 
             public uint EntryNumber { get; }
-            public uint ParentEntryNumber { get; }
+            public uint ParentEntryNumber { get; private set; }
             public MftNode Parent { get; set; }
 
             /// <summary>This record's sequence number - stale references to a reused entry are detected against it</summary>
             public ushort SequenceNumber { get; init; }
 
             /// <summary>The sequence number embedded in the parent reference of the chosen $FILE_NAME</summary>
-            public ushort ParentSequence { get; init; }
+            public ushort ParentSequence { get; set; }
+
+            /// <summary>Namespace rank of the chosen name (0 Win32 .. 3 DOS, MaxValue nameless) - a better-ranked extension-record name replaces it</summary>
+            public int NameRank { get; init; }
+
+            /// <summary>
+            /// Full reference of the single counted hard-link parent when LinkParents is
+            /// null; 0 when the base record carried no non-DOS name (its link then lives
+            /// in an extension record and must not be counted here again)
+            /// </summary>
+            public ulong OwnLinkReference { get; init; }
 
             /// <summary>
             /// Full file references (entry + sequence) of every hard-link parent when the
@@ -428,7 +472,7 @@ namespace search.Models
             public ulong[] LinkParents { get; set; }
 
             public override FileAttributes Attributes { get; protected set; }
-            public override string Name { get; }
+            public override string Name => name;
             public override ulong Size { get; protected set; }
 
             /// <summary>
@@ -452,6 +496,14 @@ namespace search.Models
 
             public void AddSize(ulong size) => Size += size;
             public void SetSize(ulong size) => Size = size;
+
+            /// <summary>Adopt a better-ranked name from an extension record - the parent follows the name (it is that directory's entry)</summary>
+            public void SetName(string name, ulong parentReference)
+            {
+                this.name = name;
+                ParentEntryNumber = (uint)(parentReference & FileReferenceMask);
+                ParentSequence = (ushort)(parentReference >> 48);
+            }
         }
     }
 }
