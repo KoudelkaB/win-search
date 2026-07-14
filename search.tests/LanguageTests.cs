@@ -14,8 +14,10 @@ namespace search.Tests
             Assert.Equal(expected, Languages.ForSystemCulture(CultureInfo.GetCultureInfo(systemCulture)));
         }
 
-        [Fact]
-        public void ReturnsNoAutomaticChoiceForUnsupportedSystemLanguage() =>
-            Assert.Null(Languages.ForSystemCulture(CultureInfo.GetCultureInfo("fi-FI")));
+        [Theory]
+        [InlineData("fi-FI")]  // No translation at all.
+        [InlineData("zh-TW")]  // Traditional Chinese - only Simplified ships, so ask.
+        public void ReturnsNoAutomaticChoiceForUnsupportedSystemLanguage(string systemCulture) =>
+            Assert.Null(Languages.ForSystemCulture(CultureInfo.GetCultureInfo(systemCulture)));
     }
 }

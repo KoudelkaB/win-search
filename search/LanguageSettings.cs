@@ -37,7 +37,19 @@ namespace search
         {
             var match = All.FirstOrDefault(x => x.Culture.Equals(culture.Name, StringComparison.OrdinalIgnoreCase) || x.Culture.Equals(culture.TwoLetterISOLanguageName, StringComparison.OrdinalIgnoreCase));
             if (match != null) return match.Culture;
-            return culture.TwoLetterISOLanguageName.Equals("zh", StringComparison.OrdinalIgnoreCase) ? "zh-Hans" : null;
+            // Only Simplified Chinese ships. Map its regional variants (zh-CN, zh-SG, ...) to it,
+            // but leave Traditional (zh-TW/HK/MO, zh-Hant-*) to the picker rather than silently
+            // handing those users Simplified.
+            if (culture.TwoLetterISOLanguageName.Equals("zh", StringComparison.OrdinalIgnoreCase))
+            {
+                for (var c = culture; !string.IsNullOrEmpty(c.Name); c = c.Parent)
+                {
+                    if (c.Name.Equals("zh-Hant", StringComparison.OrdinalIgnoreCase)) return null;
+                    if (c.Name.Equals("zh-Hans", StringComparison.OrdinalIgnoreCase)) return "zh-Hans";
+                }
+                return "zh-Hans"; // Bare "zh" or an unknown script: default to Simplified.
+            }
+            return null;
         }
     }
 }

@@ -587,7 +587,11 @@ namespace search
             if (picker.ShowDialog() != true || picker.SelectedCulture == CultureInfo.CurrentUICulture.Name) return;
             LanguageSettingsStore.Save(picker.SelectedCulture);
             var start = new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = true };
-            foreach (var argument in Environment.GetCommandLineArgs().Skip(1)) start.ArgumentList.Add(argument);
+            // Carry the original arguments over, but drop --help so a language change made from
+            // a help-launched instance does not reopen the help window after the restart.
+            foreach (var argument in Environment.GetCommandLineArgs().Skip(1)
+                         .Where(a => !a.Equals("--help", StringComparison.OrdinalIgnoreCase)))
+                start.ArgumentList.Add(argument);
             Process.Start(start);
             Application.Current.Shutdown();
         }

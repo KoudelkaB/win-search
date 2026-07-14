@@ -1,4 +1,4 @@
-; File Search Manager installer.
+﻿; File Search Manager installer.
 ; Build inputs: publish the two projects first (paths relative to this script):
 ;   dotnet publish ..\search\search.csproj                 -c Release -r win-x64 --self-contained true -o ..\publish\app
 ;   dotnet publish ..\search.service\search.service.csproj -c Release -r win-x64 --self-contained true -o ..\publish\service
@@ -59,18 +59,33 @@ german.InstallService=Hintergrunddienst für NTFS-Indizierung ohne Rückfragen i
 french.InstallService=Installer le service d’arrière-plan pour indexer NTFS sans demande (avancé ; généralement inutile)
 spanish.InstallService=Instalar el servicio en segundo plano para indexar NTFS sin avisos (avanzado; normalmente no es necesario)
 polish.InstallService=Zainstaluj usługę indeksowania NTFS w tle bez monitów (zaawansowane; zwykle niepotrzebne)
+italian.InstallService=Installa il servizio in background per l’indicizzazione NTFS senza richieste (avanzato; la maggior parte degli utenti può saltarlo)
+portuguesebrazil.InstallService=Instalar o serviço em segundo plano para indexação NTFS sem solicitações (avançado; a maioria dos usuários pode ignorar)
+japanese.InstallService=確認なしで NTFS をインデックス化するバックグラウンドサービスをインストールします（上級者向け。ほとんどのユーザーは不要です）
+korean.InstallService=확인 없이 NTFS를 색인화하는 백그라운드 서비스를 설치합니다(고급, 대부분의 사용자는 건너뛰어도 됩니다)
+chinesesimplified.InstallService=安装后台服务以实现免提示的 NTFS 索引（高级；大多数用户可跳过）
 english.HelpShortcut=File Search Manager Help
 czech.HelpShortcut=Nápověda File Search Manager
 german.HelpShortcut=File Search Manager Hilfe
 french.HelpShortcut=Aide de File Search Manager
 spanish.HelpShortcut=Ayuda de File Search Manager
 polish.HelpShortcut=Pomoc File Search Manager
+italian.HelpShortcut=Guida di File Search Manager
+portuguesebrazil.HelpShortcut=Ajuda do File Search Manager
+japanese.HelpShortcut=File Search Manager ヘルプ
+korean.HelpShortcut=File Search Manager 도움말
+chinesesimplified.HelpShortcut=File Search Manager 帮助
 english.ServiceFailed=The File Search Manager service could not be installed or started (code %1).%nFile Search Manager will still work: approve the startup prompt for instant indexing, or it will use a slower folder scan.
 czech.ServiceFailed=Službu File Search Manager se nepodařilo nainstalovat nebo spustit (kód %1).%nAplikace bude nadále fungovat: potvrďte úvodní výzvu pro okamžité indexování, jinak použije pomalejší procházení složek.
 german.ServiceFailed=Der File Search Manager-Dienst konnte nicht installiert oder gestartet werden (Code %1).%nDie Anwendung funktioniert weiterhin mit der Startabfrage oder der langsameren Ordnersuche.
 french.ServiceFailed=Le service File Search Manager n’a pas pu être installé ou démarré (code %1).%nL’application fonctionnera avec la demande au démarrage ou l’analyse plus lente des dossiers.
 spanish.ServiceFailed=No se pudo instalar o iniciar el servicio File Search Manager (código %1).%nLa aplicación seguirá funcionando con el aviso inicial o el análisis de carpetas más lento.
 polish.ServiceFailed=Nie udało się zainstalować lub uruchomić usługi File Search Manager (kod %1).%nAplikacja nadal będzie działać z monitem startowym lub wolniejszym skanowaniem folderów.
+italian.ServiceFailed=Impossibile installare o avviare il servizio File Search Manager (codice %1).%nL’applicazione funzionerà comunque: approva la richiesta all’avvio per l’indicizzazione immediata, altrimenti verrà usata una scansione delle cartelle più lenta.
+portuguesebrazil.ServiceFailed=Não foi possível instalar ou iniciar o serviço File Search Manager (código %1).%nO aplicativo continuará funcionando: aprove a solicitação na inicialização para indexação instantânea ou será usada uma verificação de pastas mais lenta.
+japanese.ServiceFailed=File Search Manager サービスをインストールまたは開始できませんでした（コード %1）。%nアプリは引き続き動作します。起動時の確認を承認すると即時インデックス化が行われ、承認しない場合は低速なフォルダースキャンが使用されます。
+korean.ServiceFailed=File Search Manager 서비스를 설치하거나 시작할 수 없습니다(코드 %1).%n앱은 계속 작동합니다. 시작 시 표시되는 확인을 승인하면 즉시 색인화되고, 그렇지 않으면 느린 폴더 검색이 사용됩니다.
+chinesesimplified.ServiceFailed=无法安装或启动 File Search Manager 服务（代码 %1）。%n应用仍可正常工作：在启动时批准提示可立即建立索引，否则将使用较慢的文件夹扫描。
 
 [Files]
 ; The two self-contained publishes MUST stay in separate directories -
@@ -121,14 +136,6 @@ end;
 function ServiceExists(): Boolean;
 begin
   Result := Exec2(ExpandConstant('{sys}\sc.exe'), 'query {#MyServiceName}') = 0;
-end;
-
-function GetHelpFile(Param: String): String;
-begin
-  if ActiveLanguage = 'czech' then
-    Result := ExpandConstant('{app}\Docs\HELP.cs.md')
-  else
-    Result := ExpandConstant('{app}\Docs\HELP.md');
 end;
 
 { Stop the service before file copy so the exe is not locked on upgrade }

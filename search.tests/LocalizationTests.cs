@@ -20,7 +20,8 @@ namespace search.Tests
         [Fact]
         public void UnsupportedLanguageAndMissingKeyHaveSafeFallbacks()
         {
-            Assert.Equal("Help", L.Text("Help", CultureInfo.GetCultureInfo("ja-JP")));
+            // Finnish has no satellite assembly => falls back to the neutral English text.
+            Assert.Equal("Help", L.Text("Help", CultureInfo.GetCultureInfo("fi-FI")));
             Assert.Equal("FutureKey", L.Text("FutureKey", CultureInfo.GetCultureInfo("cs-CZ")));
         }
     }

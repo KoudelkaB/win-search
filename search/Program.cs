@@ -48,8 +48,10 @@ namespace search
                 OpenHelpRequested = true;
 
             // Normal start: offer one optional UAC prompt for the elevated broker;
-            // declining it leaves the app fully functional (per-task prompts, service/walk indexing)
-            Broker.StartClient();
+            // declining it leaves the app fully functional (per-task prompts, service/walk indexing).
+            // A help launch just shows the help window, so skip the elevation offer for it.
+            if (!OpenHelpRequested)
+                Broker.StartClient();
             try
             {
                 App.Main();
