@@ -7,11 +7,17 @@
 Los términos se separan con espacios y se combinan mediante **Y**. Use comillas para términos o rutas con espacios.
 
 - `report` contiene el texto; `:report` empieza por él; `report:` termina por él; `:report:` es exacto.
-- `pdf|docx` admite una alternativa; `report pdf:` combina ambas condiciones.
+- `.pdf:|.docx:` coincide con nombres que terminan en una de esas extensiones; `report .pdf:` combina ambas condiciones.
 - `src\` busca el directorio padre inmediato; `src\\` busca en toda la ruta.
 - `"C:\Work"` busca directamente en esa carpeta; `"C:\Work\\"` busca recursivamente debajo.
 
-Ejemplos: `invoice pdf:`, `:IMG_ jpg|jpeg`, `"C:\Projects\\" cs:`. `Ctrl+Left` y `Ctrl+Right` recorren el historial; `Down` muestra sugerencias.
+Ejemplos: `invoice .pdf:`, `:IMG_ .jpg:|.jpeg:`, `C:\Projects\\ .cs:`. `Ctrl+Left` y `Ctrl+Right` recorren el historial; `Down` muestra sugerencias.
+
+## Ejemplos prácticos
+
+- **Liberar espacio en disco** — borre **Filtro** para mostrar todos los elementos indexados. Haga clic en **Tamaño** (de nuevo si es necesario) hasta que los elementos más grandes queden arriba, revise la lista desde arriba y elimine los elementos innecesarios con `Shift+Delete` (de forma permanente, sin enviarlos a la Papelera).
+- **Observar dónde escribe una aplicación** — borre **Filtro** y haga clic en **Modificado** hasta que los elementos modificados más recientemente queden arriba. Después, inicie o use la aplicación que desea observar. Los archivos en los que está escribiendo suben a medida que cambian y la columna **Carpeta** muestra su ubicación. Introduzca primero una ruta en **Filtro** si solo quiere observar una parte del sistema de archivos.
+- **Buscar texto en archivos de código fuente** — por ejemplo, use `C:\Projects\\ .cs:` para limitar los resultados a archivos `.cs` de un proyecto. Escriba el texto buscado en **Buscar** y pulse `Enter`.
 
 ## Búsqueda y teclado
 

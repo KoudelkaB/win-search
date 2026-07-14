@@ -5,11 +5,17 @@
 ## Filtri
 
 - `report` contiene il testo; `:report` inizia con esso; `report:` termina con esso; `:report:` è esatto.
-- `pdf|docx` accetta un’alternativa; i termini separati da spazi sono in **AND**.
+- `.pdf:|.docx:` cerca nomi che terminano con una di queste estensioni; i termini separati da spazi sono in **AND**.
 - `src\` cerca la cartella padre; `src\\` cerca nell’intero percorso.
 - `"C:\Work"` cerca direttamente nella cartella; `"C:\Work\\"` cerca ricorsivamente sotto di essa.
 
 Usare le virgolette per percorsi con spazi. `Ctrl+Left` e `Ctrl+Right` percorrono la cronologia; `Down` mostra i suggerimenti.
+
+## Esempi pratici
+
+- **Liberare spazio sul disco** — svuota **Filtro** per mostrare tutti gli elementi indicizzati. Fai clic sull’intestazione **Dimensione** (di nuovo se necessario) finché gli elementi più grandi non sono in alto, esamina l’elenco dall’inizio ed elimina quelli inutili con `Shift+Delete` (in modo permanente, senza passare dal Cestino).
+- **Controllare dove scrive un’applicazione** — svuota **Filtro** e fai clic su **Modificato** finché gli elementi modificati più di recente non sono in alto. Avvia o usa quindi l’applicazione da osservare. I file in cui sta scrivendo salgono in cima a ogni modifica e la colonna **Cartella** ne mostra la posizione. Inserisci prima un percorso in **Filtro** se vuoi osservare solo una parte del file system.
+- **Cercare testo nei file sorgente** — usa ad esempio `C:\Projects\\ .cs:` per limitare i risultati ai file `.cs` di un progetto. Inserisci il testo cercato in **Cerca** e premi `Enter`.
 
 ## Ricerca e tasti
 

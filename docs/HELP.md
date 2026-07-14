@@ -33,8 +33,8 @@ Name matching:
 - `:report` matches names starting with `report`.
 - `report:` matches names ending with `report`.
 - `:report:` matches the exact name `report`.
-- `pdf|docx` matches either `pdf` or `docx`.
-- Multiple terms are ANDed, so `report pdf:` finds names matching both terms.
+- `.pdf:|.docx:` matches names ending in `.pdf` or `.docx`.
+- Multiple terms are ANDed, so `report .pdf:` finds names containing `report` and ending in `.pdf`.
 
 Folder matching:
 
@@ -94,6 +94,12 @@ Typing anything other than `Enter` in the search field clears the current conten
 - Drop files onto a directory in the Name column or a parent path in the Folder column. Choose copy, move, symbolic link, or hard link.
 - Drop files onto an executable Name cell to launch it with the dropped paths as arguments.
 - File drops follow Explorer defaults: one folder on the same volume defaults to move, another volume defaults to copy. Hold `Ctrl` for copy, `Shift` for move, or `Alt` for a symbolic link. Multiple destinations default to copy.
+
+## Practical Examples
+
+- **Freeing disk space** — clear **Filter** to show all indexed items. Click the **Size** header (again if necessary) until the largest items are at the top, review the list from the top down, and delete unneeded items with `Shift+Delete` (permanently, without moving them to the Recycle Bin).
+- **Watching where an application writes** — clear **Filter** and click the **Changed** header until the most recently changed items are at the top. Then start or use the application you want to observe. Files it is actively writing move to the top as they change, and the **Folder** column shows their location. Enter a path in **Filter** first if you want to watch only part of the file system.
+- **Searching text in source files** — for example, use `C:\Projects\\ .cs:` to limit the results to `.cs` files in a project. Enter the desired text in **Search** and press `Enter`.
 
 ## Context Menu
 

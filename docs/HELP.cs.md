@@ -17,8 +17,8 @@ Výrazy oddělujte mezerami. Víceslovné názvy a cesty uzavřete do uvozovek. 
 - `:report` – název začíná na `report`.
 - `report:` – název končí na `report`.
 - `:report:` – název je přesně `report`.
-- `pdf|docx` – název vyhovuje jedné z alternativ.
-- `report pdf:` – název obsahuje `report` a končí na `pdf`.
+- `.pdf:|.docx:` – název končí na jednu z těchto přípon.
+- `report .pdf:` – název obsahuje `report` a končí na `.pdf`.
 
 Filtr nerozlišuje velikost písmen. Dvojtečka tedy určuje, ke kterému okraji názvu se výraz přichytí; není součástí hledaného textu.
 
@@ -31,14 +31,13 @@ Filtr nerozlišuje velikost písmen. Dvojtečka tedy určuje, ke kterému okraji
 
 Koncové jednoduché `\` tedy hledá v rodičovské složce, zatímco dvojité `\\` v celé cestě. U cesty s mezerami jsou uvozovky povinné.
 
-### Praktické příklady
+## Praktické příklady
 
-- `invoice pdf:` – faktury ve formátu PDF.
-- `:IMG_ jpg|jpeg` – obrázky JPEG, jejichž název začíná `IMG_`.
-- `"C:\Projects\\" cs:` – všechny soubory `.cs` pod `C:\Projects`.
-- `tests\ json:` – JSON soubory přímo ve složkách pojmenovaných `tests`.
+- **Uvolnění místa na disku** – vymažte pole **Filtr**, aby se zobrazily všechny indexované položky. Klikněte na záhlaví **Velikost** (v případě potřeby znovu), dokud nebudou největší položky nahoře, seznam procházejte shora a nepotřebné položky mažte pomocí `Shift+Delete` (trvale, bez přesunutí do koše).
+- **Živé sledování zápisů aplikace** – vymažte pole **Filtr** a klikněte na záhlaví **Změněno**, dokud nebudou naposledy změněné položky nahoře. Potom spusťte nebo používejte sledovanou aplikaci. Soubory, do kterých právě zapisuje, se průběžně přesouvají nahoru a sloupec **Složka** ukazuje jejich umístění. Sledování můžete omezit zadáním cesty do pole **Filtr**.
+- **Hledání textu ve zdrojových souborech** – například filtrem `C:\Projects\\ .cs:` nejprve omezte výsledky na soubory `.cs` v projektu. Do pole **Hledat** napište hledaný text a stiskněte `Enter`.
 
-### Historie a připnuté filtry
+## Historie a připnuté filtry
 
 - `Ctrl+Left` / `Ctrl+Right` – předchozí / následující filtr v historii.
 - `Down` – zobrazit návrhy.

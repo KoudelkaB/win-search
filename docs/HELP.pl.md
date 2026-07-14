@@ -7,11 +7,17 @@
 Terminy są oddzielane spacjami i łączone jako **AND**. Terminy lub ścieżki ze spacjami należy ująć w cudzysłów.
 
 - `report` zawiera tekst; `:report` zaczyna się od niego; `report:` kończy się nim; `:report:` jest dokładny.
-- `pdf|docx` oznacza jedną z alternatyw; `report pdf:` łączy warunki.
+- `.pdf:|.docx:` oznacza nazwę kończącą się jednym z tych rozszerzeń; `report .pdf:` łączy warunki.
 - `src\` wskazuje bezpośredni folder nadrzędny; `src\\` wyszukuje w całej ścieżce.
 - `"C:\Work"` wskazuje elementy bezpośrednio w folderze; `"C:\Work\\"` wskazuje elementy rekurencyjnie poniżej.
 
-Przykłady: `invoice pdf:`, `:IMG_ jpg|jpeg`, `"C:\Projects\\" cs:`. `Ctrl+Left` i `Ctrl+Right` przechodzą po historii, a `Down` pokazuje podpowiedzi.
+Przykłady: `invoice .pdf:`, `:IMG_ .jpg:|.jpeg:`, `C:\Projects\\ .cs:`. `Ctrl+Left` i `Ctrl+Right` przechodzą po historii, a `Down` pokazuje podpowiedzi.
+
+## Praktyczne przykłady
+
+- **Zwalnianie miejsca na dysku** — wyczyść **Filtr**, aby wyświetlić wszystkie zindeksowane elementy. Kliknij nagłówek **Rozmiar** (w razie potrzeby ponownie), aż największe elementy znajdą się na górze, przejrzyj listę od góry i usuń niepotrzebne elementy za pomocą `Shift+Delete` (trwale, z pominięciem Kosza).
+- **Obserwowanie, gdzie aplikacja zapisuje dane** — wyczyść **Filtr** i kliknij nagłówek **Zmieniono**, aż ostatnio zmienione elementy znajdą się na górze. Następnie uruchom lub używaj obserwowanej aplikacji. Pliki, do których aplikacja właśnie zapisuje, przesuwają się na górę po każdej zmianie, a kolumna **Folder** pokazuje ich położenie. Wpisz najpierw ścieżkę w **Filtrze**, jeśli chcesz obserwować tylko część systemu plików.
+- **Wyszukiwanie tekstu w plikach źródłowych** — użyj na przykład `C:\Projects\\ .cs:`, aby ograniczyć wyniki do plików `.cs` w projekcie. Wpisz szukany tekst w polu **Szukaj** i naciśnij `Enter`.
 
 ## Szukanie i klawiatura
 
