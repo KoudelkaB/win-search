@@ -22,9 +22,17 @@ namespace search.Models
         public ZipNode(INode zip, IArchiveEntry e)
         {
             ZIP = zip;
-            SetPath((Key = e.Key) ?? "_");
+            // Directory entries carry a trailing '/' (e.g. "Logs/PHP/"). Left in place the
+            // combined path ends with a separator, so Name (Path.GetFileName) is empty and the
+            // grid shows a blank, zero-size ghost row that also duplicates the real folder.
+            // Detect the folder by that trailing separator as well as IsDirectory, because some
+            // writers (e.g. System.IO.Compression) mark a directory by name only, not by flag.
+            var key = e.Key ?? "_";
+            var isDir = e.IsDirectory || key.EndsWith('/') || key.EndsWith('\\');
+            if (isDir) key = key.TrimEnd('/', '\\');
+            SetPath(Key = string.IsNullOrEmpty(key) ? "_" : key);
             Attributes = FileAttributes.Compressed;
-            if (e.IsDirectory) Attributes |= FileAttributes.Directory;
+            if (isDir) Attributes |= FileAttributes.Directory;
             if (e.IsEncrypted) Attributes |= FileAttributes.Encrypted;
             Size = (ulong)e.Size;
             CreationTime = e.CreatedTime ?? DateTime.MinValue;

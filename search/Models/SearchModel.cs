@@ -1336,7 +1336,10 @@ namespace search.Models
                 // let those entries escape the archive's virtual subtree (or abort adding
                 // every otherwise valid entry in the archive).
                 var src = a.Entries.AsParallel().Where(e => ZipExtensions.IsSafeArchivePath(e.Key));
-                var keys = src.Select(e => e.Key.AsMemory()).Where(x => !x.IsEmpty);
+                // Trim the trailing separator that directory entries carry ("Logs/PHP/") so an
+                // explicit directory entry is recognised as the same folder later synthesized
+                // from its children - otherwise both are indexed and one shows as a blank row.
+                var keys = src.Select(e => e.Key.AsMemory().TrimEnd("/\\")).Where(x => !x.IsEmpty);
                 src.Select(e => new ZipNode(n, e))
                     //Add remaining dirs not included in archive
                     .Concat(keys.Select(k => k.ParentFolder()).Where(x => !x.IsEmpty).Distinct()
@@ -1347,6 +1350,18 @@ namespace search.Models
                         files.AddOrUpdate(n.FullName, x => n, (x, y) => n);
                         zipNodes.Add(files[n.FullName] as ZipNode);
                     });
+
+                // Aggregate uncompressed entry sizes into their ancestor archive folders so
+                // directory rows show a real size instead of 0 (mirrors how the MFT reader and
+                // DirectoryWalker size on-disk folders). Stop at the archive root - the .zip's own
+                // node keeps its on-disk (compressed) size and real filesystem folders are untouched.
+                var root = n.FullName;
+                foreach (var zn in zipNodes.Where(z => ReferenceEquals(z.ZIP, n) && !z.IsDirectory))
+                    for (var dir = Path.GetDirectoryName(zn.FullName);
+                         dir != null && dir.Length > root.Length;
+                         dir = Path.GetDirectoryName(dir))
+                        if (files.TryGetValue(dir, out var d) && d is ZipNode dzn && dzn.IsDirectory)
+                            dzn.AddSize(zn.Size);
                 return true;
             }
             catch (Exception) { }

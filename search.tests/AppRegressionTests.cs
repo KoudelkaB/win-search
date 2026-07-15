@@ -194,6 +194,75 @@ namespace search.Tests
         }
 
         [Fact]
+        public void ZipDirectoryEntryBecomesANamedFolderNotABlankZeroSizeRow()
+        {
+            // A zip carries directory entries with a trailing slash ("Logs/"). Left untrimmed the
+            // node's path ended with a separator, so Name was empty and the grid showed a blank,
+            // zero-size ghost row next to the real folder synthesized from the child files.
+            var root = Path.Combine(Path.GetTempPath(), $"win-search-zipdir-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(root);
+            var archive = Path.Combine(root, "logs.zip");
+            try
+            {
+                using (var zip = System.IO.Compression.ZipFile.Open(archive, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    zip.CreateEntry("Logs/");                    // explicit directory entry
+                    using var w = new StreamWriter(zip.CreateEntry("Logs/app.txt").Open());
+                    w.Write("hello");
+                }
+
+                var container = new FileNode(archive);
+                using var opened = ArchiveFactory.OpenArchive(archive, new SharpCompress.Readers.ReaderOptions());
+                // Select the folder entry by its trailing separator - not every writer sets the
+                // IsDirectory flag, which is exactly the case the fix has to survive.
+                var dirEntry = opened.Entries.First(e => e.Key != null && e.Key.TrimEnd('/', '\\') == "Logs");
+                var node = new ZipNode(container, dirEntry);
+
+                Assert.Equal("Logs", node.Name);
+                Assert.True(node.IsDirectory);
+                Assert.False(node.FullName.EndsWith("\\"));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void ZipDirectoryReportsAggregatedChildSizeNotZero()
+        {
+            // Folder rows must total their contained entries (like the on-disk folder sizing),
+            // not stay at 0 the way raw archive directory entries report.
+            var root = Path.Combine(Path.GetTempPath(), $"win-search-zipsize-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(root);
+            var archive = Path.Combine(root, "logs.zip");
+            try
+            {
+                using (var zip = System.IO.Compression.ZipFile.Open(archive, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    zip.CreateEntry("Logs/");
+                    using (var w = new StreamWriter(zip.CreateEntry("Logs/app.txt").Open())) w.Write("hello");         // 5 bytes
+                    using (var w = new StreamWriter(zip.CreateEntry("Logs/sub/b.txt").Open())) w.Write("worldworld"); // 10 bytes
+                }
+
+                Assert.True(SearchModel.AddArchive(new FileNode(archive)));
+
+                var logs = SearchModel.FindByPath(Path.Combine(archive, "Logs"));
+                var sub = SearchModel.FindByPath(Path.Combine(archive, "Logs", "sub"));
+
+                Assert.NotNull(logs);
+                Assert.True(logs.IsDirectory);
+                Assert.Equal(15ul, logs.Size);
+                Assert.NotNull(sub);
+                Assert.Equal(10ul, sub.Size);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
         public void DropDefaultsToMoveOnOneVolumeAndCopyForSeveralTargets()
         {
             var sources = new[] { @"C:\source\file.txt" };
