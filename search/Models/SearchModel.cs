@@ -421,15 +421,30 @@ namespace search.Models
         /// only one rename event for a directory, so removing just that directory leaves
         /// all of its old child paths searchable forever.
         /// </summary>
-        INode[] RemoveTree(string path)
+        INode[] RemoveTree(string path) => RemoveTrees(new[] { path });
+
+        /// <summary>
+        /// Remove several paths and their indexed descendants in ONE pass over the index -
+        /// the pass costs hundreds of milliseconds on a million-file index, so deleting
+        /// nine folders at once must not scan nine times (the user watched their folders
+        /// leave the grid one by one, paced by exactly that scan).
+        /// </summary>
+        INode[] RemoveTrees(IReadOnlyList<string> paths)
         {
-            //Never uproot a whole drive from an event - only a drive scan may do that.
-            //A drive-root path here is a half-delivered watcher rename/delete (see IsDriveRoot).
-            if (IsDriveRoot(path)) return Array.Empty<INode>();
-            if (!files.TryGetValue(path, out var root)) return Array.Empty<INode>();
-            var prefix = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var roots = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var prefixes = new List<string>(paths.Count);
+            foreach (var path in paths)
+            {
+                //Never uproot a whole drive from an event - only a drive scan may do that.
+                //A drive-root path here is a half-delivered watcher rename/delete (see IsDriveRoot).
+                if (IsDriveRoot(path)) continue;
+                if (!files.TryGetValue(path, out var root)) continue;
+                if (!roots.Add(root)) continue;
+                prefixes.Add(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
+            }
+            if (roots.Count == 0) return Array.Empty<INode>();
             var candidates = files.Values.AsParallel()
-                .Where(n => ReferenceEquals(n, root) || NodePath.IsUnder(n, root, prefix))
+                .Where(n => roots.Contains(n) || NodePath.IsUnderAny(n, roots, prefixes))
                 .ToArray();
             var removed = new List<INode>(candidates.Length);
             foreach (var candidate in candidates)
@@ -819,94 +834,180 @@ namespace search.Models
             FSChangeProcessor.Lookup = FindByPath;
             FSChangeProcessor.ReconcileDirs = ReconcileDirectories;
             FSChangeProcessor.Run(async d => await InitFromNTFS(d)
-            , async e =>
+            , async events =>
             {
-                try
+                //Deletes coalesce across the batch until a non-delete needs their effect:
+                //their tree removals share ONE index pass and ONE grid update, so deleting
+                //nine folders empties nine rows at once instead of one by one, each paced
+                //by its own full-index scan.
+                var pendingDeletes = new List<string>();
+                async Task FlushDeletes()
                 {
-                    //Status = $"WATCHED {++watched}. changes => last {DateTime.Now.TimeOfDay} {e.FullPath}";
-                    switch (e.ChangeType)
+                    if (pendingDeletes.Count == 0) return;
+                    var trees = new List<string>();
+                    var removed = new List<INode>();
+                    foreach (var path in pendingDeletes)
                     {
-                        case WatcherChangeTypes.Created:
-                            //Trace.WriteLine($"+{e.FullPath}");
-                            var node = GetOrAddNew(e.FullPath);
-                            await UpdateFor(node);
-                            List<TaskCompletionSource<INode>> tcs = null;
-                            lock (OnFileCreated)
-                            {
-                                if (OnFileCreated.TryGetValue(e.FullPath, out tcs)) OnFileCreated.Remove(e.FullPath);
-                            }
-                            if (tcs != null) foreach (var x in tcs) x.TrySetResult(node);
-                            break;
-                        case WatcherChangeTypes.Changed:
-                            //Change attributes and size
-                            await UpdateFor(Refresh(e.FullPath) ?? GetOrAddNew(e.FullPath));
-                            break;
-                        case WatcherChangeTypes.Renamed:
-                            //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
-                            //Under watcher buffer pressure ReadDirectoryChangesW can lose one half
-                            //of a rename pair; .NET then raises Renamed with an empty name whose
-                            //FullPath/OldFullPath is the watcher root. Tree surgery keyed on the
-                            //drive root would remove the whole index and re-add it under ghost
-                            //paths (1601 times, empty sizes) - rescan the drive instead.
-                            if (IsDriveRoot(e.OldFullPath) || IsDriveRoot(e.FullPath))
-                            {
-                                _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                        var indexed = files.TryGetValue(path, out var i) ? i : null;
+                        if (indexed?.IsDirectory == true || HasArchiveChildren(indexed)) trees.Add(path);
+                        else removed.Add(Remove(path));
+                    }
+                    pendingDeletes.Clear();
+                    if (trees.Count > 0) removed.AddRange(RemoveTrees(trees));
+                    await UpdateSmall(removed);
+                }
+
+                foreach (var e in events)
+                {
+                    try
+                    {
+                        //Status = $"WATCHED {++watched}. changes => last {DateTime.Now.TimeOfDay} {e.FullPath}";
+                        switch (e.ChangeType)
+                        {
+                            case WatcherChangeTypes.Created:
+                                //Trace.WriteLine($"+{e.FullPath}");
+                                await FlushDeletes(); //A delete of this very path must apply first
+                                var node = GetOrAddNew(e.FullPath);
+                                await UpdateSmall(new[] { node });
+                                List<TaskCompletionSource<INode>> tcs = null;
+                                lock (OnFileCreated)
+                                {
+                                    if (OnFileCreated.TryGetValue(e.FullPath, out tcs)) OnFileCreated.Remove(e.FullPath);
+                                }
+                                if (tcs != null) foreach (var x in tcs) x.TrySetResult(node);
                                 break;
-                            }
-                            var oldRoot = files.TryGetValue(e.OldFullPath, out var indexedOld) ? indexedOld : null;
-                            if (oldRoot?.IsDirectory == true || HasArchiveChildren(oldRoot))
-                            {
-                                var removedTree = RemoveTree(e.OldFullPath);
-                                var added = ReindexRenamedTree(e.OldFullPath, e.FullPath, removedTree);
-                                await UpdateSmall(removedTree.Concat(added));
-                            }
-                            else
-                            {
-                                //Remove first so a same-directory rename nets to zero on the shared ancestors
-                                await UpdateFor(Remove(e.OldFullPath), GetOrAddNew(e.FullPath));
-                            }
-                            break;
-                        case WatcherChangeTypes.Deleted:
-                            //Trace.WriteLine($"-{e.FullPath}");
-                            //A drive-root delete is a mangled event (see the rename case) - a
-                            //really vanished drive is handled by its own scan, never from here
-                            if (IsDriveRoot(e.FullPath))
-                            {
-                                _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                            case WatcherChangeTypes.Changed:
+                                //Change attributes and size
+                                await FlushDeletes();
+                                await UpdateSmall(new[] { Refresh(e.FullPath) ?? GetOrAddNew(e.FullPath) });
                                 break;
-                            }
-                            var deletedRoot = files.TryGetValue(e.FullPath, out var indexedDeleted) ? indexedDeleted : null;
-                            if (deletedRoot?.IsDirectory == true || HasArchiveChildren(deletedRoot))
-                            {
-                                await UpdateSmall(RemoveTree(e.FullPath));
-                            }
-                            else
-                            {
-                                await UpdateFor(Remove(e.FullPath));
-                            }
-                            break;
+                            case WatcherChangeTypes.Renamed:
+                                //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
+                                await FlushDeletes();
+                                //Under watcher buffer pressure ReadDirectoryChangesW can lose one half
+                                //of a rename pair; .NET then raises Renamed with an empty name whose
+                                //FullPath/OldFullPath is the watcher root. Tree surgery keyed on the
+                                //drive root would remove the whole index and re-add it under ghost
+                                //paths (1601 times, empty sizes) - rescan the drive instead.
+                                if (IsDriveRoot(e.OldFullPath) || IsDriveRoot(e.FullPath))
+                                {
+                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                                    break;
+                                }
+                                var oldRoot = files.TryGetValue(e.OldFullPath, out var indexedOld) ? indexedOld : null;
+                                if (oldRoot?.IsDirectory == true || HasArchiveChildren(oldRoot))
+                                {
+                                    var removedTree = RemoveTree(e.OldFullPath);
+                                    var added = ReindexRenamedTree(e.OldFullPath, e.FullPath, removedTree);
+                                    await UpdateSmall(removedTree.Concat(added));
+                                }
+                                else
+                                {
+                                    //Remove first so a same-directory rename nets to zero on the shared ancestors
+                                    await UpdateSmall(new[] { Remove(e.OldFullPath), GetOrAddNew(e.FullPath) });
+                                }
+                                break;
+                            case WatcherChangeTypes.Deleted:
+                                //Trace.WriteLine($"-{e.FullPath}");
+                                //A drive-root delete is a mangled event (see the rename case) - a
+                                //really vanished drive is handled by its own scan, never from here
+                                if (IsDriveRoot(e.FullPath))
+                                {
+                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                                    break;
+                                }
+                                pendingDeletes.Add(e.FullPath);
+                                break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Windows.MessageBox.Show(ex.ToString(), $"FS change {e.FullPath} failed");
+                        await Log($"FS change {e} failed: {ex}");
                     }
                 }
-                catch (Exception ex)
-                {
-                    System.Windows.MessageBox.Show(ex.ToString(), $"FS change {e.FullPath} failed");
-                    await Log($"FS change {e} failed: {ex}");
-                }
+                try { await FlushDeletes(); }
+                catch (Exception ex) { await Log($"FS delete batch failed: {ex}"); }
             });
         }
 
         /// <summary>
-        /// Publish a batch of added/removed nodes to the grid: a small batch updates the
-        /// published rows in place (a deleted folder vanishes instantly), a large one -
-        /// where per-row surgery would saturate the UI thread - queues the coalesced full
-        /// refresh (1s batching) instead.
+        /// Publish a batch of added/removed nodes to the grid. Pure removals of any size
+        /// leave the published rows in one in-place pass - a deleted folder vanishes
+        /// instantly. Small mixed batches update rows in place; anything else queues the
+        /// coalesced full refresh WITHOUT awaiting it: the refresh batches changes for a
+        /// second, and an event queue blocked on that delay would publish one deleted
+        /// folder per second (the user deletes nine folders and watches them leave one by
+        /// one) while sibling events that could share one refresh wait behind it.
         /// </summary>
         async Task UpdateSmall(IEnumerable<INode> changed)
         {
-            var nodes = changed.Take(101).ToArray();
-            if (nodes.Length <= 100) await UpdateFor(nodes);
-            else await Update();
+            var nodes = changed.Where(x => x != null).ToArray();
+            if (nodes.Length == 0) return;
+            if (await TryBulkRemove(nodes)) return;
+            if (nodes.Length <= 100 && await TryIncrementalUpdate(nodes)) return;
+            var nf = nodeFilter;
+            if (nodes.Any(nf.Matches)) _ = Update();
         }
+
+        /// <summary>
+        /// Remove a batch of no-longer-indexed nodes from the published rows in one pass -
+        /// unlike the per-node sorted surgery this needs no IndexOf per node, so it stays
+        /// instant for a folder of any size. Pure removals cannot disturb the sort order,
+        /// so only completeness of the published window is revalidated.
+        /// </summary>
+        /// <returns>false => not a pure-removal batch (or Items are partial) - the caller
+        /// must fall back to the incremental/full update</returns>
+        async Task<bool> TryBulkRemove(INode[] removed)
+        {
+            if (Loading || !itemsComplete) return false;
+            //Still indexed under its path => an addition/change, not a removal
+            if (removed.Any(n => files.TryGetValue(n, out var current) && ReferenceEquals(current, n))) return false;
+
+            var needsRefresh = false;
+            var handled = await Dispatcher.InvokeAsync(() =>
+            {
+                if (!itemsComplete) return false; //Revalidate on the UI thread - Items are exchanged only here
+                var items = Items;
+                var set = new HashSet<object>(removed, ReferenceEqualityComparer.Instance);
+                List<int> hits = null;
+                for (var i = 0; i < items.Count; i++)
+                    if (set.Contains(items[i])) (hits ??= new List<int>()).Add(i);
+
+                //A capped window needs rows pulled in from beyond MaxItems after a visible
+                //removal. Deleted files also changed surviving ancestor directory sizes,
+                //which can invalidate a size ordering even when no deleted row is visible.
+                needsRefresh = BulkRemovalNeedsRefresh(items.Count, sort, hits != null);
+                if (hits == null) return true; //Nothing published - the grid (and selection) stays untouched
+
+                BeforeItemsExchange();
+                if (hits.Count <= 300)
+                {
+                    //Few visible rows - remove in place (backwards: earlier indexes stay valid)
+                    for (var i = hits.Count - 1; i >= 0; i--) items.RemoveAt(hits[i]);
+                }
+                else
+                {
+                    //Each RemoveAt shifts the tail of a possibly 100k-row list - beyond a few
+                    //hundred rows one rebuilt collection is cheaper than the shifts
+                    var target = new RangeObservableCollection<INode>();
+                    target.AddRange(items.Where(x => !set.Contains(x)));
+                    Items = target;
+                }
+                AfterItemsExchange();
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                return true;
+            });
+
+            //Keep the deletion instant, then let the existing coalesced refresh refill or
+            //resort in the background without holding up this drive's event queue.
+            if (handled && needsRefresh) _ = Update();
+            return handled;
+        }
+
+        internal static bool BulkRemovalNeedsRefresh(int itemCount, string currentSort, bool visibleRowsRemoved)
+            => visibleRowsRemoved && itemCount >= MaxItems
+                || currentSort?.Length > 1 && currentSort.Substring(1) == nameof(INode.Size);
 
         /// <summary>
         /// True for "C:\" (any drive/watcher root) and for null/empty. Watcher events carrying

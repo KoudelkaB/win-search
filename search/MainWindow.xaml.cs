@@ -244,11 +244,50 @@ namespace search
 
             // Preserver selection on Items update
             INode[] selected = null;
-            Model.BeforeItemsExchange = () => selected = filesView.SelectedItems.Cast<INode>().ToArray();
+            INode focused = null;
+            var selectedStart = -1;
+            var restoreKeyboardFocus = false;
+            Model.BeforeItemsExchange = () =>
+            {
+                selected = filesView.SelectedItems.Cast<INode>().ToArray();
+                selectedStart = selected.Select(filesView.Items.IndexOf)
+                    .Where(i => i >= 0).DefaultIfEmpty(-1).Min();
+                restoreKeyboardFocus = filesView.IsKeyboardFocusWithin;
+                focused = restoreKeyboardFocus
+                    ? (ItemsControl.ContainerFromElement(filesView, Keyboard.FocusedElement as DependencyObject)
+                        as ListViewItem)?.DataContext as INode
+                    : null;
+            };
             Model.AfterItemsExchange = () =>
             {
-                if (selected != null && selected.Length > 0) filesView.Select(selected);
+                var survivors = selected?.Where(filesView.Items.Contains).ToArray() ?? Array.Empty<INode>();
+                if (survivors.Length > 0) filesView.Select(survivors);
+
+                if (restoreKeyboardFocus)
+                {
+                    var focusTarget = focused != null && filesView.Items.Contains(focused)
+                        ? focused
+                        : survivors.OrderBy(filesView.Items.IndexOf).FirstOrDefault();
+
+                    //All selected rows disappeared (typically a completed delete). Keep the
+                    //keyboard caret at the block's old first index, which now contains the
+                    //next row; at the end of the list fall back to the preceding row.
+                    if (focusTarget == null && selected?.Length > 0)
+                    {
+                        var continuation = SelectionContinuationIndex(selectedStart, filesView.Items.Count);
+                        if (continuation >= 0)
+                        {
+                            focusTarget = filesView.Items[continuation] as INode;
+                            filesView.SelectedItem = focusTarget;
+                        }
+                    }
+                    if (focusTarget != null) FocusFileRow(focusTarget);
+                }
+
                 selected = null;
+                focused = null;
+                selectedStart = -1;
+                restoreKeyboardFocus = false;
                 UpdateFolderColumnWidth();
             };
             Model.UIRefreshRequested += () => Dispatcher.Invoke(() =>
@@ -273,6 +312,26 @@ namespace search
                     }
                 }
             });
+        }
+
+        internal static int SelectionContinuationIndex(int firstSelectedIndex, int remainingCount)
+            => firstSelectedIndex < 0 || remainingCount <= 0
+                ? -1
+                : Math.Min(firstSelectedIndex, remainingCount - 1);
+
+        void FocusFileRow(INode node)
+        {
+            bool TryFocus()
+            {
+                if (!filesView.Items.Contains(node)) return true;
+                filesView.ScrollIntoView(node);
+                if (filesView.ItemContainerGenerator.ContainerFromItem(node) is not ListViewItem row) return false;
+                row.Focus(); //Updates WPF's keyboard action item used as the next SHIFT anchor
+                return true;
+            }
+
+            //A replaced/virtualized collection may realize the row only after layout.
+            if (!TryFocus()) Dispatcher.BeginInvoke(() => TryFocus(), DispatcherPriority.Input);
         }
 
         WorkspaceSettings CaptureWorkspaceSettings() => new()

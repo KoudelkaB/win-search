@@ -117,6 +117,26 @@ namespace search.Models
         }
 
         /// <summary>
+        /// <see cref="IsUnder"/> against several directories in one chain walk - removing
+        /// N sibling trees must not cost N passes over a chain (or N index scans upstream).
+        /// dirs holds the directories' indexed nodes (reference identity), prefixes their
+        /// paths with a trailing slash for the textual fallback.
+        /// </summary>
+        public static bool IsUnderAny(INode n, HashSet<object> dirs, IReadOnlyList<string> prefixes)
+        {
+            var m = n;
+            for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
+            {
+                m = m.PathParent;
+                if (dirs.Contains(m)) return true;
+            }
+            var full = m.FullName;
+            for (var i = 0; i < prefixes.Count; i++)
+                if (full.StartsWith(prefixes[i], StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>
         /// True when the node's immediate parent is dir (by identity or by path)
         /// </summary>
         public static bool HasParent(INode n, INode dir)

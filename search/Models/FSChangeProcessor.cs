@@ -21,13 +21,16 @@ namespace search.Models
         /// <summary>
         /// Per-drive event queue with its own processing thread: a slow stat on one drive
         /// (dead network mapping) can never delay another drive's events. Within a drive
-        /// events stay ordered (a rename must not race its own delete) and one-at-a-time
-        /// processing gives backpressure during change storms.
+        /// events stay ordered (a rename must not race its own delete). Everything already
+        /// waiting is handed to the handler as ONE batch - the handler can then apply a
+        /// burst (delete of nine folders) with one index pass and one grid update instead
+        /// of paying both per event; the bounded batch also gives backpressure in storms.
         /// </summary>
         sealed class DriveQueue
         {
             readonly ConcurrentQueue<(FsEvent Event, TaskCompletionSource Done)> normal = new(), urgent = new();
             readonly AutoResetEvent signal = new(false);
+            readonly List<(FsEvent Event, TaskCompletionSource Done)> batch = new();
 
             public DriveQueue()
             {
@@ -36,13 +39,17 @@ namespace search.Models
                     while (true)
                     {
                         signal.WaitOne();
-                        //The echo lane drains first - the user's own delete/rename must not wait
-                        //behind a queued storm. Safe out of order: handlers stat the disk, so a
-                        //jumped-over Created of an already-echoed-away file indexes nothing.
-                        while (urgent.TryDequeue(out var item) || normal.TryDequeue(out item))
+                        while (true)
                         {
-                            try { Changed(item.Event).Wait(); } catch { }
-                            item.Done?.TrySetResult();
+                            //The echo lane drains first - the user's own delete/rename must not wait
+                            //behind a queued storm. Safe out of order: handlers stat the disk, so a
+                            //jumped-over Created of an already-echoed-away file indexes nothing.
+                            batch.Clear();
+                            while (batch.Count < 256 && (urgent.TryDequeue(out var item) || normal.TryDequeue(out item)))
+                                batch.Add(item);
+                            if (batch.Count == 0) break;
+                            try { Changed(batch.Select(x => x.Event).ToArray()).Wait(); } catch { }
+                            foreach (var item in batch) item.Done?.TrySetResult();
                         }
                     }
                 }, TaskCreationOptions.LongRunning).Start();
@@ -60,7 +67,7 @@ namespace search.Models
         static readonly NonBlocking.ConcurrentDictionary<string, DriveQueue> queues = new(StringComparer.OrdinalIgnoreCase);
         static readonly NonBlocking.ConcurrentDictionary<string, IDisposable> sources = new(StringComparer.OrdinalIgnoreCase); //Watcher or USN reader per drive root
         static Action<string> Started;
-        static Func<FsEvent, Task> Changed;
+        static Func<FsEvent[], Task> Changed;
         static int started = 0;
 
         /// <summary>
@@ -81,7 +88,7 @@ namespace search.Models
         /// </summary>
         public static Func<string[], Task> ReconcileDirs = _ => Task.CompletedTask;
 
-        public static bool Run(Action<string> Started, Func<FsEvent, Task> Changed)
+        public static bool Run(Action<string> Started, Func<FsEvent[], Task> Changed)
         {
             // Ensure the following code is run only once
             if (Interlocked.CompareExchange(ref started, 1, 0) != 0) return false;

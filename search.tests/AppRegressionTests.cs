@@ -23,6 +23,25 @@ namespace search.Tests
         public void HalfDeliveredWatcherEventsAreRecognizedByTheirRootPath(string path, bool root)
             => Assert.Equal(root, SearchModel.IsDriveRoot(path));
 
+        [Theory]
+        [InlineData(100_000, "+Name", true, true)]   //Refill the capped window after visible removals
+        [InlineData(100_000, "+Name", false, false)] //An unseen removal cannot leave a hole
+        [InlineData(50_000, "+Size", false, true)]   //Surviving ancestor sizes may need reordering
+        [InlineData(50_000, "-Size", true, true)]
+        [InlineData(50_000, "+Name", true, false)]
+        public void BulkRemovalRefreshesOnlyForWindowBackfillOrSizeOrdering(
+            int itemCount, string sort, bool visibleRowsRemoved, bool expected)
+            => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(itemCount, sort, visibleRowsRemoved));
+
+        [Theory]
+        [InlineData(10, 94, 10)] //The row following a deleted middle block moves to its first index
+        [InlineData(98, 98, 97)] //Deleting the tail falls back to the new last row
+        [InlineData(0, 0, -1)]   //No row remains to receive the keyboard caret
+        [InlineData(-1, 10, -1)]
+        public void DeletedSelectionContinuesAtItsFormerPosition(
+            int firstSelectedIndex, int remainingCount, int expected)
+            => Assert.Equal(expected, MainWindow.SelectionContinuationIndex(firstSelectedIndex, remainingCount));
+
         [Fact]
         public void NodeOfAVanishedPathReportsNotExisting()
         {
