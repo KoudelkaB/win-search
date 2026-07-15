@@ -506,9 +506,12 @@ namespace search.Models
             var changed = new List<INode>();
             foreach (var dir in dirs)
             {
-                //Deletes directly in a drive root are rare; a reconcile there would diff the
-                //whole drive - hand it to the drive scan instead
-                if (IsDriveRoot(dir)) { _ = InitFromNTFS(Path.GetPathRoot(dir)); continue; }
+                //The drive root reconciles like any directory: one index pass plus one
+                //top-level listing. Handing it to the drive scan instead would reload the
+                //whole MFT - and since the FRN map is empty until a scan publishes (and
+                //cleared by every rescan), root-level file activity during the scan kept
+                //queuing scan reruns: a self-sustaining full-reload loop.
+                if (string.IsNullOrEmpty(dir)) continue;
                 if (!files.TryGetValue(dir, out var dirNode)) continue; //Unindexed parent => nothing stale under it
 
                 HashSet<string> onDisk;

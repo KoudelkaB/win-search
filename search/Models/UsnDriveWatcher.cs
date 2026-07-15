@@ -126,6 +126,16 @@ namespace search.Models
                         if (stop) return;
                         Translate(r, pendingRenames, unresolvedParents, changedSeen);
                     }
+                    //Wait for the batch's last event only: the drive queue is FIFO with a single
+                    //consumer, so journal order is preserved without waiting between events, and
+                    //the queue can hand the handler real batches (deletes coalesce, grid passes
+                    //are shared). One wait per read batch still paces the reader to the handler -
+                    //a per-record wait would cap it at one pipeline round trip per change, fall
+                    //behind on a busy volume and let the journal wrap past our position, which
+                    //costs a full drive rescan every time.
+                    var last = lastEnqueued;
+                    lastEnqueued = null;
+                    if (last != null) try { last.Wait(); } catch { }
                     //A RENAME_OLD whose NEW half falls into the next batch is rare (batch
                     //boundary); its entry survives in pendingRenames and pairs up then.
                     Reconcile(unresolvedParents);
@@ -196,13 +206,17 @@ namespace search.Models
             return parent == null ? null : Path.Combine(parent, r.Name);
         }
 
+        Task lastEnqueued; //Loop-thread only - the newest enqueued event's completion
+
         /// <summary>
-        /// Enqueue and wait - records must apply in journal order (a rename must not race
-        /// its own delete) and the wait paces us to the handler (backpressure).
+        /// Enqueue without waiting - the drive queue applies events in order (FIFO, single
+        /// consumer), so a rename cannot race its own delete. The Loop waits once per read
+        /// batch on the last enqueued event (backpressure), never per record: at most one
+        /// read buffer's worth of records is ever in flight.
         /// </summary>
         void Process(FsEvent e)
         {
-            try { process(e).Wait(); } catch { }
+            try { lastEnqueued = process(e); } catch { }
         }
 
         /// <summary>
