@@ -88,6 +88,11 @@ namespace search.Models
             var pendingRenames = new Dictionary<ulong, string>();
             //Parents of records that could not be resolved - reconciled against the disk
             var unresolvedParents = new HashSet<ulong>();
+            //FRNs whose create/rename never resolved to a path: nothing was ever indexed
+            //for them, so their later delete has nothing to prune - dropping it silently
+            //saves the parent reconcile a short-lived temp file would otherwise cost
+            var ghosts = new HashSet<ulong>();
+            long lastReconcile = 0; //Reconciles are full-index passes - throttled in storms
             while (!stop)
             {
                 List<UsnRecord> batch;
@@ -115,16 +120,23 @@ namespace search.Models
                 }
                 if (batch.Count == 0)
                 {
+                    //Quiet moment - flush what the reconcile throttle held back in the storm
+                    if (unresolvedParents.Count > 0)
+                    {
+                        Reconcile(unresolvedParents);
+                        lastReconcile = Environment.TickCount64;
+                    }
                     Thread.Sleep(300); //Wait-read timed out or is unsupported - don't spin
                     continue;
                 }
                 try
                 {
+                    if (ghosts.Count > (1 << 16)) ghosts.Clear(); //Bound memory - losing entries only costs reconciles
                     var changedSeen = new HashSet<ulong>(); //Coalesce data-change records per file
                     foreach (var r in batch)
                     {
                         if (stop) return;
-                        Translate(r, pendingRenames, unresolvedParents, changedSeen);
+                        Translate(r, pendingRenames, unresolvedParents, changedSeen, ghosts);
                     }
                     //Wait for the batch's last event only: the drive queue is FIFO with a single
                     //consumer, so journal order is preserved without waiting between events, and
@@ -138,13 +150,20 @@ namespace search.Models
                     if (last != null) try { last.Wait(); } catch { }
                     //A RENAME_OLD whose NEW half falls into the next batch is rare (batch
                     //boundary); its entry survives in pendingRenames and pairs up then.
-                    Reconcile(unresolvedParents);
+                    //A reconcile is a full-index pass - during sustained activity run at
+                    //most one per interval and let the parents accumulate in between (the
+                    //quiet-timeout flush above covers the tail after the storm ends).
+                    if (unresolvedParents.Count > 0 && Environment.TickCount64 - lastReconcile >= 5000)
+                    {
+                        Reconcile(unresolvedParents);
+                        lastReconcile = Environment.TickCount64;
+                    }
                 }
                 catch (Exception e) { $"USN processing on {journal.Root} failed: {e.Message}".Debug(); }
             }
         }
 
-        void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames, HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen)
+        void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames, HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen, HashSet<ulong> ghosts)
         {
             //Reason bits accumulate over a file's open-close session - classify by the
             //most existence-relevant bit. A delete record may still carry the create bits
@@ -152,17 +171,39 @@ namespace search.Models
             if ((r.Reason & UsnJournal.ReasonFileDelete) != 0)
             {
                 pendingRenames.Remove(r.Frn);
+                //Path the map knew before MapPath heals or drops the entry - the
+                //nothing-indexed proof below needs it even when verification fails
+                var lastKnown = frnMap.TryGetValue(r.Frn, out var known) ? known.FullName : null;
                 var path = MapPath(r.Frn) ?? PathFromRecord(r);
                 frnMap.TryRemove(r.Frn, out _);
-                if (path != null) Process(new FsEvent(WatcherChangeTypes.Deleted, path));
-                else unresolvedParents.Add(r.ParentFrn);
+                if (path != null)
+                {
+                    ghosts.Remove(r.Frn);
+                    Process(new FsEvent(WatcherChangeTypes.Deleted, path));
+                }
+                //A ghost's create never resolved, so nothing was indexed - nothing to
+                //prune. Same when the index holds nothing under the last known path while
+                //that path's parent is still indexed: the entry was already pruned (the
+                //app's own delete echoes ahead of the journal record) - a parent renamed
+                //away meanwhile would have re-keyed the parent path and fails this proof.
+                else if (!ghosts.Remove(r.Frn) && !ProvablyUnindexed(lastKnown))
+                    unresolvedParents.Add(r.ParentFrn);
                 return;
             }
             if ((r.Reason & UsnJournal.ReasonRenameNewName) != 0)
             {
-                var oldPath = pendingRenames.Remove(r.Frn, out var pending) ? pending : MapPath(r.Frn);
+                //heal:false - the map's stored path is the pre-rename path; healing it
+                //would resolve the file at its NEW location (== newPath => swallowed)
+                var oldPath = pendingRenames.Remove(r.Frn, out var pending) ? pending : MapPath(r.Frn, heal: false);
                 var newPath = journal.TryResolvePath(r.Frn) ?? PathFromRecord(r);
-                if (newPath == null) return; //Already gone again - its delete record follows
+                if (newPath == null)
+                {
+                    //Already gone again - its delete record follows (a ghost when nothing
+                    //was indexed under the old path either: that delete then drops silently)
+                    if (oldPath == null) ghosts.Add(r.Frn);
+                    return;
+                }
+                ghosts.Remove(r.Frn);
                 if (oldPath == null) Process(new FsEvent(WatcherChangeTypes.Created, newPath)); //Moved in from an unindexed place
                 else if (!string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
                     Process(new FsEvent(WatcherChangeTypes.Renamed, newPath, oldPath));
@@ -172,25 +213,53 @@ namespace search.Models
             if ((r.Reason & UsnJournal.ReasonRenameOldName) != 0)
             {
                 //First half of a rename - remember the old path for the NEW record.
-                //Unknown old path: the old entry (if any) is staled - reconcile its parent.
-                var oldPath = MapPath(r.Frn) ?? PathFromRecord(r);
+                //Unknown old path: the old entry (if any) is staled - reconcile its parent
+                //(a ghost never had an entry, so there is nothing to stale).
+                //heal:false - see the NEW_NAME branch (the file is already at its new path).
+                var oldPath = MapPath(r.Frn, heal: false) ?? PathFromRecord(r);
                 pendingRenames[r.Frn] = oldPath;
-                if (oldPath == null) unresolvedParents.Add(r.ParentFrn);
+                if (oldPath == null && !ghosts.Contains(r.Frn)) unresolvedParents.Add(r.ParentFrn);
                 return;
             }
             if ((r.Reason & UsnJournal.ReasonFileCreate) != 0)
             {
                 var path = journal.TryResolvePath(r.Frn) ?? PathFromRecord(r);
-                if (path == null) return; //Vanished before we read - nothing was indexed
+                if (path == null)
+                {
+                    ghosts.Add(r.Frn); //Vanished before we read - nothing was indexed
+                    return;
+                }
+                ghosts.Remove(r.Frn);
                 Process(new FsEvent(WatcherChangeTypes.Created, path));
                 Remap(r.Frn, path);
                 return;
             }
             //Data/attribute change
             if (!changedSeen.Add(r.Frn)) return;
-            var changed = MapPath(r.Frn) ?? journal.TryResolvePath(r.Frn) ?? PathFromRecord(r);
+            var changed = MapPath(r.Frn);
+            if (changed == null && journal.TryResolvePath(r.Frn) is { } live)
+            {
+                //Map the resolved path - a hot file (growing log, download) must not pay
+                //the OpenFileById round trip again on every following batch
+                ghosts.Remove(r.Frn);
+                Remap(r.Frn, live);
+                changed = live;
+            }
+            changed ??= PathFromRecord(r);
             if (changed != null) Process(new FsEvent(WatcherChangeTypes.Changed, changed));
         }
+
+        /// <summary>
+        /// True when provably nothing is indexed for the file last known under this path:
+        /// the index does not hold the path (the caller's MapPath just verified that) but
+        /// still holds its parent directory - so the entry was pruned by path, not moved
+        /// away by a parent rename (which would have re-keyed the parent too). Deleting
+        /// such a file needs no event and no reconcile.
+        /// </summary>
+        static bool ProvablyUnindexed(string lastKnown)
+            => lastKnown != null
+            && Path.GetDirectoryName(lastKnown) is { Length: > 0 } parent
+            && FSChangeProcessor.Lookup(parent) != null;
 
         /// <summary>
         /// Path built from the record's own name and its parent's current path. The
@@ -202,7 +271,9 @@ namespace search.Models
         string PathFromRecord(UsnRecord r)
         {
             if (string.IsNullOrEmpty(r.Name)) return null;
-            var parent = journal.TryResolvePath(r.ParentFrn);
+            //The parent is usually a scan-indexed directory - its map entry saves the
+            //OpenFileById round trip (MapPath verifies and heals it like any entry)
+            var parent = MapPath(r.ParentFrn) ?? journal.TryResolvePath(r.ParentFrn);
             return parent == null ? null : Path.Combine(parent, r.Name);
         }
 
@@ -224,12 +295,16 @@ namespace search.Models
         /// the live index: an entry staled by a parent-directory rename (its subtree was
         /// re-indexed with new instances under new paths) is healed or dropped, never
         /// trusted - a Remove on a wrong path would leave ghosts.
+        /// heal=false skips the live-disk repair - a RENAME record's OLD path must never
+        /// resolve from the disk, where the file already sits under its NEW path (the
+        /// rename would compare equal and be swallowed).
         /// </summary>
-        string MapPath(ulong frn)
+        string MapPath(ulong frn, bool heal = true)
         {
             if (!frnMap.TryGetValue(frn, out var node)) return null;
             var path = node.FullName;
             if (FSChangeProcessor.Lookup(path) != null) return path; //Still indexed under that path
+            if (!heal) return null;
             var live = journal.TryResolvePath(frn);
             if (live == null)
             {
@@ -240,12 +315,29 @@ namespace search.Models
             return live;
         }
 
-        /// <summary>Point the FRN at the node the index now holds under the path</summary>
+        /// <summary>
+        /// Point the FRN at the node the index now holds under the path - or at a
+        /// path-only placeholder while the async handler has not indexed it yet: a temp
+        /// file's delete would otherwise find the map empty (its Created is still in the
+        /// queue) and degrade to a parent reconcile. MapPath never trusts the placeholder
+        /// itself - it verifies against the live index or the disk like any entry.
+        /// </summary>
         void Remap(ulong frn, string path)
+            => frnMap[frn] = FSChangeProcessor.Lookup(path) ?? new PathNode(path);
+
+        /// <summary>FRN-map placeholder carrying only a path - never indexed, never trusted unverified</summary>
+        sealed class PathNode : INode
         {
-            var node = FSChangeProcessor.Lookup(path);
-            if (node != null) frnMap[frn] = node;
-            else frnMap.TryRemove(frn, out _); //Filtered out (e.g. non-existing) - resolve next time
+            readonly string path;
+            public PathNode(string path) => this.path = path;
+            public override string FullName => path;
+            public override string Name => Path.GetFileName(path);
+            public override bool Exists => false; //Must never enter the index - it carries no metadata
+            public override FileAttributes Attributes { get => 0; protected set { } }
+            public override ulong Size { get => 0; protected set { } }
+            public override DateTime CreationTime { get => default; protected set { } }
+            public override DateTime LastChangeTime { get => default; protected set { } }
+            public override DateTime LastAccessTime { get => default; protected set { } }
         }
 
         /// <summary>

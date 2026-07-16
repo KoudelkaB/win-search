@@ -244,12 +244,19 @@ namespace search.Models
                 //Revalidate on the UI thread - Items are exchanged only here
                 if (!itemsComplete || currentFilter != filter || currentSort != sort) return false;
                 var items = Items;
+                //Membership screen for larger batches: most changed nodes are neither
+                //published nor entering the result, and IndexOf is a full scan of a
+                //possibly 100k-row list - a storm batch must not pay that per node.
+                //Kept in sync on insert; rows removed below only leave harmless false
+                //positives (their IndexOf just returns -1).
+                var published = changed.Length > 8
+                    ? new HashSet<object>(items, ReferenceEqualityComparer.Instance) : null;
                 var updated = false;
                 var exchanging = false; //Selection snapshot taken - only once a row really moves
                 List<INode> repaint = null; //Rows changed in place - repaint without touching the list
                 foreach (var node in changed)
                 {
-                    var index = items.IndexOf(node);
+                    var index = published != null && !published.Contains(node) ? -1 : items.IndexOf(node);
                     //Present in files under its path and matching the filter => it belongs to the result
                     //(the node itself is a valid key - no full path is materialized here)
                     var include = files.TryGetValue(node, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
@@ -285,6 +292,7 @@ namespace search.Models
                         if (at < items.Count || items.Count < MaxItems) //Beyond the published window => skip
                         {
                             items.Insert(at, node);
+                            published?.Add(node);
                             updated = true;
                         }
                     }
@@ -504,46 +512,54 @@ namespace search.Models
         /// </summary>
         async Task ReconcileDirectories(string[] dirs)
         {
-            var changed = new List<INode>();
+            //The drive root reconciles like any directory: one index pass plus one
+            //top-level listing. Handing it to the drive scan instead would reload the
+            //whole MFT - and since the FRN map is empty until a scan publishes (and
+            //cleared by every rescan), root-level file activity during the scan kept
+            //queuing scan reruns: a self-sustaining full-reload loop.
+            var targets = new List<(INode Dir, string Prefix, HashSet<string> OnDisk)>();
             foreach (var dir in dirs)
             {
-                //The drive root reconciles like any directory: one index pass plus one
-                //top-level listing. Handing it to the drive scan instead would reload the
-                //whole MFT - and since the FRN map is empty until a scan publishes (and
-                //cleared by every rescan), root-level file activity during the scan kept
-                //queuing scan reruns: a self-sustaining full-reload loop.
                 if (string.IsNullOrEmpty(dir)) continue;
                 if (!files.TryGetValue(dir, out var dirNode)) continue; //Unindexed parent => nothing stale under it
-
-                HashSet<string> onDisk;
                 try
                 {
-                    onDisk = new HashSet<string>(Directory.EnumerateFileSystemEntries(dir), StringComparer.OrdinalIgnoreCase);
+                    targets.Add((dirNode,
+                        dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                        new HashSet<string>(Directory.EnumerateFileSystemEntries(dir), StringComparer.OrdinalIgnoreCase)));
                 }
-                catch { continue; } //Directory gone or unreadable - its own delete record handles it
+                catch { } //Directory gone or unreadable - its own delete record handles it
+            }
+            if (targets.Count == 0) return;
 
-                //Indexed descendants whose direct-child ancestor no longer exists on disk
-                var prefix = dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                var stale = files.Values.AsParallel()
-                    .Where(n => !ReferenceEquals(n, dirNode) && NodePath.IsUnder(n, dirNode, prefix))
-                    .Where(n =>
-                    {
-                        var full = n.FullName;
-                        var end = full.IndexOf(Path.DirectorySeparatorChar, prefix.Length);
-                        return !onDisk.Contains(end < 0 ? full : full.Substring(0, end));
-                    })
-                    .ToArray();
-                foreach (var candidate in stale)
+            //Indexed descendants whose direct-child ancestor no longer exists on disk.
+            //ONE pass over the index covers every directory of the call - the stale scan
+            //is a full-index walk and the watcher batches a storm's worth of misses, so
+            //N directories must not cost N passes.
+            var changed = new List<INode>();
+            var stale = files.Values.AsParallel().Where(n =>
+            {
+                foreach (var (dirNode, prefix, onDisk) in targets)
                 {
-                    if (!files.TryRemove(candidate, out var actual)) continue;
-                    changed.Add(actual);
-                    if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
+                    if (ReferenceEquals(n, dirNode) || !NodePath.IsUnder(n, dirNode, prefix)) continue;
+                    var full = n.FullName;
+                    var end = full.IndexOf(Path.DirectorySeparatorChar, prefix.Length);
+                    if (!onDisk.Contains(end < 0 ? full : full.Substring(0, end))) return true;
                 }
+                return false;
+            }).ToArray();
+            foreach (var candidate in stale)
+            {
+                if (!files.TryRemove(candidate, out var actual)) continue;
+                changed.Add(actual);
+                if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
+            }
 
-                //Files that appeared without a resolvable record (or before the map was filled)
+            //Files that appeared without a resolvable record (or before the map was filled)
+            foreach (var (_, _, onDisk) in targets)
                 foreach (var entry in onDisk)
                     if (!files.ContainsKey(entry)) changed.Add(GetOrAddNew(entry));
-            }
+
             if (changed.Count > 0) await UpdateSmall(changed);
         }
 
@@ -949,7 +965,10 @@ namespace search.Models
             var nodes = changed.Where(x => x != null).ToArray();
             if (nodes.Length == 0) return;
             if (await TryBulkRemove(nodes)) return;
-            if (nodes.Length <= 100 && await TryIncrementalUpdate(nodes)) return;
+            //512 covers a full drive-queue batch (256 events) and typical reconcile
+            //diffs - falling through means a full refilter+resort of the whole index,
+            //which a change storm must not trigger once per second
+            if (nodes.Length <= 512 && await TryIncrementalUpdate(nodes)) return;
             var nf = nodeFilter;
             if (nodes.Any(nf.Matches)) _ = Update();
         }
