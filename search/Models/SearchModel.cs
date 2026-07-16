@@ -69,7 +69,8 @@ namespace search.Models
         static INode[] exes;
         Dispatcher Dispatcher = Dispatcher.CurrentDispatcher; //Constructor is called from UI thread => get its dispatcher
         SemaphoreSlim Updating = new SemaphoreSlim(1, 1);
-        string filter = null, sort = "+" + nameof(INode.LastChangeTime);
+        internal const string DefaultSort = "+" + nameof(INode.LastChangeTime);
+        string filter = null, sort = DefaultSort;
         NodeFilter nodeFilter = new NodeFilter("");
         volatile object lastUpdate = DateTime.MinValue;
         volatile bool itemsComplete = true; //false => Items hold only a part of the filtered result (publishing was canceled)

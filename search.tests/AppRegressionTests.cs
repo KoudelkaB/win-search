@@ -1,6 +1,7 @@
 using SharpCompress.Archives;
 using SharpCompress.Writers.Zip;
 using System;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -32,6 +33,15 @@ namespace search.Tests
         public void BulkRemovalRefreshesOnlyForWindowBackfillOrSizeOrdering(
             int itemCount, string sort, bool visibleRowsRemoved, bool expected)
             => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(itemCount, sort, visibleRowsRemoved));
+
+        [Theory]
+        [InlineData("+Name", ListSortDirection.Ascending)]
+        [InlineData("-Name", ListSortDirection.Descending)]
+        [InlineData("+Size", ListSortDirection.Descending)]
+        [InlineData("-Size", ListSortDirection.Ascending)]
+        [InlineData("+LastChangeTime", ListSortDirection.Descending)]
+        public void GridHeaderArrowMatchesTheDisplayedValueOrder(string sort, ListSortDirection expected)
+            => Assert.Equal(expected, MainWindow.HeaderSortDirection(sort));
 
         [Theory]
         [InlineData(10, 94, 10)] //The row following a deleted middle block moves to its first index

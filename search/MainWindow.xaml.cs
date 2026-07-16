@@ -96,6 +96,7 @@ namespace search
             };
 
             DataContext = new Models.SearchModel();
+            ShowSortIndicator(Models.SearchModel.DefaultSort);
             filterTextBox.SuggestionList = () => Keyboard.Modifiers == ModifierKeys.Control ? filters.LastUsed : filters.MostUsed;
             filterTextBox.TextSelected += t => filters.Add2History(filterTextBox.Text);
             filterTextBox.DeleteItem = item => filters.Delete(item);
@@ -2882,8 +2883,52 @@ namespace search
         }
 
         #region Sorting by column headers
-        GridViewColumnHeader _lastHeaderClicked = null;
-        ListSortDirection _lastDirection = ListSortDirection.Ascending;
+        GridViewColumn sortedColumn;
+        string displayedSort;
+
+        internal static ListSortDirection HeaderSortDirection(string sort)
+        {
+            var ascending = sort[0] == '+';
+            var sortBy = sort.Substring(1);
+
+            // Size and date columns intentionally show their most useful order first:
+            // largest/newest to smallest/oldest. Their '+' token therefore maps to a
+            // descending value order, unlike the text and content-result columns.
+            if (sortBy == nameof(INode.Size) ||
+                sortBy == nameof(INode.LastChangeTime) ||
+                sortBy == nameof(INode.LastAccessTime))
+            {
+                ascending = !ascending;
+            }
+
+            return ascending ? ListSortDirection.Ascending : ListSortDirection.Descending;
+        }
+
+        void ShowSortIndicator(string sort)
+        {
+            if (string.IsNullOrWhiteSpace(sort) || sort.Length < 2 ||
+                filesView.View is not GridView gridView)
+            {
+                return;
+            }
+
+            var sortBy = sort.Substring(1);
+            var column = gridView.Columns.Cast<GridViewColumn>()
+                .FirstOrDefault(c => string.Equals(GridViewSort.GetSortKey(c), sortBy, StringComparison.Ordinal));
+            if (column == null)
+                return;
+
+            if (sortedColumn != null && sortedColumn != column)
+                sortedColumn.HeaderTemplate = null;
+
+            var templateKey = HeaderSortDirection(sort) == ListSortDirection.Ascending
+                ? "HeaderTemplateArrowUp"
+                : "HeaderTemplateArrowDown";
+            column.HeaderTemplate = Resources[templateKey] as DataTemplate;
+            sortedColumn = column;
+            displayedSort = sort;
+        }
+
         async void ListViewColumnHeader_Click(object sender, RoutedEventArgs e)
         {
             var c = Cursor;
@@ -2891,29 +2936,11 @@ namespace search
             try
             {
                 var headerClicked = e.OriginalSource as GridViewColumnHeader;
-                ListSortDirection direction;
 
                 if (headerClicked != null)
                 {
                     if (headerClicked.Role != GridViewColumnHeaderRole.Padding)
                     {
-                        //Determine new sorting
-                        if (headerClicked != _lastHeaderClicked)
-                        {
-                            direction = ListSortDirection.Ascending;
-                        }
-                        else
-                        {
-                            if (_lastDirection == ListSortDirection.Ascending)
-                            {
-                                direction = ListSortDirection.Descending;
-                            }
-                            else
-                            {
-                                direction = ListSortDirection.Ascending;
-                            }
-                        }
-
                         // The sort field must be language-independent: the column header text is
                         // localized, so fall back to it only when no stable key/binding is set.
                         var columnBinding = headerClicked.Column.DisplayMemberBinding as Binding;
@@ -2921,28 +2948,16 @@ namespace search
                             ?? columnBinding?.Path.Path
                             ?? headerClicked.Column.Header as string;
 
-                        await Model.Update(newSort: (direction == ListSortDirection.Ascending ? '+' : '-') + sortBy);
+                        if (string.IsNullOrEmpty(sortBy))
+                            return;
 
-                        //Save current sorting
-                        if (direction == ListSortDirection.Ascending)
-                        {
-                            headerClicked.Column.HeaderTemplate =
-                              Resources["HeaderTemplateArrowUp"] as DataTemplate;
-                        }
-                        else
-                        {
-                            headerClicked.Column.HeaderTemplate =
-                              Resources["HeaderTemplateArrowDown"] as DataTemplate;
-                        }
+                        var sameColumn = displayedSort?.Length > 1 &&
+                            string.Equals(displayedSort.Substring(1), sortBy, StringComparison.Ordinal);
+                        var sign = sameColumn && displayedSort[0] == '+' ? '-' : '+';
+                        var newSort = sign + sortBy;
 
-                        // Remove arrow from previously sorted header  
-                        if (_lastHeaderClicked != null && _lastHeaderClicked != headerClicked)
-                        {
-                            _lastHeaderClicked.Column.HeaderTemplate = null;
-                        }
-
-                        _lastHeaderClicked = headerClicked;
-                        _lastDirection = direction;
+                        await Model.Update(newSort: newSort);
+                        ShowSortIndicator(newSort);
 
                         // ListView updates are rendered after this handler yields to the
                         // dispatcher. Keep the wait cursor until that render has completed.
