@@ -374,7 +374,7 @@ namespace search
 
         void PinFilter_Click(object sender, RoutedEventArgs e)
         {
-            CancelPinnedFilterEdit();
+            if (!FinishPinnedFilterEdit(commit: true)) return;
             var pinned = new PinnedFilter
             {
                 Name = SuggestedFilterName(filterTextBox.Text),
@@ -491,9 +491,20 @@ namespace search
 
         void PinnedFilterName_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (sender is not TextBox { DataContext: PinnedFilter pinned } editor) return;
+            if (sender is TextBox editor) UpdatePinnedFilterNameValidation(editor);
+        }
+
+        void UpdatePinnedFilterNameValidation(TextBox editor)
+        {
+            if (editor.DataContext is not PinnedFilter pinned) return;
             var valid = PinnedFilterNameIsValid(pinned, out var error);
-            editor.BorderBrush = valid ? SystemColors.ControlDarkBrush : Brushes.IndianRed;
+            var binding = editor.GetBindingExpression(TextBox.TextProperty);
+            if (binding != null)
+            {
+                if (valid) Validation.ClearInvalid(binding);
+                else Validation.MarkInvalid(binding,
+                    new ValidationError(new ExceptionValidationRule(), binding, error, null));
+            }
             editor.ToolTip = error ?? pinned.Filter;
         }
 
@@ -519,15 +530,32 @@ namespace search
                 Dispatcher.BeginInvoke(() => editor.Focus(), DispatcherPriority.Input);
         }
 
+        void PinnedFilterName_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is TextBox { DataContext: PinnedFilter { IsEditing: true } } editor)
+            {
+                UpdatePinnedFilterNameValidation(editor);
+                FocusPinnedFilterName(editor);
+            }
+        }
+
         void PinnedFilterName_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
         {
             if (sender is TextBox editor && editor.IsVisible)
-                Dispatcher.BeginInvoke(() =>
+                FocusPinnedFilterName(editor);
+        }
+
+        void FocusPinnedFilterName(TextBox editor) =>
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (editor.IsVisible &&
+                    editor.DataContext is PinnedFilter pinned &&
+                    ReferenceEquals(pinned, editingPinnedFilter))
                 {
                     editor.Focus();
                     editor.SelectAll();
-                }, DispatcherPriority.Input);
-        }
+                }
+            }, DispatcherPriority.Input);
 
         void ExportWorkspace_Click(object sender, RoutedEventArgs e)
         {

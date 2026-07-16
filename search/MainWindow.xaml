@@ -285,10 +285,18 @@
                             </Button>
                             <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      MinWidth="120" Padding="5,1"
+                                     Loaded="PinnedFilterName_Loaded"
                                      TextChanged="PinnedFilterName_TextChanged"
                                      PreviewKeyDown="PinnedFilterName_KeyDown"
                                      LostKeyboardFocus="PinnedFilterName_LostKeyboardFocus"
                                      IsVisibleChanged="PinnedFilterName_IsVisibleChanged">
+                                <Validation.ErrorTemplate>
+                                    <ControlTemplate>
+                                        <Border BorderBrush="IndianRed" BorderThickness="2">
+                                            <AdornedElementPlaceholder/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Validation.ErrorTemplate>
                                 <TextBox.Style>
                                     <Style TargetType="TextBox">
                                         <Setter Property="Visibility" Value="Collapsed"/>
