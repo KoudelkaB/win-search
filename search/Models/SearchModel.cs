@@ -58,7 +58,7 @@ namespace search.Models
 
         public string CountsInfo => Items.Count == files.Count ? $"{files.Count:# ### ###}" : $"{Items.Count:### ###}/{files.Count:# ### ###}";
 
-        public ObservableCollection<INode> Items { get; private set; } = new ObservableCollection<INode>();
+        public ObservableCollection<INode> Items { get; private set; } = new RangeObservableCollection<INode>();
 
         // Keyed by the nodes themselves (NodePath hashes/compares their component chains),
         // yet still queried by plain path strings - so the bulk MFT load holds no full-path
@@ -213,12 +213,7 @@ namespace search.Models
         {
             var changed = nodes.Where(x => x != null).ToArray();
             if (changed.Length == 0) return;
-
-            //Maintain the published window in place - avoids refiltering and resorting millions of files per change
-            if (await TryIncrementalUpdate(changed)) return;
-
-            var nf = nodeFilter;
-            if (changed.Any(nf.Matches)) await Update();
+            await UpdateSmall(changed);
         }
 
         /// <summary>
@@ -306,6 +301,134 @@ namespace search.Models
                 if (repaint != null) RowsRefreshRequested?.Invoke(repaint.ToArray());
                 return true;
             });
+        }
+
+        readonly struct BatchUpdateOutcome
+        {
+            public bool Handled { get; }
+            public bool NeedsRefresh { get; }
+            public BatchUpdateOutcome(bool handled, bool needsRefresh = false)
+            {
+                Handled = handled;
+                NeedsRefresh = needsRefresh;
+            }
+        }
+
+        /// <summary>
+        /// Apply a larger mixed batch with one pass over the published window and one UI
+        /// reset. The ItemsSource instance stays in place so the virtualized viewport does
+        /// not jump. The old per-node path performs IndexOf + RemoveAt/Insert for every item;
+        /// on a 100k-row newest-first view that becomes O(rows * changes). This path is
+        /// O(rows + changes log changes) and preserves the same sorted/capped result.
+        /// </summary>
+        async Task<BatchUpdateOutcome> TryBulkIncrementalUpdate(INode[] changed)
+        {
+            var currentFilter = filter;
+            var currentSort = sort;
+            var nf = nodeFilter;
+            var compare = SortComparison(currentSort);
+            if (Loading || compare == null || !itemsComplete) return new BatchUpdateOutcome(false);
+
+            return await Dispatcher.InvokeAsync(() =>
+            {
+                if (Loading || !itemsComplete || currentFilter != filter || currentSort != sort)
+                    return new BatchUpdateOutcome(false);
+
+                var items = Items;
+                var changedSet = new HashSet<object>(changed, ReferenceEqualityComparer.Instance);
+                var originalCount = items.Count;
+                var capped = originalCount >= MaxItems;
+                //Changed nodes already carry their new values, so the old last item is not
+                //a trustworthy boundary when it belongs to this batch. Use the last
+                //unchanged row; it is slightly stricter and therefore never admits a node
+                //that should remain outside the capped window.
+                var oldBoundary = capped
+                    ? items.Reverse().FirstOrDefault(item => !changedSet.Contains(item))
+                    : null;
+                var publishedChanged = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                var kept = new List<INode>(originalCount);
+                foreach (var item in items)
+                {
+                    if (changedSet.Contains(item)) publishedChanged.Add(item);
+                    else kept.Add(item);
+                }
+
+                var candidates = new List<INode>(changed.Length);
+                var needsRefresh = capped && oldBoundary == null;
+                foreach (var node in changed)
+                {
+                    if (!files.TryGetValue(node, out var current) || !ReferenceEquals(current, node) || !nf.Matches(node))
+                        continue;
+
+                    if (oldBoundary != null && compare(node, oldBoundary) > 0)
+                    {
+                        //An unpublished node still lies beyond the window => no visible
+                        //effect. A formerly published node moved beyond the known boundary;
+                        //a row from the unknown tail must be pulled in by a coalesced refresh.
+                        if (publishedChanged.Contains(node)) needsRefresh = true;
+                        continue;
+                    }
+                    candidates.Add(node);
+                }
+                candidates.Sort(compare);
+
+                var merged = MergeSortedWindow(kept, candidates, compare, MaxItems);
+                if (capped && merged.Count < MaxItems) needsRefresh = true;
+
+                var identical = merged.Count == originalCount;
+                for (var i = 0; identical && i < merged.Count; i++)
+                    identical = ReferenceEquals(merged[i], items[i]);
+                if (identical)
+                {
+                    //Metadata changed without crossing a neighbour. Rebind realized rows,
+                    //but leave the collection and selection completely untouched.
+                    RowsRefreshRequested?.Invoke(changed);
+                    return new BatchUpdateOutcome(true, needsRefresh);
+                }
+
+                BeforeItemsExchange();
+                if (items is RangeObservableCollection<INode> target) target.ReplaceRange(merged);
+                else
+                {
+                    target = new RangeObservableCollection<INode>();
+                    target.AddRange(merged);
+                    Items = target;
+                }
+                AfterItemsExchange();
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                return new BatchUpdateOutcome(true, needsRefresh);
+            });
+        }
+
+        /// <summary>
+        /// A metadata-only watcher event can move a row only under a metadata sort. Name,
+        /// path, folder and content-result ordering are invariant, so those views need no
+        /// Items.IndexOf or collection mutation at all.
+        /// </summary>
+        internal static bool MetadataSortMayMove(string currentSort)
+        {
+            if (string.IsNullOrWhiteSpace(currentSort) || currentSort.Length < 2) return false;
+            var key = currentSort.Substring(1);
+            return key == nameof(INode.Size)
+                || key == nameof(INode.LastChangeTime)
+                || key == nameof(INode.LastAccessTime);
+        }
+
+        /// <summary>Merge two already sorted sequences, keeping at most one published window.</summary>
+        internal static List<T> MergeSortedWindow<T>(IReadOnlyList<T> first, IReadOnlyList<T> second,
+            Comparison<T> compare, int limit)
+        {
+            var merged = new List<T>(Math.Min(limit, first.Count + second.Count));
+            var fi = 0;
+            var si = 0;
+            while (merged.Count < limit && (fi < first.Count || si < second.Count))
+            {
+                if (si >= second.Count || fi < first.Count && compare(first[fi], second[si]) <= 0)
+                    merged.Add(first[fi++]);
+                else
+                    merged.Add(second[si++]);
+            }
+            return merged;
         }
 
         /// <summary>
@@ -856,12 +979,33 @@ namespace search.Models
             FSChangeProcessor.Run(async d => await InitFromNTFS(d)
             , async events =>
             {
+                //Mutate the index in event order, but publish the complete watcher batch once.
+                //Reference sets collapse a hot file's repeated notifications to one grid row.
+                var structural = new List<INode>();
+                var metadata = new List<INode>();
+                var structuralSet = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                var metadataSet = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                void RecordStructuralNodes(IEnumerable<INode> nodes)
+                {
+                    foreach (var node in nodes)
+                    {
+                        if (node == null) continue;
+                        metadataSet.Remove(node);
+                        if (structuralSet.Add(node)) structural.Add(node);
+                    }
+                }
+                void RecordStructuralNode(INode node) => RecordStructuralNodes(new[] { node });
+                void RecordMetadata(INode node)
+                {
+                    if (node != null && !structuralSet.Contains(node) && metadataSet.Add(node)) metadata.Add(node);
+                }
+
                 //Deletes coalesce across the batch until a non-delete needs their effect:
                 //their tree removals share ONE index pass and ONE grid update, so deleting
                 //nine folders empties nine rows at once instead of one by one, each paced
                 //by its own full-index scan.
                 var pendingDeletes = new List<string>();
-                async Task FlushDeletes()
+                void FlushDeletes()
                 {
                     if (pendingDeletes.Count == 0) return;
                     var trees = new List<string>();
@@ -874,7 +1018,7 @@ namespace search.Models
                     }
                     pendingDeletes.Clear();
                     if (trees.Count > 0) removed.AddRange(RemoveTrees(trees));
-                    await UpdateSmall(removed);
+                    RecordStructuralNodes(removed);
                 }
 
                 foreach (var e in events)
@@ -886,9 +1030,9 @@ namespace search.Models
                         {
                             case WatcherChangeTypes.Created:
                                 //Trace.WriteLine($"+{e.FullPath}");
-                                await FlushDeletes(); //A delete of this very path must apply first
+                                FlushDeletes(); //A delete of this very path must apply first
                                 var node = GetOrAddNew(e.FullPath);
-                                await UpdateSmall(new[] { node });
+                                RecordStructuralNode(node);
                                 List<TaskCompletionSource<INode>> tcs = null;
                                 lock (OnFileCreated)
                                 {
@@ -898,12 +1042,14 @@ namespace search.Models
                                 break;
                             case WatcherChangeTypes.Changed:
                                 //Change attributes and size
-                                await FlushDeletes();
-                                await UpdateSmall(new[] { Refresh(e.FullPath) ?? GetOrAddNew(e.FullPath) });
+                                FlushDeletes();
+                                var refreshed = Refresh(e.FullPath);
+                                if (refreshed != null) RecordMetadata(refreshed);
+                                else RecordStructuralNode(GetOrAddNew(e.FullPath));
                                 break;
                             case WatcherChangeTypes.Renamed:
                                 //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
-                                await FlushDeletes();
+                                FlushDeletes();
                                 //Under watcher buffer pressure ReadDirectoryChangesW can lose one half
                                 //of a rename pair; .NET then raises Renamed with an empty name whose
                                 //FullPath/OldFullPath is the watcher root. Tree surgery keyed on the
@@ -919,12 +1065,12 @@ namespace search.Models
                                 {
                                     var removedTree = RemoveTree(e.OldFullPath);
                                     var added = ReindexRenamedTree(e.OldFullPath, e.FullPath, removedTree);
-                                    await UpdateSmall(removedTree.Concat(added));
+                                    RecordStructuralNodes(removedTree.Concat(added));
                                 }
                                 else
                                 {
                                     //Remove first so a same-directory rename nets to zero on the shared ancestors
-                                    await UpdateSmall(new[] { Remove(e.OldFullPath), GetOrAddNew(e.FullPath) });
+                                    RecordStructuralNodes(new[] { Remove(e.OldFullPath), GetOrAddNew(e.FullPath) });
                                 }
                                 break;
                             case WatcherChangeTypes.Deleted:
@@ -946,29 +1092,78 @@ namespace search.Models
                         await Log($"FS change {e} failed: {ex}");
                     }
                 }
-                try { await FlushDeletes(); }
-                catch (Exception ex) { await Log($"FS delete batch failed: {ex}"); }
+                try
+                {
+                    FlushDeletes();
+                    await UpdateSmall(structural.Concat(metadata), metadataSet.Cast<INode>());
+                }
+                catch (Exception ex) { await Log($"FS change batch failed: {ex}"); }
             });
         }
 
         /// <summary>
-        /// Publish a batch of added/removed nodes to the grid. Pure removals of any size
-        /// leave the published rows in one in-place pass - a deleted folder vanishes
-        /// instantly. Small mixed batches update rows in place; anything else queues the
-        /// coalesced full refresh WITHOUT awaiting it: the refresh batches changes for a
-        /// second, and an event queue blocked on that delay would publish one deleted
-        /// folder per second (the user deletes nine folders and watches them leave one by
-        /// one) while sibling events that could share one refresh wait behind it.
+        /// Publish a batch of added/removed/changed nodes to the grid. Pure removals of any
+        /// size leave the published rows in one in-place pass. Small mixed batches use
+        /// sorted row surgery; larger batches use one linear merge of the published window.
         /// </summary>
-        async Task UpdateSmall(IEnumerable<INode> changed)
+        async Task UpdateSmall(IEnumerable<INode> changed, IEnumerable<INode> metadataOnly = null)
         {
-            var nodes = changed.Where(x => x != null).ToArray();
+            var unique = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var nodeList = new List<INode>();
+            foreach (var node in changed)
+                if (node != null && unique.Add(node)) nodeList.Add(node);
+            //File-size deltas mutate their ancestor directory nodes too. They must join a
+            //Size-sort batch; otherwise the "kept" side of the merge is no longer sorted
+            //and directory rows remain at their old positions.
+            if (sort?.Length > 1 && sort.Substring(1) == nameof(INode.Size))
+                foreach (var directory in pendingSizeRows.Keys)
+                    if (directory != null && unique.Add(directory)) nodeList.Add(directory);
+            var nodes = nodeList.ToArray();
             if (nodes.Length == 0) return;
+
+            //Changed does not alter path-based filter membership. A non-matching node can
+            //never be published; under a non-metadata sort a matching node cannot move,
+            //so only ask the UI to repaint it if its container is actually realized.
+            if (metadataOnly != null)
+            {
+                var metadata = new HashSet<object>(metadataOnly, ReferenceEqualityComparer.Instance);
+                if (metadata.Count > 0)
+                {
+                    var filterNow = nodeFilter;
+                    var mayMove = MetadataSortMayMove(sort);
+                    var repaint = new List<INode>();
+                    var work = new List<INode>(nodes.Length);
+                    foreach (var node in nodes)
+                    {
+                        if (!metadata.Contains(node))
+                        {
+                            work.Add(node);
+                            continue;
+                        }
+                        if (!filterNow.Matches(node)) continue;
+                        if (mayMove) work.Add(node);
+                        else repaint.Add(node);
+                    }
+                    if (repaint.Count > 0) RowsRefreshRequested?.Invoke(repaint.ToArray());
+                    nodes = work.ToArray();
+                    if (nodes.Length == 0) return;
+                }
+            }
+
             if (await TryBulkRemove(nodes)) return;
-            //512 covers a full drive-queue batch (256 events) and typical reconcile
-            //diffs - falling through means a full refilter+resort of the whole index,
-            //which a change storm must not trigger once per second
-            if (nodes.Length <= 512 && await TryIncrementalUpdate(nodes)) return;
+            if (nodes.Length <= 8)
+            {
+                if (await TryIncrementalUpdate(nodes)) return;
+            }
+            else
+            {
+                var bulk = await TryBulkIncrementalUpdate(nodes);
+                if (bulk.Handled)
+                {
+                    if (bulk.NeedsRefresh) _ = Update();
+                    return;
+                }
+            }
             var nf = nodeFilter;
             if (nodes.Any(nf.Matches)) _ = Update();
         }
@@ -1536,6 +1731,15 @@ namespace search.Models
         public void AddRange(IEnumerable<T> items)
         {
             foreach (var x in items) Items.Add(x);
+            OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+            OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        }
+
+        public void ReplaceRange(IEnumerable<T> replacements)
+        {
+            Items.Clear();
+            foreach (var x in replacements) Items.Add(x);
             OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
             OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));

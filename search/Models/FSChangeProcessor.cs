@@ -18,6 +18,11 @@ namespace search.Models
     /// </summary>
     static class FSChangeProcessor
     {
+        internal const int NormalCoalesceWindowMs = 200;
+        internal const int StormCoalesceWindowMs = 500;
+        internal const NotifyFilters WatcherNotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName
+            | NotifyFilters.Attributes | NotifyFilters.Size | NotifyFilters.LastWrite | NotifyFilters.CreationTime;
+
         /// <summary>
         /// Per-drive event queue with its own processing thread: a slow stat on one drive
         /// (dead network mapping) can never delay another drive's events. Within a drive
@@ -31,6 +36,13 @@ namespace search.Models
             readonly ConcurrentQueue<(FsEvent Event, TaskCompletionSource Done)> normal = new(), urgent = new();
             readonly AutoResetEvent signal = new(false);
             readonly List<(FsEvent Event, TaskCompletionSource Done)> batch = new();
+            int normalCount, urgentCount;
+
+            //A short quiet window folds save/build bursts into one metadata/grid pass. Once
+            //the queue is clearly busy, extend the same window (from its original start) to
+            //500 ms. Both values stay comfortably below the one-second live-update budget.
+            const int StormThreshold = 64;
+            const int MaxBatch = 4096;
 
             public DriveQueue()
             {
@@ -41,27 +53,110 @@ namespace search.Models
                         signal.WaitOne();
                         while (true)
                         {
-                            //The echo lane drains first - the user's own delete/rename must not wait
-                            //behind a queued storm. Safe out of order: handlers stat the disk, so a
-                            //jumped-over Created of an already-echoed-away file indexes nothing.
                             batch.Clear();
-                            while (batch.Count < 256 && (urgent.TryDequeue(out var item) || normal.TryDequeue(out item)))
-                                batch.Add(item);
-                            if (batch.Count == 0) break;
-                            try { Changed(batch.Select(x => x.Event).ToArray()).Wait(); } catch { }
+
+                            //The echo lane drains immediately - the user's own delete/rename must
+                            //not wait for either a queued storm or the normal coalescing window.
+                            while (batch.Count < MaxBatch && urgent.TryDequeue(out var urgentItem))
+                            {
+                                Interlocked.Decrement(ref urgentCount);
+                                batch.Add(urgentItem);
+                            }
+                            if (batch.Count == 0)
+                            {
+                                if (Volatile.Read(ref normalCount) == 0) break;
+                                WaitForNormalWindow();
+                                //An echo arriving during the wait owns the next pass. Leave the
+                                //normal queue intact and return to the urgent drain above.
+                                if (Volatile.Read(ref urgentCount) != 0) continue;
+                                while (batch.Count < MaxBatch && normal.TryDequeue(out var normalItem))
+                                {
+                                    Interlocked.Decrement(ref normalCount);
+                                    batch.Add(normalItem);
+                                }
+                            }
+                            if (batch.Count == 0) continue;
+                            try
+                            {
+                                var events = CoalesceChangedEvents(batch.Select(x => x.Event));
+                                if (events.Length > 0) Changed(events).Wait();
+                            }
+                            catch { }
                             foreach (var item in batch) item.Done?.TrySetResult();
                         }
                     }
                 }, TaskCreationOptions.LongRunning).Start();
             }
 
+            void WaitForNormalWindow()
+            {
+                var started = Environment.TickCount64;
+                var target = NormalCoalesceWindowMs;
+                while (true)
+                {
+                    if (Volatile.Read(ref urgentCount) != 0) return;
+                    if (Volatile.Read(ref normalCount) >= StormThreshold) target = StormCoalesceWindowMs;
+                    var remaining = target - (int)(Environment.TickCount64 - started);
+                    if (remaining <= 0) return;
+                    //Signals make the event-rate check react immediately; the absolute deadline
+                    //prevents a continuous stream from extending the window beyond 500 ms.
+                    signal.WaitOne(remaining);
+                }
+            }
+
             public Task Enqueue(FsEvent e, bool priority = false)
             {
                 var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                (priority ? urgent : normal).Enqueue((e, done));
-                signal.Set();
+                if (priority)
+                {
+                    urgent.Enqueue((e, done));
+                    Interlocked.Increment(ref urgentCount);
+                    signal.Set();
+                }
+                else
+                {
+                    normal.Enqueue((e, done));
+                    //The transition from empty wakes the consumer. Further normal events
+                    //are intentionally silent while its time window is open; otherwise a
+                    //write storm would wake the thread once per notification just to keep
+                    //checking the same deadline. Urgent events always signal above.
+                    if (Interlocked.Increment(ref normalCount) == 1) signal.Set();
+                }
                 return done.Task;
             }
+        }
+
+        /// <summary>
+        /// Collapse repeated data-change notifications inside one time window. Structural
+        /// events are ordering barriers: changes on either side of create/delete/rename are
+        /// kept separate, so index surgery observes exactly the same event order as before.
+        /// </summary>
+        internal static FsEvent[] CoalesceChangedEvents(IEnumerable<FsEvent> events)
+        {
+            var result = new List<FsEvent>();
+            var pending = new Dictionary<string, FsEvent>(StringComparer.OrdinalIgnoreCase);
+            var order = new List<string>();
+
+            void Flush()
+            {
+                foreach (var path in order) result.Add(pending[path]);
+                pending.Clear();
+                order.Clear();
+            }
+
+            foreach (var e in events)
+            {
+                if (e?.ChangeType == WatcherChangeTypes.Changed && e.FullPath != null)
+                {
+                    if (!pending.ContainsKey(e.FullPath)) order.Add(e.FullPath);
+                    pending[e.FullPath] = e; //last notification carries the final on-disk state
+                    continue;
+                }
+                Flush();
+                if (e != null) result.Add(e);
+            }
+            Flush();
+            return result.ToArray();
         }
 
         static readonly NonBlocking.ConcurrentDictionary<string, DriveQueue> queues = new(StringComparer.OrdinalIgnoreCase);
@@ -202,8 +297,7 @@ namespace search.Models
         {
             var w = new FileSystemWatcher(path)
             {
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Attributes | NotifyFilters.Size |
-                    NotifyFilters.LastWrite | NotifyFilters.LastAccess | NotifyFilters.CreationTime,
+                NotifyFilter = WatcherNotifyFilter,
                 IncludeSubdirectories = true
             };
             FileSystemEventHandler handler = (o, e) => queue.Enqueue(FsEvent.From(e));

@@ -48,6 +48,9 @@ namespace search.Core
         const uint FSCTL_READ_USN_JOURNAL = 0x000900bb;
         const uint FSCTL_READ_UNPRIVILEGED_USN_JOURNAL = 0x000903ab;
         const uint FSCTL_CREATE_USN_JOURNAL = 0x000900e7;
+        //Keep live delivery enabled. Return-only-on-close can suppress intermediate
+        //records, but a long-open writer would then violate the sub-second grid target.
+        internal const uint ReturnOnlyOnClose = 0;
 
         const int ERROR_INVALID_FUNCTION = 1;
         const int ERROR_ACCESS_DENIED = 5;
@@ -139,7 +142,7 @@ namespace search.Core
             {
                 BitConverter.GetBytes(position).CopyTo(readInput, 0);       //StartUsn
                 BitConverter.GetBytes(ReasonMask).CopyTo(readInput, 8);     //ReasonMask
-                BitConverter.GetBytes(0u).CopyTo(readInput, 12);            //ReturnOnlyOnClose
+                BitConverter.GetBytes(ReturnOnlyOnClose).CopyTo(readInput, 12);
                 //Finite wait, never 0=forever: Dispose of a handle with a blocked FSCTL on it
                 //waits for that FSCTL, so the reader must wake periodically to notice a stop
                 BitConverter.GetBytes(2UL).CopyTo(readInput, 16);           //Timeout

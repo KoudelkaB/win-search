@@ -301,16 +301,27 @@ namespace search
             //navigation state, breaking SHIFT+Up/Down selection on unrelated file system changes.
             Model.RowsRefreshRequested += nodes => Dispatcher.Invoke(() =>
             {
-                foreach (var node in nodes)
+                IEnumerable<ListViewItem> rows;
+                if (nodes.Length <= 8)
                 {
-                    if (filesView.ItemContainerGenerator.ContainerFromItem(node) is ListViewItem row)
-                    {
-                        //INode raises no change notifications => rebind the row to re-read its values.
-                        //Off-screen rows need nothing: virtualization rebinds them when realized.
-                        var context = row.DataContext;
-                        row.DataContext = null;
-                        row.DataContext = context;
-                    }
+                    rows = nodes.Select(node => filesView.ItemContainerGenerator.ContainerFromItem(node))
+                        .OfType<ListViewItem>();
+                }
+                else
+                {
+                    //A storm may change thousands of off-screen nodes. Walk the small
+                    //realized visual tree once instead of asking the item generator about
+                    //every changed node in the 100k-row published window.
+                    var changed = new HashSet<object>(nodes, ReferenceEqualityComparer.Instance);
+                    rows = RealizedRows(filesView).Where(row => changed.Contains(row.DataContext));
+                }
+                foreach (var row in rows.ToArray())
+                {
+                    //INode raises no change notifications => rebind the row to re-read its values.
+                    //Off-screen rows need nothing: virtualization rebinds them when realized.
+                    var context = row.DataContext;
+                    row.DataContext = null;
+                    row.DataContext = context;
                 }
             });
         }
@@ -2484,6 +2495,21 @@ namespace search
                 if (nested != null) return nested;
             }
             return null;
+        }
+
+        static IEnumerable<ListViewItem> RealizedRows(DependencyObject parent)
+        {
+            if (parent == null) yield break;
+            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, index);
+                if (child is ListViewItem row)
+                {
+                    yield return row;
+                    continue; //No result-row container is nested inside another row
+                }
+                foreach (var nested in RealizedRows(child)) yield return nested;
+            }
         }
 
         void InlineNameEditor_KeyDown(object sender, KeyEventArgs e)

@@ -2,6 +2,7 @@ using SharpCompress.Archives;
 using SharpCompress.Writers.Zip;
 using System;
 using System.ComponentModel;
+using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -33,6 +34,78 @@ namespace search.Tests
         public void BulkRemovalRefreshesOnlyForWindowBackfillOrSizeOrdering(
             int itemCount, string sort, bool visibleRowsRemoved, bool expected)
             => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(itemCount, sort, visibleRowsRemoved));
+
+        [Theory]
+        [InlineData(null, false)]
+        [InlineData("+Name", false)]
+        [InlineData("-Folder", false)]
+        [InlineData("+FullName", false)]
+        [InlineData("+C", false)]
+        [InlineData("+Size", true)]
+        [InlineData("-LastChangeTime", true)]
+        [InlineData("+LastAccessTime", true)]
+        public void MetadataOnlyChangesMoveRowsOnlyForMetadataSorts(string sort, bool expected)
+            => Assert.Equal(expected, SearchModel.MetadataSortMayMove(sort));
+
+        [Fact]
+        public void WatcherChangeWindowCoalescesDataButNotAcrossStructuralEvents()
+        {
+            var firstA = new FsEvent(WatcherChangeTypes.Changed, @"C:\a.txt");
+            var finalA = new FsEvent(WatcherChangeTypes.Changed, @"C:\A.txt");
+            var changedB = new FsEvent(WatcherChangeTypes.Changed, @"C:\b.txt");
+            var created = new FsEvent(WatcherChangeTypes.Created, @"C:\folder");
+            var afterCreateA = new FsEvent(WatcherChangeTypes.Changed, @"C:\a.txt");
+            var finalAfterCreateA = new FsEvent(WatcherChangeTypes.Changed, @"C:\A.txt");
+            var deleted = new FsEvent(WatcherChangeTypes.Deleted, @"C:\old.txt");
+
+            var result = FSChangeProcessor.CoalesceChangedEvents(new[]
+            {
+                firstA, finalA, changedB, created, afterCreateA, finalAfterCreateA, deleted
+            });
+
+            Assert.Equal(5, result.Length);
+            Assert.Same(finalA, result[0]);
+            Assert.Same(changedB, result[1]);
+            Assert.Same(created, result[2]);
+            Assert.Same(finalAfterCreateA, result[3]);
+            Assert.Same(deleted, result[4]);
+        }
+
+        [Fact]
+        public void LiveUpdateWindowsStayBelowOneSecondAndIgnoreLastAccessNoise()
+        {
+            Assert.InRange(FSChangeProcessor.NormalCoalesceWindowMs, 1, 999);
+            Assert.InRange(FSChangeProcessor.StormCoalesceWindowMs, FSChangeProcessor.NormalCoalesceWindowMs, 999);
+            Assert.True(FSChangeProcessor.WatcherNotifyFilter.HasFlag(NotifyFilters.LastWrite));
+            Assert.False(FSChangeProcessor.WatcherNotifyFilter.HasFlag(NotifyFilters.LastAccess));
+            Assert.Equal(0u, search.Core.UsnJournal.ReturnOnlyOnClose);
+        }
+
+        [Fact]
+        public void BulkGridReplacementUsesOneResetOnTheSameCollection()
+        {
+            var rows = new RangeObservableCollection<int>();
+            rows.AddRange(new[] { 1, 2, 3 });
+            var resets = 0;
+            rows.CollectionChanged += (_, e) =>
+            {
+                if (e.Action == NotifyCollectionChangedAction.Reset) resets++;
+            };
+
+            rows.ReplaceRange(new[] { 4, 5 });
+
+            Assert.Equal(new[] { 4, 5 }, rows);
+            Assert.Equal(1, resets);
+        }
+
+        [Fact]
+        public void BulkGridMergePreservesSortAndPublishedLimit()
+        {
+            var merged = SearchModel.MergeSortedWindow(
+                new[] { 1, 3, 5 }, new[] { 2, 4, 6 }, (a, b) => a.CompareTo(b), 5);
+
+            Assert.Equal(new[] { 1, 2, 3, 4, 5 }, merged);
+        }
 
         [Theory]
         [InlineData("+Name", ListSortDirection.Ascending)]
