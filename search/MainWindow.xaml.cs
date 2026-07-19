@@ -3010,12 +3010,18 @@ namespace search
                         var sign = sameColumn && displayedSort[0] == '+' ? '-' : '+';
                         var newSort = sign + sortBy;
 
+                        var watch = System.Diagnostics.Stopwatch.StartNew();
                         await Model.Update(newSort: newSort);
+                        var updateMs = watch.ElapsedMilliseconds;
                         ShowSortIndicator(newSort);
 
                         // ListView updates are rendered after this handler yields to the
                         // dispatcher. Keep the wait cursor until that render has completed.
-                        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+                        // Loaded runs right after the pending layout/render pass; ContextIdle
+                        // sits BELOW Background, so it starved behind queued background
+                        // publishes during FS activity and held the cursor for seconds.
+                        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
+                        $"column sort {newSort}: update {updateMs} ms, render {watch.ElapsedMilliseconds - updateMs} ms".Debug();
                     }
                 }
             }

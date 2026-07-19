@@ -27,7 +27,7 @@ namespace search.Models
         readonly Func<FsEvent, Task> process; //Enqueue into the drive's serialized queue
         readonly Action rescan;                 //Journal history lost => rescan this drive
         readonly Action<UsnDriveWatcher> dead;  //Journal unreadable for good => switch the drive to a watcher
-        readonly NonBlocking.ConcurrentDictionary<ulong, INode> frnMap = new();
+        readonly FrnMap frnMap = new();
         volatile bool stop;
 
         /// <summary>
@@ -74,12 +74,7 @@ namespace search.Models
         /// FRN; walked FileNodes do not (map stays empty and every record degrades to the
         /// resolve-or-reconcile path, still correct).
         /// </summary>
-        public void Populate(IEnumerable<INode> nodes)
-        {
-            frnMap.Clear();
-            foreach (var n in nodes)
-                if (n.Frn != 0) frnMap[n.Frn] = n;
-        }
+        public void Populate(IEnumerable<INode> nodes) => frnMap.Populate(nodes);
 
         void Loop()
         {
@@ -175,7 +170,7 @@ namespace search.Models
                 //nothing-indexed proof below needs it even when verification fails
                 var lastKnown = frnMap.TryGetValue(r.Frn, out var known) ? known.FullName : null;
                 var path = MapPath(r.Frn) ?? PathFromRecord(r);
-                frnMap.TryRemove(r.Frn, out _);
+                frnMap.Remove(r.Frn);
                 if (path != null)
                 {
                     ghosts.Remove(r.Frn);
@@ -308,7 +303,7 @@ namespace search.Models
             var live = journal.TryResolvePath(frn);
             if (live == null)
             {
-                frnMap.TryRemove(frn, out _);
+                frnMap.Remove(frn);
                 return null;
             }
             Remap(frn, live);
@@ -323,7 +318,147 @@ namespace search.Models
         /// itself - it verifies against the live index or the disk like any entry.
         /// </summary>
         void Remap(ulong frn, string path)
-            => frnMap[frn] = FSChangeProcessor.Lookup(path) ?? new PathNode(path);
+            => frnMap.Set(frn, FSChangeProcessor.Lookup(path) ?? new PathNode(path));
+
+        /// <summary>
+        /// FRN -> node map backed by fixed-size pages indexed by MFT entry number (the low
+        /// 48 bits of the FRN). Dense MFT ranges retain the flat-array speed and 16-byte
+        /// slot cost, while sparse or corrupt high record numbers allocate only their own
+        /// pages instead of an array up to max(FRN). The stored full FRN must match exactly,
+        /// so a reused record (same entry, new sequence) never resolves to the old file.
+        /// Pages are published as an immutable table. Lookups are lock-free; Populate,
+        /// Clear, Set and Remove serialize publication/mutation so watcher changes arriving
+        /// during a repopulation wait and are applied to the new table rather than lost.
+        /// </summary>
+        internal sealed class FrnMap
+        {
+            const ulong EntryMask = 0xffffffffffff;
+            const int PageBits = 12;
+            const int PageSize = 1 << PageBits;
+            const ulong PageMask = PageSize - 1;
+
+            sealed class Page
+            {
+                public readonly ulong[] Frns = new ulong[PageSize]; //Full FRN per slot; 0 = free
+                public readonly INode[] Nodes = new INode[PageSize];
+            }
+
+            sealed class PageTable
+            {
+                public static PageTable Empty() => new(new Dictionary<ulong, Page>(), new());
+                public readonly Dictionary<ulong, Page> Pages;
+                public readonly NonBlocking.ConcurrentDictionary<ulong, INode> Sparse;
+                public PageTable(Dictionary<ulong, Page> pages, NonBlocking.ConcurrentDictionary<ulong, INode> sparse)
+                {
+                    Pages = pages;
+                    Sparse = sparse;
+                }
+            }
+
+            readonly object mutationLock = new();
+            volatile PageTable pageTable = PageTable.Empty();
+
+            public bool TryGetValue(ulong frn, out INode node)
+            {
+                var entry = frn & EntryMask;
+                var table = pageTable;
+                if (table.Pages.TryGetValue(entry >> PageBits, out var page))
+                {
+                    var slot = (int)(entry & PageMask);
+                    node = page.Frns[slot] == frn ? page.Nodes[slot] : null;
+                    if (node != null) return true;
+                }
+                return table.Sparse.TryGetValue(frn, out node);
+            }
+
+            public void Set(ulong frn, INode node)
+            {
+                lock (mutationLock)
+                {
+                    var entry = frn & EntryMask;
+                    if (!pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
+                    {
+                        pageTable.Sparse[frn] = node;
+                        return;
+                    }
+                    var slot = (int)(entry & PageMask);
+                    page.Nodes[slot] = node;
+                    page.Frns[slot] = frn;
+                    pageTable.Sparse.TryRemove(frn, out _);
+                }
+            }
+
+            public void Remove(ulong frn)
+            {
+                lock (mutationLock)
+                {
+                    var entry = frn & EntryMask;
+                    if (pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
+                    {
+                        var slot = (int)(entry & PageMask);
+                        if (page.Frns[slot] == frn) //Another sequence may own the slot by now
+                        {
+                            page.Frns[slot] = 0;
+                            page.Nodes[slot] = null;
+                        }
+                    }
+                    pageTable.Sparse.TryRemove(frn, out _);
+                }
+            }
+
+            public void Clear()
+            {
+                lock (mutationLock)
+                {
+                    pageTable = PageTable.Empty();
+                }
+            }
+
+            /// <summary>
+            /// (Re)fill from a drive scan in one pass. Only pages containing live records
+            /// are allocated, bounding memory independently of the highest record number.
+            /// </summary>
+            public void Populate(IEnumerable<INode> nodes)
+            {
+                lock (mutationLock)
+                {
+                    var pages = new Dictionary<ulong, Page>();
+                    var sparse = new NonBlocking.ConcurrentDictionary<ulong, INode>();
+                    //At most ~64 MiB of dense pages. The count-derived limit requires a
+                    //page to average at least 25% occupancy; excess sparse ranges retain
+                    //dictionary storage instead of amplifying one record into a 64 KiB page.
+                    var pageLimit = 1024;
+                    if (nodes.TryGetNonEnumeratedCount(out var nodeCount))
+                    {
+                        var densePages = Math.Max(1L, ((long)nodeCount + PageSize - 1) / PageSize);
+                        pageLimit = (int)Math.Min(1024, densePages * 4);
+                    }
+                    foreach (var n in nodes)
+                    {
+                        var frn = n.Frn;
+                        if (frn == 0) continue;
+                        var entry = frn & EntryMask;
+                        var pageIndex = entry >> PageBits;
+                        if (!pages.TryGetValue(pageIndex, out var page))
+                        {
+                            if (pages.Count >= pageLimit)
+                            {
+                                sparse[frn] = n;
+                                continue;
+                            }
+                            pages.Add(pageIndex, page = new Page());
+                        }
+                        var slot = (int)(entry & PageMask);
+                        page.Nodes[slot] = n;
+                        page.Frns[slot] = frn;
+                    }
+                    //Set/Remove wait on mutationLock and therefore apply after this fresh
+                    //table is visible. No event delta from the population window is lost.
+                    pageTable = pages.Count == 0 && sparse.IsEmpty
+                        ? PageTable.Empty() : new PageTable(pages, sparse);
+                }
+            }
+        }
 
         /// <summary>FRN-map placeholder carrying only a path - never indexed, never trusted unverified</summary>
         sealed class PathNode : INode

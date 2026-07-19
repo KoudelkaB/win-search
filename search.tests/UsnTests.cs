@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using search.Core;
 using search.Models;
 using Xunit;
@@ -82,6 +85,115 @@ namespace search.Tests
 
             //Nodes outside the MFT have no reference - the USN watcher must fall back for them
             Assert.Equal(0UL, new FileNode(Path.GetTempPath().TrimEnd('\\')).Frn);
+        }
+
+        /// <summary>Node carrying only an FRN - what the map stores and verifies elsewhere</summary>
+        sealed class FrnNode : INode
+        {
+            readonly ulong frn;
+            public FrnNode(ulong frn) => this.frn = frn;
+            public override ulong Frn => frn;
+            public override string FullName => @"C:\" + frn;
+            public override string Name => frn.ToString();
+            public override FileAttributes Attributes { get => 0; protected set { } }
+            public override ulong Size { get => 0; protected set { } }
+            public override DateTime CreationTime { get => default; protected set { } }
+            public override DateTime LastChangeTime { get => default; protected set { } }
+            public override DateTime LastAccessTime { get => default; protected set { } }
+        }
+
+        [Fact]
+        public void FrnMapResolvesExactReferencesOnly()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var frn = ((ulong)7 << 48) | 42;
+            map.Populate(new INode[] { new FrnNode(frn), new FrnNode(0) }); //Frn 0 = walked node, never mapped
+
+            Assert.True(map.TryGetValue(frn, out var node));
+            Assert.Equal(frn, node.Frn);
+            Assert.False(map.TryGetValue(((ulong)8 << 48) | 42, out _)); //Reused record: same entry, newer sequence
+            Assert.False(map.TryGetValue(41, out _));
+            Assert.False(map.TryGetValue(0, out _));
+        }
+
+        [Fact]
+        public void FrnMapSetRemoveAndOverflowBehaveLikeTheDictionary()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var scanned = ((ulong)1 << 48) | 5;
+            map.Populate(new INode[] { new FrnNode(scanned) });
+
+            var beyond = ((ulong)3 << 48) | 1000; //The MFT grew past the scanned records
+            map.Set(beyond, new FrnNode(beyond));
+            Assert.True(map.TryGetValue(beyond, out _));
+
+            var reused = ((ulong)2 << 48) | 5; //The slot's entry was freed and reused
+            map.Set(reused, new FrnNode(reused));
+            Assert.False(map.TryGetValue(scanned, out _));
+            Assert.True(map.TryGetValue(reused, out _));
+
+            map.Remove(((ulong)9 << 48) | 5); //A stale reference must not evict the new owner
+            Assert.True(map.TryGetValue(reused, out _));
+            map.Remove(reused);
+            Assert.False(map.TryGetValue(reused, out _));
+
+            map.Clear();
+            map.Set(beyond, new FrnNode(beyond)); //Cleared map still accepts entries (overflow)
+            Assert.True(map.TryGetValue(beyond, out _));
+            map.Populate(Array.Empty<INode>()); //Repopulation resets the overflow too
+            Assert.False(map.TryGetValue(beyond, out _));
+        }
+
+        [Fact]
+        public void FrnMapHandlesSparseHighRecordNumbersWithoutRangeSizedAllocation()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var sparse = ((ulong)4 << 48) | (1UL << 40) | 17;
+
+            map.Populate(new INode[] { new FrnNode(sparse) });
+
+            Assert.True(map.TryGetValue(sparse, out var node));
+            Assert.Equal(sparse, node.Frn);
+        }
+
+        [Fact]
+        public async Task FrnMapKeepsWatcherUpdatesArrivingDuringPopulation()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var scanned = ((ulong)1 << 48) | 5;
+            var changed = ((ulong)2 << 48) | 6;
+            using var populationEntered = new ManualResetEventSlim();
+            using var releasePopulation = new ManualResetEventSlim();
+            using var updateStarted = new ManualResetEventSlim();
+
+            IEnumerable<INode> BlockingScan()
+            {
+                populationEntered.Set();
+                releasePopulation.Wait();
+                yield return new FrnNode(scanned);
+            }
+
+            var populate = Task.Run(() => map.Populate(BlockingScan()));
+            Task update = null;
+            try
+            {
+                Assert.True(populationEntered.Wait(TimeSpan.FromSeconds(5)));
+                update = Task.Run(() =>
+                {
+                    updateStarted.Set();
+                    map.Set(changed, new FrnNode(changed));
+                });
+                Assert.True(updateStarted.Wait(TimeSpan.FromSeconds(5)));
+                Assert.False(update.IsCompleted); //Set is waiting for the population swap
+            }
+            finally
+            {
+                releasePopulation.Set();
+            }
+            await Task.WhenAll(populate, update);
+
+            Assert.True(map.TryGetValue(scanned, out _));
+            Assert.True(map.TryGetValue(changed, out _));
         }
 
         [Fact]

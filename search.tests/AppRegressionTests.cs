@@ -26,14 +26,35 @@ namespace search.Tests
             => Assert.Equal(root, SearchModel.IsDriveRoot(path));
 
         [Theory]
-        [InlineData(100_000, "+Name", true, true)]   //Refill the capped window after visible removals
-        [InlineData(100_000, "+Name", false, false)] //An unseen removal cannot leave a hole
-        [InlineData(50_000, "+Size", false, true)]   //Surviving ancestor sizes may need reordering
-        [InlineData(50_000, "-Size", true, true)]
-        [InlineData(50_000, "+Name", true, false)]
+        [InlineData(true, "+Name", true, true)]   //Refill the capped window after visible removals
+        [InlineData(true, "+Name", false, false)] //An unseen removal cannot leave a hole
+        [InlineData(false, "+Size", false, true)] //Surviving ancestor sizes may need reordering
+        [InlineData(false, "-Size", true, true)]
+        [InlineData(false, "+Name", true, false)]
         public void BulkRemovalRefreshesOnlyForWindowBackfillOrSizeOrdering(
-            int itemCount, string sort, bool visibleRowsRemoved, bool expected)
-            => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(itemCount, sort, visibleRowsRemoved));
+            bool truncated, string sort, bool visibleRowsRemoved, bool expected)
+            => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(truncated, sort, visibleRowsRemoved));
+
+        [Theory]
+        [InlineData("+Name", "-Name", true, true)]
+        [InlineData("+Name", "+Size", true, true)]
+        [InlineData("+Name", "-Name", false, false)] //Exactly MaxItems can still be complete
+        [InlineData("+Name", "+Name", true, false)]
+        public void SortRefreshUsesPersistentTruncationState(
+            string currentSort, string newSort, bool truncated, bool expected)
+            => Assert.Equal(expected, SearchModel.SortChangeNeedsFullSource(currentSort, newSort, truncated));
+
+        [Theory]
+        [InlineData(false, false, true, true, false, true, true)]  //Complete 7k view: sort now, reconcile later
+        [InlineData(false, false, true, true, true, true, false)]  //Capped view needs the full source immediately
+        [InlineData(false, true, true, true, false, true, false)]  //A filter change cannot reuse current rows
+        [InlineData(true, false, true, true, false, true, false)]  //A data refresh remains authoritative
+        [InlineData(false, false, true, false, false, true, false)] //Canceled/partial publishing cannot be reused
+        [InlineData(false, false, true, true, false, false, false)] //Nothing to reconcile
+        public void CompleteSmallResultsCanSortBeforePendingReconciliation(bool dataRefresh,
+            bool filterChanged, bool sortChanged, bool complete, bool truncated, bool pending, bool expected)
+            => Assert.Equal(expected, SearchModel.CanResortPublishedItems(dataRefresh, filterChanged,
+                sortChanged, complete, truncated, pending));
 
         [Theory]
         [InlineData(null, false)]
@@ -105,6 +126,109 @@ namespace search.Tests
                 new[] { 1, 3, 5 }, new[] { 2, 4, 6 }, (a, b) => a.CompareTo(b), 5);
 
             Assert.Equal(new[] { 1, 2, 3, 4, 5 }, merged);
+        }
+
+        /// <summary>Path-less node with a controllable sort key - SelectTop only compares</summary>
+        sealed class KeyNode : INode
+        {
+            public KeyNode(ulong size) => Size = size;
+            public override FileAttributes Attributes { get => 0; protected set { } }
+            public override string Name => Size.ToString();
+            public override ulong Size { get; protected set; }
+            public override string FullName => @"C:\" + Name;
+            public override DateTime CreationTime { get => default; protected set { } }
+            public override DateTime LastChangeTime { get => default; protected set { } }
+            public override DateTime LastAccessTime { get => default; protected set { } }
+        }
+
+        [Fact]
+        public void FilteredSnapshotCacheAppliesSmallAddsAndRemovalsWithoutRebuildingBase()
+        {
+            var first = (INode)new KeyNode(1);
+            var removed = (INode)new KeyNode(2);
+            var added = (INode)new KeyNode(3);
+            var baseNodes = new[] { first, removed };
+            var cache = new SearchModel.SnapshotCache("", 10, baseNodes, new NodeFilter(""));
+
+            //The repeated "first" models insertion becoming visible to the live snapshot
+            //enumerator just before its version/delta publication.
+            var patched = cache.Patch(11, new[] { first, added }, new[] { removed });
+            var materialized = patched.Materialize(() => false);
+
+            Assert.Same(baseNodes, patched.Nodes); //The million-row base is reused
+            Assert.Equal(11, patched.Version);
+            Assert.Equal(new[] { first, added }, materialized);
+
+            var removedAgain = patched.Patch(12, Array.Empty<INode>(), new[] { first });
+            Assert.Equal(new[] { added }, removedAgain.Materialize(() => false));
+        }
+
+        [Fact]
+        public void BoundedSelectionMatchesAFullSortsWindowExactly()
+        {
+            var rnd = new Random(42);
+            var nodes = Enumerable.Range(0, 10_000)
+                .Select(_ => (INode)new KeyNode((ulong)rnd.Next(1_000_000_000))).ToArray();
+            Comparison<INode> bySizeDesc = (a, b) => b.Size.CompareTo(a.Size);
+
+            //The published window: same membership, same order as sort-everything-then-take
+            var window = SearchModel.SelectTop(nodes, bySizeDesc, 1000);
+            Assert.Equal(nodes.OrderByDescending(n => n.Size).Take(1000).Select(n => n.Size),
+                window.Select(n => n.Size));
+
+            //A window larger than the source degenerates to the full sort
+            var all = SearchModel.SelectTop(nodes, bySizeDesc, nodes.Length + 5);
+            Assert.Equal(nodes.OrderByDescending(n => n.Size).Select(n => n.Size),
+                all.Select(n => n.Size));
+        }
+
+        [Fact]
+        public void ScalarKeySelectionMatchesTheComparerExactly()
+        {
+            var rnd = new Random(11);
+            var nodes = Enumerable.Range(0, 10_000)
+                .Select(_ => (INode)new KeyNode((ulong)rnd.Next(1_000_000_000))).ToArray();
+            //'+Size' semantics: largest first, scalar key inverted accordingly
+            Comparison<INode> bySizeDesc = (a, b) => b.Size.CompareTo(a.Size);
+            var window = SearchModel.SelectTop(nodes, bySizeDesc, 1000, null, n => ulong.MaxValue - n.Size);
+            Assert.Equal(nodes.OrderByDescending(n => n.Size).Take(1000).Select(n => n.Size),
+                window.Select(n => n.Size));
+
+            //'-Size' semantics: smallest first, key used directly
+            Comparison<INode> bySizeAsc = (a, b) => a.Size.CompareTo(b.Size);
+            var ascending = SearchModel.SelectTop(nodes, bySizeAsc, 1000, null, n => n.Size);
+            Assert.Equal(nodes.OrderBy(n => n.Size).Take(1000).Select(n => n.Size),
+                ascending.Select(n => n.Size));
+
+            //Massive ties defeat the scalar quantile too - the comparer fallback must produce
+            //the exact window
+            var tied = Enumerable.Range(0, 50_000)
+                .Select(_ => (INode)new KeyNode((ulong)rnd.Next(3))).ToArray();
+            var tiedWindow = SearchModel.SelectTop(tied, bySizeDesc, 1000, null, n => ulong.MaxValue - n.Size);
+            Assert.Equal(tied.OrderByDescending(n => n.Size).Take(1000).Select(n => n.Size),
+                tiedWindow.Select(n => n.Size));
+        }
+
+        [Fact]
+        public void BoundedSelectionSurvivesMassiveKeyTies()
+        {
+            //Low-cardinality keys (content-search rank, zero sizes) defeat quantile pruning -
+            //the selection must detect that and still produce the exact window
+            var rnd = new Random(7);
+            var nodes = Enumerable.Range(0, 50_000)
+                .Select(_ => (INode)new KeyNode((ulong)rnd.Next(3))).ToArray();
+            Comparison<INode> bySizeDesc = (a, b) => b.Size.CompareTo(a.Size);
+
+            var window = SearchModel.SelectTop(nodes, bySizeDesc, 1000);
+            Assert.Equal(nodes.OrderByDescending(n => n.Size).Take(1000).Select(n => n.Size),
+                window.Select(n => n.Size));
+        }
+
+        [Fact]
+        public void BoundedSelectionHonorsCancellation()
+        {
+            var nodes = Enumerable.Range(0, 200_000).Select(i => (INode)new KeyNode((ulong)i));
+            Assert.Null(SearchModel.SelectTop(nodes, (a, b) => a.Size.CompareTo(b.Size), 10, () => true));
         }
 
         [Theory]

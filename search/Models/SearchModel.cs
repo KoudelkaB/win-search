@@ -72,10 +72,157 @@ namespace search.Models
         internal const string DefaultSort = "+" + nameof(INode.LastChangeTime);
         string filter = null, sort = DefaultSort;
         NodeFilter nodeFilter = new NodeFilter("");
+        /// <summary>
+        /// Post-filter snapshot of the index, reused while index MEMBERSHIP and the filter
+        /// are unchanged - repeated column sorts and coalesced refreshes then skip the
+        /// full-dictionary copy, the most memory-bound step of a query. Node metadata may
+        /// mutate freely underneath: the list holds references and every sort reads live
+        /// values. Small add/remove batches advance <see cref="filesVersion"/> and patch an
+        /// immutable cache overlay; large changes (and directory changes for an explicit
+        /// directory filter) retire it. A drive publish additionally brackets its replacement with a
+        /// bulk-mutation epoch, so a partially replaced index is never cached or published.
+        /// </summary>
+        internal sealed class SnapshotCache
+        {
+            const int MaxPatchedNodes = 1024;
+            public readonly string Filter;
+            public readonly int Version;
+            public readonly IReadOnlyList<INode> Nodes;
+            public readonly NodeFilter Matcher;
+            public readonly INode[] Added;
+            public readonly HashSet<INode> Removed;
+            public bool HasDeltas => Added.Length != 0 || Removed.Count != 0;
+
+            public SnapshotCache(string filter, int version, IReadOnlyList<INode> nodes, NodeFilter matcher,
+                INode[] added = null, HashSet<INode> removed = null)
+            {
+                Filter = filter;
+                Version = version;
+                Nodes = nodes;
+                Matcher = matcher;
+                Added = added ?? Array.Empty<INode>();
+                Removed = removed ?? new HashSet<INode>(ReferenceEqualityComparer.Instance);
+            }
+
+            public SnapshotCache Patch(int version, IReadOnlyList<INode> added, IReadOnlyList<INode> removed)
+            {
+                if (Added.Length + Removed.Count + added.Count + removed.Count > MaxPatchedNodes)
+                    return null; //A large structural change is cheaper and safer to rebuild.
+
+                var nextAdded = new List<INode>(Added);
+                var nextRemoved = new HashSet<INode>(Removed, ReferenceEqualityComparer.Instance);
+                bool Matches(INode node) => Matcher.MatchesAll || Matcher.Matches(node);
+
+                foreach (var node in removed)
+                {
+                    if (node == null) continue;
+                    //Always remember a removal. The node may no longer match after mutable
+                    //metadata/path state changed, and it may already be present in Added.
+                    //Removing from both sides is harmless when the base never contained it.
+                    var at = nextAdded.FindIndex(x => ReferenceEquals(x, node));
+                    if (at >= 0) nextAdded.RemoveAt(at);
+                    nextRemoved.Add(node);
+                }
+                foreach (var node in added)
+                {
+                    if (node == null || !Matches(node)) continue;
+                    //Keep the addition even when the same instance was removed. Materialize
+                    //de-duplicates it against the base, which also closes the narrow race where
+                    //dictionary insertion becomes visible just before its version bump.
+                    nextRemoved.Remove(node);
+                    if (!nextAdded.Any(x => ReferenceEquals(x, node))) nextAdded.Add(node);
+                }
+                return new SnapshotCache(Filter, version, Nodes, Matcher, nextAdded.ToArray(), nextRemoved);
+            }
+
+            public IReadOnlyList<INode> Materialize(Func<bool> isCanceled)
+            {
+                if (!HasDeltas) return Nodes;
+                var result = new List<INode>(Math.Max(0, Nodes.Count + Added.Length - Removed.Count));
+                var pendingAdded = Added.Length == 0 ? null
+                    : new HashSet<INode>(Added, ReferenceEqualityComparer.Instance);
+                var seen = 0;
+                foreach (var node in Nodes)
+                {
+                    if ((++seen & 0x1FFF) == 0 && isCanceled()) return null;
+                    if (Removed.Contains(node)) continue;
+                    result.Add(node);
+                    pendingAdded?.Remove(node);
+                }
+                if (pendingAdded != null)
+                    foreach (var node in Added)
+                        if (pendingAdded.Contains(node)) result.Add(node);
+                return result;
+            }
+        }
+        static readonly object snapshotCacheLock = new();
+        static volatile SnapshotCache snapshotCache;
+        static int filesVersion; //Bumped by every index membership change
+        static void BumpFilesVersion()
+        {
+            lock (snapshotCacheLock)
+            {
+                Interlocked.Increment(ref filesVersion);
+                snapshotCache = null;
+            }
+        }
+        static void PatchFilesVersion(IReadOnlyList<INode> added, IReadOnlyList<INode> removed)
+        {
+            lock (snapshotCacheLock)
+            {
+                var previous = Volatile.Read(ref filesVersion);
+                var version = Interlocked.Increment(ref filesVersion);
+                var cache = snapshotCache;
+                try
+                {
+                    //Only an explicit directory criterion caches ancestor identity. Other
+                    //filters can patch small directory changes just like file changes.
+                    var changesResolvedDirectory = cache?.Matcher.DependsOnDirectoryIdentity == true
+                        && (added.Any(n => n?.IsDirectory == true)
+                        || removed.Any(n => n?.IsDirectory == true));
+                    snapshotCache = !changesResolvedDirectory && cache != null && cache.Version == previous
+                        ? cache.Patch(version, added, removed)
+                        : null;
+                }
+                catch
+                {
+                    //Cache maintenance must never break the authoritative index mutation.
+                    snapshotCache = null;
+                }
+            }
+        }
+        static void PatchFileAdded(INode node)
+            => PatchFilesVersion(new[] { node }, Array.Empty<INode>());
+        static void PatchFileRemoved(INode node)
+            => PatchFilesVersion(Array.Empty<INode>(), new[] { node });
+        static int bulkFilesMutations;
+        static int bulkFilesVersion;
+        static void BeginBulkFilesMutation() => Interlocked.Increment(ref bulkFilesMutations);
+        static void EndBulkFilesMutation()
+        {
+            //Publish the completed epoch before readers are allowed to observe an idle index.
+            Interlocked.Increment(ref bulkFilesVersion);
+            Interlocked.Decrement(ref bulkFilesMutations);
+        }
+        static bool TryCaptureBulkFilesVersion(out int version)
+        {
+            version = 0;
+            if (Volatile.Read(ref bulkFilesMutations) != 0) return false;
+            version = Volatile.Read(ref bulkFilesVersion);
+            return Volatile.Read(ref bulkFilesMutations) == 0;
+        }
+        static bool IsBulkFilesVersionStable(int version)
+            => Volatile.Read(ref bulkFilesMutations) == 0
+                && Volatile.Read(ref bulkFilesVersion) == version;
+
         volatile object lastUpdate = DateTime.MinValue;
         volatile bool itemsComplete = true; //false => Items hold only a part of the filtered result (publishing was canceled)
+        //True means Items are only the published MaxItems window. Unlike Items.Count this
+        //survives incremental removals, so a column change never sorts an incomplete window.
+        volatile bool itemsTruncated;
         volatile bool refreshPending = false; //true => files changed and no refresh published since => Items lag behind files
         int refreshQueued = 0; //1 => a data refresh is already queued and covers all changes arriving before it runs
+        int deferredReconciliationQueued; //1 => a fast local sort has already queued its authoritative refresh
         volatile Task dataRefreshPublished = Task.CompletedTask; //Completes when the queued data refresh has really hit the grid
         const int MaxItems = 100000; //Publish just the first 100 000 filtered items
 
@@ -128,7 +275,10 @@ namespace search.Models
                 // Do not run for out dated filter/sort/files
                 bool IsCanceled() => !ReferenceEquals(update, lastUpdate);
 
+                var waitWatch = Stopwatch.StartNew();
+                var queueDeferredReconciliation = false;
                 await Updating.WaitAsync();
+                var waitMs = waitWatch.ElapsedMilliseconds;
                 try
                 {
                     if (dataRefresh)
@@ -142,14 +292,29 @@ namespace search.Models
                     // null in filters and sorters means unchanged
                     newFilter ??= filter;
                     newSort ??= sort;
+                    var filterChanged = filter != newFilter;
+                    var sortChanged = sort != newSort;
+                    //A complete small result can be re-sorted immediately even when files
+                    //changed. The authoritative refilter follows asynchronously, so a rare
+                    //full-index reconciliation never holds the header click for seconds.
+                    var deferReconciliation = CanResortPublishedItems(dataRefresh, filterChanged,
+                        sortChanged, itemsComplete, itemsTruncated, refreshPending);
                     var refresh = dataRefresh
-                        | filter != newFilter //refilter also on new filter
+                        | filterChanged //refilter also on new filter
                         | !itemsComplete //previous publishing was canceled => Items are partial and can not be resorted in place
-                        | refreshPending //files changed since the last published refresh => Items are stale
-                        //A sort-only change just reorders the published Items - they already hold the
-                        //complete filtered result. Only a window truncated at MaxItems needs the full
-                        //filtered source: the top of the new ordering may lie outside the window.
-                        | (sort != newSort && Items.Count >= MaxItems);
+                        | (refreshPending && !deferReconciliation) //small complete views reconcile after their immediate sort
+                        //A sort-only change can reorder Items only when they hold the complete
+                        //filtered result. The persistent flag matters after visible removals make
+                        //a capped window temporarily smaller than MaxItems.
+                        | SortChangeNeedsFullSource(sort, newSort, itemsTruncated);
+                    var refreshReasons = new List<string>();
+                    if (dataRefresh) refreshReasons.Add("data");
+                    if (filterChanged) refreshReasons.Add("filter");
+                    if (!itemsComplete) refreshReasons.Add("incomplete");
+                    if (refreshPending && !deferReconciliation) refreshReasons.Add("pending");
+                    if (SortChangeNeedsFullSource(sort, newSort, itemsTruncated)) refreshReasons.Add("truncated-sort");
+                    var refreshReason = deferReconciliation ? "items+deferred"
+                        : refreshReasons.Count == 0 ? "items" : string.Join("+", refreshReasons);
 
                     // Set current filter/sorter before possible canceling
                     filter = newFilter;
@@ -157,39 +322,55 @@ namespace search.Models
                     nodeFilter = new NodeFilter(filter);
 
                     if (IsCanceled()) return;
-                    var items = GetItems(refresh, IsCanceled);
-                    if (items == null || IsCanceled()) return;
+                    var queryWatch = Stopwatch.StartNew();
+                    var query = GetItems(refresh, IsCanceled);
+                    if (query == null || IsCanceled()) return;
+                    var items = query.Value.Items;
+                    var queryMs = queryWatch.ElapsedMilliseconds;
                     //These items were filtered from the current files => Items catch up on publish.
                     //Changes arriving from now on queue their own refresh and set the flag again.
                     if (refresh) refreshPending = false;
                     //Items is mutated on the UI thread (incremental updates) => the comparison may
                     //see a torn list; publish on any doubt instead of dropping the refresh
-                    try { if (items.IsIdentical(Items)) return; } catch { }
+                    try
+                    {
+                        if (items.IsIdentical(Items))
+                        {
+                            itemsTruncated = query.Value.Truncated;
+                            queueDeferredReconciliation = deferReconciliation;
+                            $"update {(dataRefresh ? "refresh" : "user")} sort={sort} rows={items.Count}: wait {waitMs} ms, reason={refreshReason}, cache={query.Value.CacheStatus}, query {queryMs} ms, publish 0 ms".Debug();
+                            return;
+                        }
+                    }
+                    catch { }
 
-                    //Publish progressively in batches - the first results show immediately
-                    //and the UI thread is never blocked for long (input has higher priority)
-                    const int batchSize = 25000;
-                    var target = new RangeObservableCollection<INode>();
+                    //Publish in ONE pass on the existing collection. Every extra batch costs a
+                    //full collection Reset - viewport regeneration plus a render pass - and
+                    //exchanging the ItemsSource instance also resets the scroll and defeats
+                    //container recycling. The filter+sort is fast now, so this single Reset is
+                    //the moment the user perceives as the sort completing. The UI thread block
+                    //is only the raw list copy - WPF processes the Reset at render time.
                     var applied = false;
                     itemsComplete = false;
-                    for (int i = 0; (i == 0 || i < items.Count) && !IsCanceled(); i += batchSize)
+                    await Dispatcher.InvokeAsync(() =>
                     {
-                        var batch = items.GetRange(i, Math.Min(batchSize, items.Count - i));
-                        await Dispatcher.InvokeAsync(() =>
+                        if (IsCanceled()) return; //Do not flash outdated results
+                        BeforeItemsExchange();
+                        if (Items is RangeObservableCollection<INode> target) target.ReplaceRange(items);
+                        else
                         {
-                            if (IsCanceled()) return; //Do not flash outdated results
-                            if (!applied)
-                            {
-                                BeforeItemsExchange();
-                                Items = target;
-                                applied = true;
-                            }
-                            target.AddRange(batch);
-                            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
-                        }, DispatcherPriority.Background);
-                    }
+                            var fresh = new RangeObservableCollection<INode>();
+                            fresh.AddRange(items);
+                            Items = fresh;
+                        }
+                        itemsTruncated = query.Value.Truncated;
+                        applied = true;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                        AfterItemsExchange();
+                    }, DispatcherPriority.Background);
                     itemsComplete = applied && !IsCanceled();
-                    if (applied) await Dispatcher.InvokeAsync(AfterItemsExchange);
+                    queueDeferredReconciliation = applied && deferReconciliation;
+                    $"update {(dataRefresh ? "refresh" : "user")} sort={sort} rows={items.Count}: wait {waitMs} ms, reason={refreshReason}, cache={query.Value.CacheStatus}, query {queryMs} ms, publish {queryWatch.ElapsedMilliseconds - queryMs} ms".Debug();
                 }
                 catch (Exception e)
                 {
@@ -200,6 +381,38 @@ namespace search.Models
                     if (!IsCanceled()) Filtering = false; //When canceled the newer update owns the indicator
                     Updating.Release(); //Allow next change
                     published?.SetResult();
+                    if (queueDeferredReconciliation) QueueDeferredReconciliation();
+                }
+            });
+        }
+
+        internal static bool CanResortPublishedItems(bool dataRefresh, bool filterChanged, bool sortChanged,
+            bool complete, bool truncated, bool refreshPending)
+            => !dataRefresh && !filterChanged && sortChanged && complete && !truncated && refreshPending;
+
+        internal static bool SortChangeNeedsFullSource(string currentSort, string newSort, bool truncated)
+            => truncated && currentSort != newSort;
+
+        void QueueDeferredReconciliation()
+        {
+            if (Interlocked.Exchange(ref deferredReconciliationQueued, 1) == 1) return;
+            //A data refresh that the user sort superseded still owns refreshQueued until its
+            //finally block completes. Wait for that exact task, then enqueue one fresh run
+            //under the newly selected sort without extending the header-click await.
+            var supersededRefresh = dataRefreshPublished;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await supersededRefresh;
+                    if (refreshPending) await Update();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref deferredReconciliationQueued, 0);
+                    //A newer user sort may have canceled the run while this queue bit was
+                    //owned. Hand the still-pending reconciliation to a fresh worker.
+                    if (refreshPending) QueueDeferredReconciliation();
                 }
             });
         }
@@ -284,6 +497,10 @@ namespace search.Models
                     if (include)
                     {
                         var at = BinaryIndex(items, node, compare);
+                        //A new match arriving when the complete result already fills the
+                        //window creates an unknown tail even when it sorts beyond the window.
+                        if (index < 0 && !itemsTruncated && items.Count >= MaxItems)
+                            itemsTruncated = true;
                         if (at < items.Count || items.Count < MaxItems) //Beyond the published window => skip
                         {
                             items.Insert(at, node);
@@ -337,7 +554,7 @@ namespace search.Models
                 var items = Items;
                 var changedSet = new HashSet<object>(changed, ReferenceEqualityComparer.Instance);
                 var originalCount = items.Count;
-                var capped = originalCount >= MaxItems;
+                var capped = itemsTruncated || originalCount >= MaxItems;
                 //Changed nodes already carry their new values, so the old last item is not
                 //a trustworthy boundary when it belongs to this batch. Use the last
                 //unchanged row; it is slightly stricter and therefore never admits a node
@@ -354,11 +571,13 @@ namespace search.Models
                 }
 
                 var candidates = new List<INode>(changed.Length);
+                var matchingChanged = 0;
                 var needsRefresh = capped && oldBoundary == null;
                 foreach (var node in changed)
                 {
                     if (!files.TryGetValue(node, out var current) || !ReferenceEquals(current, node) || !nf.Matches(node))
                         continue;
+                    matchingChanged++;
 
                     if (oldBoundary != null && compare(node, oldBoundary) > 0)
                     {
@@ -374,6 +593,10 @@ namespace search.Models
 
                 var merged = MergeSortedWindow(kept, candidates, compare, MaxItems);
                 if (capped && merged.Count < MaxItems) needsRefresh = true;
+                //When the previous result was complete, kept plus every matching changed
+                //node is the complete post-change set (including new nodes beyond the old
+                //boundary that were intentionally not added to candidates).
+                itemsTruncated = itemsTruncated || kept.Count + matchingChanged > MaxItems;
 
                 var identical = merged.Count == originalCount;
                 for (var i = 0; identical && i < merged.Count; i++)
@@ -471,13 +694,43 @@ namespace search.Models
 
         int FoundRank(INode x) => FoundIn(x) switch { true => 1, false => 2, null => x.IsDirectory ? 4 : 3 };
 
+        readonly struct QueryResult
+        {
+            public readonly List<INode> Items;
+            public readonly bool Truncated;
+            public readonly string CacheStatus;
+            public QueryResult(List<INode> items, bool truncated, string cacheStatus)
+            {
+                Items = items;
+                Truncated = truncated;
+                CacheStatus = cacheStatus;
+            }
+        }
+
+        static List<INode> CopyFilesCancellable(Func<bool> isCanceled)
+        {
+            //NonBlocking.ConcurrentDictionary.Values eagerly copies the entire dictionary
+            //inside one non-cancellable call. Its live enumerator lets a superseding user
+            //sort stop this copy every few thousand nodes; version validation below turns
+            //any concurrent membership change into a retry.
+            var result = new List<INode>(files.Count);
+            var seen = 0;
+            foreach (var pair in files)
+            {
+                if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
+                result.Add(pair.Value);
+            }
+            return result;
+        }
+
         /// <summary>
-        /// Get items according to current filter and sort
+        /// Get items according to current filter and sort. Truncated records whether the
+        /// returned rows are only the MaxItems window of a larger filtered result.
         /// </summary>
         /// <param name="refresh">refilter from files (false - use Items)</param>
         /// <param name="IsCanceled">Check if to cancel</param>
-        /// <returns></returns>
-        List<INode> GetItems(bool refresh, Func<bool> IsCanceled)
+        /// <returns>null when canceled</returns>
+        QueryResult? GetItems(bool refresh, Func<bool> IsCanceled)
         {
             //Cancel
             var cts = new CancellationTokenSource();
@@ -486,40 +739,106 @@ namespace search.Models
                 if (IsCanceled()) cts.Cancel();
                 return v;
             }
+            var retries = 0;
             while (!IsCanceled())
             {
                 try
                 {
-                    var src = (refresh ? files.Values.AsParallel() : Items.AsParallel()).WithCancellation(cts.Token);
-                    if (refresh && filter != null)
+                    IReadOnlyList<INode> all;
+                    var truncated = itemsTruncated;
+                    var bulkVersion = 0;
+                    var sourceVersion = 0;
+                    var cacheStatus = "items";
+                    SnapshotCache builtCache = null;
+                    if (refresh)
                     {
-                        src = src.Where(x => CancelOr(nodeFilter.Matches(x)));
-                    }
-                    if (!string.IsNullOrWhiteSpace(sort))
-                    {
-                        bool up = sort[0] == '+';
-                        void addSort<T>(Func<INode, T> s, bool _up) => src = _up ?
-                            src.OrderBy(x => CancelOr(s(x))) :
-                            src.OrderByDescending(x => CancelOr(s(x)));
-                        switch (sort.Substring(1))
+                        //A drive subtree is replaced in place. Wait until no replacement is
+                        //active, then verify the same completed epoch after filtering/sorting;
+                        //otherwise a point-in-time Values copy could still be a partial drive.
+                        if (!TryCaptureBulkFilesVersion(out bulkVersion))
                         {
-                            case "C": addSort(x => FoundRank(x), up); break;
-                            case nameof(INode.Name): addSort(x => x.Name, up); break;
-                            case nameof(INode.Size): addSort(x => x.Size, !up); break;
-                            case nameof(INode.LastChangeTime): addSort(x => x.LastChangeTime, !up); break;
-                            case nameof(INode.LastAccessTime): addSort(x => x.LastAccessTime, !up); break;
-                            //Sorted by the parent chains - no full path strings are built
-                            case nameof(INode.FullName):
-                                src = up ? src.OrderBy(x => CancelOr(x), NodePath.ByPath)
-                                         : src.OrderByDescending(x => CancelOr(x), NodePath.ByPath);
-                                break;
-                            case nameof(INode.Folder):
-                                src = up ? src.OrderBy(x => CancelOr(x), NodePath.ByFolderThenName)
-                                         : src.OrderByDescending(x => CancelOr(x), NodePath.ByFolderThenName);
-                                break;
+                            Thread.Sleep(1);
+                            continue;
                         }
+                        var cache = snapshotCache;
+                        sourceVersion = Volatile.Read(ref filesVersion);
+                        if (cache != null && cache.Version == sourceVersion && cache.Filter == filter)
+                        {
+                            cacheStatus = cache.HasDeltas ? "hit+delta" : "hit";
+                            all = cache.Materialize(IsCanceled);
+                            if (all == null) return null;
+                            //Compact the overlay after this reconciliation so later sorts
+                            //reuse one dense filtered list again.
+                            if (cache.HasDeltas)
+                                builtCache = new SnapshotCache(filter, sourceVersion, all, cache.Matcher);
+                        }
+                        else
+                        {
+                            cacheStatus = "miss";
+                            all = CopyFilesCancellable(IsCanceled);
+                            if (all == null) return null;
+                            if (sourceVersion != Volatile.Read(ref filesVersion)
+                                || !IsBulkFilesVersionStable(bulkVersion))
+                            {
+                                retries++;
+                                continue;
+                            }
+                            var nf = nodeFilter;
+                            //An empty search box matches everything - never pay 2M delegate calls for it
+                            if (filter != null && !nf.MatchesAll)
+                                all = all.AsParallel().WithCancellation(cts.Token)
+                                    .Where(x => CancelOr(nf.Matches(x))).ToList();
+                            builtCache = new SnapshotCache(filter, sourceVersion, all, nf);
+                        }
+                        if (sourceVersion != Volatile.Read(ref filesVersion))
+                        {
+                            retries++;
+                            continue;
+                        }
+                        truncated = all.Count > MaxItems;
                     }
-                    return src.Take(MaxItems).ToList(); // Take just the first 100 000
+                    else
+                    {
+                        //Items mutates on the UI thread - the enumerator's version check
+                        //turns a torn read into the InvalidOperationException retry below
+                        var snapshot = new List<INode>(Items.Count);
+                        var seen = 0;
+                        foreach (var item in Items)
+                        {
+                            if ((++seen & 0x07FF) == 0 && IsCanceled()) return null;
+                            snapshot.Add(item);
+                        }
+                        all = snapshot;
+                    }
+                    if (IsCanceled()) return null;
+                    var compare = SortComparison(sort);
+                    List<INode> result;
+                    if (compare == null)
+                        result = all.Take(MaxItems).ToList(); //No (known) sort => first matches in any order
+                    else
+                    {
+                        //Bounded selection instead of a full sort: only the first MaxItems are ever
+                        //published, so sorting the whole multi-million-node index would burn CPU and
+                        //spill its sort buffers as garbage on every refresh - and a change storm
+                        //refreshes every second. One linear pass keeps the same window in the same order.
+                        result = SelectTop(all, compare, MaxItems, IsCanceled, SortScalarKey(sort));
+                    }
+                    if (result == null || IsCanceled()) return null;
+                    if (refresh && (sourceVersion != Volatile.Read(ref filesVersion)
+                        || !IsBulkFilesVersionStable(bulkVersion)))
+                    {
+                        retries++;
+                        continue;
+                    }
+                    if (builtCache != null)
+                    {
+                        lock (snapshotCacheLock)
+                            if (builtCache.Version == Volatile.Read(ref filesVersion)
+                                && IsBulkFilesVersionStable(bulkVersion))
+                                snapshotCache = builtCache;
+                    }
+                    if (retries != 0) cacheStatus += $"+retry{retries}";
+                    return new QueryResult(result, truncated, cacheStatus);
                 }
                 catch (OperationCanceledException)
                 {
@@ -534,12 +853,170 @@ namespace search.Models
         }
 
         /// <summary>
+        /// The first limit elements of src exactly as a full sort would order them, without
+        /// sorting the rest. A sorted sample estimates the limit-th quantile of the sort key;
+        /// nodes at or better than that threshold are collected with ONE comparison each,
+        /// in parallel, and only that sliver is sorted. Any node outside the collection
+        /// compares worse than every node inside it, so whenever the collection holds at
+        /// least limit nodes its head IS the exact window - the count check makes an
+        /// unlucky sample fall back (to the exact bounded heap) instead of ever showing a
+        /// wrong window. Order among equal keys may differ from a full sort, but src
+        /// enumerates a concurrent index in arbitrary order anyway.
+        /// </summary>
+        /// <returns>null when canceled</returns>
+        internal static List<INode> SelectTop(IEnumerable<INode> src, Comparison<INode> compare, int limit, Func<bool> IsCanceled = null, Func<INode, ulong> scalarKey = null)
+        {
+            //The passes below need a stable, index-partitionable view twice (sample, then
+            //threshold filter) - impossible over a live concurrent stream. A source that is
+            //already a materialized list (files.Values snapshot, the Items copy) is used
+            //as-is; only a lazy source (a PLINQ filter query) materializes here, executing
+            //its filter in parallel on the way in.
+            var all = src as IReadOnlyList<INode> ?? src.ToList();
+            if (IsCanceled?.Invoke() == true) return null;
+            if (all.Count > limit)
+            {
+                //Scalar keys (sizes, dates) sweep and sort densely: one node touch per node,
+                //no delegate comparison, no pointer chasing across the heap in the sort phase
+                if (scalarKey != null && ScalarTop(all, scalarKey, limit, IsCanceled) is { } top)
+                    return top;
+                if (IsCanceled?.Invoke() == true) return null;
+                var candidates = ThresholdCandidates(all, compare, limit, IsCanceled);
+                if (IsCanceled?.Invoke() == true) return null;
+                //Sampling could not prune (heavy ties at the threshold, unlucky sample) =>
+                //the sequential heap pass is exact for any key distribution
+                if (candidates == null) return HeapTop(all, compare, limit, IsCanceled);
+                all = candidates;
+            }
+            //Bounded leftover (at most ~3x the window) - a parallel sort of it stays small
+            return all.AsParallel().OrderBy(x => x, Comparer<INode>.Create(compare)).Take(limit).ToList();
+        }
+
+        /// <summary>
+        /// Monotone unsigned key producing exactly SortComparison's order for the metadata
+        /// sorts (smaller key = earlier row; '+' shows largest values first, so it inverts
+        /// the key). Null for the comparer-based sorts - names, paths, content rank.
+        /// </summary>
+        static Func<INode, ulong> SortScalarKey(string sort)
+        {
+            if (string.IsNullOrWhiteSpace(sort) || sort.Length < 2) return null;
+            Func<INode, ulong> key = sort.Substring(1) switch
+            {
+                nameof(INode.Size) => n => n.Size,
+                nameof(INode.LastChangeTime) => n => (ulong)Math.Max(0, n.LastChangeTime.Ticks),
+                nameof(INode.LastAccessTime) => n => (ulong)Math.Max(0, n.LastAccessTime.Ticks),
+                _ => null
+            };
+            if (key == null) return null;
+            return sort[0] == '+' ? n => ulong.MaxValue - key(n) : key;
+        }
+
+        /// <summary>
+        /// The scalar-key twin of ThresholdCandidates + the final sort: the sweep extracts
+        /// each node's key once and everything after runs on dense key/node pairs. Returns
+        /// null when the quantile guarantee fails (massive ties, unlucky sample) - the
+        /// caller then falls back to the exact comparer-based paths.
+        /// </summary>
+        static List<INode> ScalarTop(IReadOnlyList<INode> all, Func<INode, ulong> key, int limit, Func<bool> IsCanceled)
+        {
+            var stride = Math.Max(1, all.Count >> 12);
+            var sample = new List<ulong>(all.Count / stride + 1);
+            for (var i = 0; i < all.Count; i += stride) sample.Add(key(all[i]));
+            sample.Sort();
+            var at = (int)Math.Min(sample.Count - 1.0, sample.Count * 1.5 * limit / all.Count);
+            var threshold = sample[at];
+
+            var cap = limit * 3 + 1024;
+            var candidates = new List<(ulong Key, INode Node)>(Math.Min(cap, all.Count));
+            var total = 0;
+            Parallel.ForEach(Partitioner.Create(0, all.Count, 16384), () => new List<(ulong, INode)>(),
+                (range, state, local) =>
+                {
+                    if (state.IsStopped || IsCanceled?.Invoke() == true) { state.Stop(); return local; }
+                    var found = 0;
+                    for (var i = range.Item1; i < range.Item2; i++)
+                    {
+                        var node = all[i];
+                        var k = key(node);
+                        if (k <= threshold) { local.Add((k, node)); found++; }
+                    }
+                    if (Interlocked.Add(ref total, found) > cap) state.Stop();
+                    return local;
+                },
+                local => { lock (candidates) candidates.AddRange(local); });
+            if (total > cap || candidates.Count < limit) return null;
+
+            candidates.Sort((a, b) => a.Key.CompareTo(b.Key)); //Dense - no node access at all
+            var result = new List<INode>(limit);
+            for (var i = 0; i < limit; i++) result.Add(candidates[i].Node);
+            return result;
+        }
+
+        /// <summary>
+        /// Nodes at or better than a sampled quantile threshold: a verified superset of the
+        /// published window, or null when the guarantee fails - the candidate cap overflowed
+        /// (massive ties at the threshold; low-cardinality keys defeat quantiles) or fewer
+        /// than limit nodes passed (the sample misjudged the quantile). Runs the expensive
+        /// comparisons (culture-aware names, path chains) across all cores.
+        /// </summary>
+        static List<INode> ThresholdCandidates(IReadOnlyList<INode> all, Comparison<INode> compare, int limit, Func<bool> IsCanceled)
+        {
+            //A ~4k sample nails the quantile within a few percent; aiming the threshold at
+            //1.5x limit leaves an unlucky sample still admitting the whole window
+            var stride = Math.Max(1, all.Count >> 12);
+            var sample = new List<INode>(all.Count / stride + 1);
+            for (var i = 0; i < all.Count; i += stride) sample.Add(all[i]);
+            sample.Sort(compare);
+            var at = (int)Math.Min(sample.Count - 1.0, sample.Count * 1.5 * limit / all.Count);
+            var threshold = sample[at];
+
+            var cap = limit * 3 + 1024;
+            var candidates = new List<INode>(Math.Min(cap, all.Count));
+            var total = 0;
+            Parallel.ForEach(Partitioner.Create(0, all.Count, 16384), () => new List<INode>(),
+                (range, state, local) =>
+                {
+                    if (state.IsStopped || IsCanceled?.Invoke() == true) { state.Stop(); return local; }
+                    var found = 0;
+                    for (var i = range.Item1; i < range.Item2; i++)
+                        if (compare(all[i], threshold) <= 0) { local.Add(all[i]); found++; }
+                    //Cap enforcement is per range - the overshoot stays a few ranges' worth
+                    if (Interlocked.Add(ref total, found) > cap) state.Stop();
+                    return local;
+                },
+                local => { lock (candidates) candidates.AddRange(local); });
+            return total > cap || candidates.Count < limit ? null : candidates;
+        }
+
+        /// <summary>
+        /// Exact top-limit for any key distribution: a worst-out heap of at most limit
+        /// nodes streams over the snapshot - O(N log limit), sequential.
+        /// </summary>
+        static List<INode> HeapTop(IReadOnlyList<INode> all, Comparison<INode> compare, int limit, Func<bool> IsCanceled)
+        {
+            //Inverted comparer => the heap root is the worst kept node, evicted first
+            var heap = new PriorityQueue<INode, INode>(Comparer<INode>.Create((a, b) => compare(b, a)));
+            var seen = 0;
+            foreach (var node in all)
+            {
+                if ((++seen & 0xFFFF) == 0 && IsCanceled?.Invoke() == true) return null;
+                if (heap.Count < limit) heap.Enqueue(node, node);
+                //Compares against the root first - a node beyond the window never sifts the heap
+                else heap.EnqueueDequeue(node, node);
+            }
+            var result = new List<INode>(heap.Count);
+            foreach (var (node, _) in heap.UnorderedItems) result.Add(node);
+            result.Sort(compare);
+            return result;
+        }
+
+        /// <summary>
         /// Remove node and subtract a removed file from its ancestor directory sizes
         /// </summary>
         /// <param name="path"></param>
         INode Remove(string path)
         {
             if (!files.TryRemove(path, out var n)) return null;
+            PatchFileRemoved(n);
             //Directories are skipped: a recursive delete raises an event per contained file and
             //subtracting the aggregate too would double-count. A tree that leaves without
             //per-file events (move to recycle bin = rename of the top folder) stays counted
@@ -585,6 +1062,7 @@ namespace search.Models
                 removed.Add(actual);
                 if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
             }
+            if (removed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), removed);
             return removed.ToArray();
         }
 
@@ -677,6 +1155,7 @@ namespace search.Models
                 changed.Add(actual);
                 if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
             }
+            if (changed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), changed);
 
             //Files that appeared without a resolvable record (or before the map was filled)
             foreach (var (_, _, onDisk) in targets)
@@ -717,6 +1196,7 @@ namespace search.Models
             //rules the index, not this stat miss.
             if (!added.Exists) return files.TryGetValue(path, out var indexed) ? indexed : added;
             var node = files.GetOrAdd(path, added);
+            if (ReferenceEquals(node, added)) PatchFileAdded(node);
             //Only a first sighting contributes - an already indexed node was counted by the scan
             if (ReferenceEquals(node, added) && !node.IsDirectory) PropagateSizeDelta(path, (long)node.Size);
             return node;
@@ -1195,7 +1675,7 @@ namespace search.Models
                 //A capped window needs rows pulled in from beyond MaxItems after a visible
                 //removal. Deleted files also changed surviving ancestor directory sizes,
                 //which can invalidate a size ordering even when no deleted row is visible.
-                needsRefresh = BulkRemovalNeedsRefresh(items.Count, sort, hits != null);
+                needsRefresh = BulkRemovalNeedsRefresh(itemsTruncated, sort, hits != null);
                 if (hits == null) return true; //Nothing published - the grid (and selection) stays untouched
 
                 BeforeItemsExchange();
@@ -1223,8 +1703,8 @@ namespace search.Models
             return handled;
         }
 
-        internal static bool BulkRemovalNeedsRefresh(int itemCount, string currentSort, bool visibleRowsRemoved)
-            => visibleRowsRemoved && itemCount >= MaxItems
+        internal static bool BulkRemovalNeedsRefresh(bool truncated, string currentSort, bool visibleRowsRemoved)
+            => visibleRowsRemoved && truncated
                 || currentSort?.Length > 1 && currentSort.Substring(1) == nameof(INode.Size);
 
         /// <summary>
@@ -1362,7 +1842,7 @@ namespace search.Models
         /// </summary>
         void PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh, long streamed = 0)
         {
-            //Nothing new and nothing indexed under the drive => skip the index rebuild
+            //Nothing new and nothing indexed under the drive => skip the subtree swap
             //(the common case for skipped/deselected drives on every refresh)
             if (fresh.IsEmpty && !files.ContainsKey(root))
             {
@@ -1371,24 +1851,39 @@ namespace search.Models
             }
             lock (publishLock)
             {
-                files.TryGetValue(root, out var oldRoot); //Indexed drive root => identity checks on chained nodes
-                var merged = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
-                foreach (var kv in files)
-                    if (!NodePath.IsUnder(kv.Value, oldRoot, root)) merged[kv.Key] = kv.Value;
-                foreach (var kv in fresh) merged[kv.Key] = kv.Value;
-                files = merged;
-                //files counts the streamed nodes from this very moment => deduct them from the
-                //streaming counter in the same breath, or the loading status double-counts them
-                //for as long as the archive re-add and exe recompute below take
-                Interlocked.Add(ref loadingNodes, -streamed);
+                BeginBulkFilesMutation();
+                try
+                {
+                    files.TryGetValue(root, out var oldRoot); //Indexed drive root => identity checks on chained nodes
+                    //Swap the drive's subtree in place: remove the old entries, then add the fresh
+                    //scan. Rebuilding the dictionary would copy every other drive's entries too -
+                    //one more full-index allocation at the very peak of the load. Removing before
+                    //adding matters: upserting a fresh node over a same-path entry keeps the OLD
+                    //node instance as the entry's key, pinning the old node graph forever. Queries
+                    //observe bulkFilesMutations and retry rather than publishing this intermediate state.
+                    foreach (var kv in files)
+                        if (NodePath.IsUnder(kv.Value, oldRoot, root)) files.TryRemove(kv.Key, out _);
+                    foreach (var kv in fresh) files[kv.Key] = kv.Value;
+                    //files counts the streamed nodes from this very moment => deduct them from the
+                    //streaming counter in the same breath, or the loading status double-counts them
+                    //for as long as the archive re-add and exe recompute below take
+                    Interlocked.Add(ref loadingNodes, -streamed);
 
-                // Re-add previously expanded archives that still exist
-                var zn = zipNodes.ToArray();
-                zipNodes.Clear();
-                zn.Select(x => x.ZIP.FullName).Distinct().OrderBy(x => x).ForEach(x =>
-                  {
-                      if (files.TryGetValue(x, out var n)) AddArchive(n);
-                  });
+                    // Re-add previously expanded archives that still exist
+                    var zn = zipNodes.ToArray();
+                    zipNodes.Clear();
+                    zn.Select(x => x.ZIP.FullName).Distinct().OrderBy(x => x).ForEach(x =>
+                      {
+                          if (files.TryGetValue(x, out var n)) AddArchive(n);
+                      });
+                }
+                finally
+                {
+                    //Invalidate membership caches even when an exceptional drive node aborts
+                    //the replacement, then expose the completed bulk epoch to waiting queries.
+                    BumpFilesVersion();
+                    EndBulkFilesMutation();
+                }
             }
             exes = files.Values.AsParallel()
                 .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
@@ -1565,6 +2060,7 @@ namespace search.Models
                         files.AddOrUpdate(n.FullName, x => n, (x, y) => n);
                         zipNodes.Add(files[n.FullName] as ZipNode);
                     });
+                BumpFilesVersion();
 
                 // Aggregate uncompressed entry sizes into their ancestor archive folders so
                 // directory rows show a real size instead of 0 (mirrors how the MFT reader and

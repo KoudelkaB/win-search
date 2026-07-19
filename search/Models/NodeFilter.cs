@@ -193,6 +193,20 @@ namespace search.Models
         }
 
         /// <summary>
+        /// True when the filter carries no criteria at all (empty search box) - every node
+        /// matches, so bulk passes may skip the per-node filtering entirely
+        /// </summary>
+        public bool MatchesAll => inName.Count == 0 && inParentName.Count == 0
+            && inParentsName.Count == 0 && dirs.Count == 0;
+
+        /// <summary>
+        /// Explicit directory criteria cache the resolved directory-node identity. Replacing
+        /// a directory therefore requires a fresh filter snapshot; name/path-component-only
+        /// filters can safely accept directory additions and removals as ordinary deltas.
+        /// </summary>
+        internal bool DependsOnDirectoryIdentity => dirs.Count != 0;
+
+        /// <summary>
         /// If the node is matching the filter
         /// </summary>
         /// <param name="n"></param>
