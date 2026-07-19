@@ -6,6 +6,14 @@ namespace search.Tests
     public class INodeTests
     {
         [Fact]
+        public void IndexKeepsOnlyTheTimestampDisplayedByTheGrid()
+        {
+            Assert.NotNull(typeof(INode).GetProperty(nameof(INode.LastChangeTime)));
+            Assert.Null(typeof(INode).GetProperty("CreationTime"));
+            Assert.Null(typeof(INode).GetProperty("LastAccessTime"));
+        }
+
+        [Fact]
         public void AddSizeDeltaAccumulates()
         {
             var n = new FileNode();

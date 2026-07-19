@@ -35,9 +35,7 @@ namespace search.Models
             if (isDir) Attributes |= FileAttributes.Directory;
             if (e.IsEncrypted) Attributes |= FileAttributes.Encrypted;
             Size = (ulong)e.Size;
-            CreationTime = e.CreatedTime ?? DateTime.MinValue;
             LastChangeTime = e.LastModifiedTime ?? DateTime.MinValue;
-            LastAccessTime = e.LastAccessedTime ?? DateTime.MinValue;
         }
 
         void SetPath(string p)
@@ -186,9 +184,7 @@ namespace search.Models
                     if (fi.Exists) Attributes |= FileAttributes.Directory;
                 }
                 Exists = fi.Exists;
-                CreationTime = fi.CreationTime;
                 LastChangeTime = fi.LastWriteTime;
-                LastAccessTime = fi.LastAccessTime;
             }
             catch { }
         }
@@ -203,9 +199,7 @@ namespace search.Models
             {
                 Attributes = info.Attributes;
                 if (info is FileInfo f) Size = (ulong)f.Length;
-                CreationTime = info.CreationTime;
                 LastChangeTime = info.LastWriteTime;
-                LastAccessTime = info.LastAccessTime;
             }
             catch { }
         }
@@ -219,10 +213,6 @@ namespace search.Models
 
         override public string FullName => path;
 
-        override public DateTime CreationTime { get; protected set; }
-
         override public DateTime LastChangeTime { get; protected set; }
-
-        override public DateTime LastAccessTime { get; protected set; }
     }
 }

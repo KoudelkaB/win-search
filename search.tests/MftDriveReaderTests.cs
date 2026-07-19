@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using search.Models;
 using Xunit;
 
@@ -13,6 +14,22 @@ namespace search.Tests
         static readonly DateTime Accessed = new(2022, 11, 12, 13, 14, 15, DateTimeKind.Utc);
 
         static FakeMft WithRoot(int bytesPerRecord) => new FakeMft(bytesPerRecord).AddEmpty(5).AddRoot();
+
+        [Fact]
+        public void RuntimeMftNodeFitsIn64BytesExcludingItsName()
+        {
+            var nodeType = WithRoot(1024).Parse().Single().GetType();
+            _ = RuntimeHelpers.GetUninitializedObject(nodeType); //Warm the runtime helper.
+            const int count = 10_000;
+            var nodes = new object[count];
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < nodes.Length; i++)
+                nodes[i] = RuntimeHelpers.GetUninitializedObject(nodeType);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.Equal(64, allocated / count);
+            GC.KeepAlive(nodes);
+        }
 
         [Theory]
         [InlineData(1024, MftChunkReader.DefaultChunkBytes)] // standard size, single chunk
@@ -43,9 +60,7 @@ namespace search.Tests
             Assert.Equal(123UL, file.Size);
             // Local times - the grid mixes MFT rows with watcher/walk FileNodes, whose
             // FileSystemInfo times are local
-            Assert.Equal(Created.ToLocalTime(), file.CreationTime);   // $STANDARD_INFORMATION wins over $FILE_NAME
             Assert.Equal(Modified.ToLocalTime(), file.LastChangeTime);
-            Assert.Equal(Accessed.ToLocalTime(), file.LastAccessTime);
 
             var docs = nodes.Single(n => n.Name == "Docs");
             Assert.True(docs.IsDirectory);
@@ -308,6 +323,27 @@ namespace search.Tests
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Other").Size);
             Assert.Equal(200UL, nodes.Single(n => n.Name == "Q:").Size);
+        }
+
+        [Fact]
+        public void MftSourceRetainsOnlyTheSparseMultiLinkMarkerNeededByUsnUpdates()
+        {
+            var mft = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") })  // 6
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Other") }) // 7
+                .AddRecord(sequence: 4, attributes: new[]                                                        // 8
+                {
+                    FakeMft.FileName(6, "linked.bin"),
+                    FakeMft.FileName(7, "linked-again.bin")
+                })
+                .AddRecord(sequence: 5, attributes: new[] { FakeMft.FileName(6, "single.bin") });               // 9
+            using var stream = new MemoryStream(mft.Image());
+            var source = Assert.IsAssignableFrom<IFrnNodeSource>(MftDriveReader.GetNodes(stream,
+                mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root));
+
+            Assert.True(source.HasMultipleLinks(((ulong)4 << 48) | 8));
+            Assert.False(source.HasMultipleLinks(((ulong)5 << 48) | 9));
+            Assert.False(source.HasMultipleLinks(((ulong)6 << 48) | 8)); //stale sequence
         }
 
         [Fact]

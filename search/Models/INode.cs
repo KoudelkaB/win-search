@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace search.Models
@@ -24,9 +25,7 @@ namespace search.Models
         public virtual string ParentName => Path.GetFileName(Path.GetDirectoryName(FullName)) ?? "";
         public virtual string Folder => Path.GetDirectoryName(FullName) ?? "";
 
-        public abstract DateTime CreationTime { get; protected set; }
         public abstract DateTime LastChangeTime { get; protected set; }
-        public abstract DateTime LastAccessTime { get; protected set; }
 
         public bool IsDirectory => Attributes.HasFlag(FileAttributes.Directory);
 
@@ -46,6 +45,16 @@ namespace search.Models
         public virtual ulong Frn => 0;
 
         /// <summary>
+        /// Immutable scan nodes may cache their canonical path hash. Dynamic/path-backed
+        /// nodes return false and are hashed from their current path.
+        /// </summary>
+        internal virtual bool TryGetPathHash(out int hash)
+        {
+            hash = 0;
+            return false;
+        }
+
+        /// <summary>
         /// Adjust the size by a signed watcher-event delta. Saturates at 0 - aggregated
         /// directory sizes are best-effort between MFT reloads and a missed event must not
         /// wrap the unsigned size to exabytes.
@@ -54,7 +63,7 @@ namespace search.Models
             Size = delta >= 0 ? Size + (ulong)delta : Size - Math.Min(Size, (ulong)-delta);
 
         /// <summary>
-        /// Re-read size, times and the directory flag from the file system
+        /// Re-read size, displayed modification time and the directory flag from the file system
         /// </summary>
         public void Refresh()
         {
@@ -63,8 +72,6 @@ namespace search.Models
                 var fi = new FileInfo(FullName);
                 if (fi.Exists)
                 {
-                    CreationTime = fi.CreationTime;
-                    LastAccessTime = fi.LastAccessTime;
                     LastChangeTime = fi.LastWriteTime;
                     Size = (ulong)fi.Length;
                     Attributes &= ~FileAttributes.Directory;
@@ -74,13 +81,22 @@ namespace search.Models
                 var di = new DirectoryInfo(FullName);
                 if (di.Exists)
                 {
-                    CreationTime = di.CreationTime;
-                    LastAccessTime = di.LastAccessTime;
                     LastChangeTime = di.LastWriteTime;
                     Attributes |= FileAttributes.Directory;
                 }
             }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Dense MFT result whose record-number table can also answer FRN lookups. The USN
+    /// watcher retains this source instead of allocating a second full node/reference map.
+    /// </summary>
+    internal interface IFrnNodeSource : IReadOnlyCollection<INode>
+    {
+        IReadOnlyList<INode> DenseNodes { get; }
+        bool TryGetByFrn(ulong frn, out INode node);
+        bool HasMultipleLinks(ulong frn);
     }
 }

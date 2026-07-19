@@ -21,7 +21,7 @@ namespace search.Models
         internal const int NormalCoalesceWindowMs = 200;
         internal const int StormCoalesceWindowMs = 500;
         internal const NotifyFilters WatcherNotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName
-            | NotifyFilters.Attributes | NotifyFilters.Size | NotifyFilters.LastWrite | NotifyFilters.CreationTime;
+            | NotifyFilters.Attributes | NotifyFilters.Size | NotifyFilters.LastWrite;
 
         /// <summary>
         /// Per-drive event queue with its own processing thread: a slow stat on one drive

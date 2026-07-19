@@ -31,6 +31,18 @@ namespace search.Models
             });
 
         /// <summary>
+        /// Filesystem root of a node without materializing a chained MFT path.
+        /// </summary>
+        internal static string RootOf(INode n)
+        {
+            var terminal = n;
+            for (var guard = 0; terminal.PathParent != null && guard < MaxWalk; guard++)
+                terminal = terminal.PathParent;
+            try { return Path.GetPathRoot(terminal.FullName); }
+            catch { return null; }
+        }
+
+        /// <summary>
         /// Build the full path of a chained node: terminal path + '\'-joined names.
         /// This is the single definition of a chained node's FullName - hashing,
         /// equality and ordering mirror this walk exactly.
@@ -182,7 +194,11 @@ namespace search.Models
         const uint FnvSeed = 2166136261;
         const uint FnvPrime = 16777619;
 
-        static int HashPath(INode n) => (int)HashUp(n, MaxWalk).Hash;
+        static int HashPath(INode n) => n.TryGetPathHash(out var hash)
+            ? hash : (int)HashUp(n, MaxWalk).Hash;
+
+        /// <summary>Compute a path hash before an immutable node publishes its cached value.</summary>
+        internal static int ComputePathHash(INode n) => (int)HashUp(n, MaxWalk).Hash;
 
         static (uint Hash, char Last) HashUp(INode n, int budget)
         {

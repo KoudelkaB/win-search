@@ -28,7 +28,13 @@ namespace search.Models
         readonly Action rescan;                 //Journal history lost => rescan this drive
         readonly Action<UsnDriveWatcher> dead;  //Journal unreadable for good => switch the drive to a watcher
         readonly FrnMap frnMap = new();
+        readonly object exactRescanLock = new();
+        Timer exactRescanTimer;
         volatile bool stop;
+
+        //A hard-link storm can emit thousands of records. One exact rebuild after a quiet
+        //window is both cheaper and more accurate than trying to rescan for every record.
+        internal const int ExactRescanQuietMs = 1000;
 
         /// <summary>
         /// True once the journal proved unreadable. The dead callback may fire before the
@@ -160,6 +166,9 @@ namespace search.Models
 
         void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames, HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen, HashSet<ulong> ghosts)
         {
+            if (RequiresExactMftRescan(r.Reason, frnMap.HasMultipleLinks(r.Frn)))
+                RequestExactMftRescan();
+
             //Reason bits accumulate over a file's open-close session - classify by the
             //most existence-relevant bit. A delete record may still carry the create bits
             //of a short-lived temp file.
@@ -245,6 +254,40 @@ namespace search.Models
         }
 
         /// <summary>
+        /// Folder aggregates count a file once per hard link. An unprivileged USN record
+        /// carries no link name, so a link mutation cannot be adjusted to the right parent;
+        /// data/rename/delete changes of a record already known to have several links have
+        /// the same ambiguity. Rebuild those rare cases from the MFT after the burst.
+        /// </summary>
+        internal static bool RequiresExactMftRescan(uint reason, bool hasMultipleLinks)
+        {
+            if ((reason & UsnJournal.ReasonHardLinkChange) != 0) return true;
+            if (!hasMultipleLinks) return false;
+            const uint pathOrSize = UsnJournal.ReasonDataOverwrite | UsnJournal.ReasonDataExtend
+                | UsnJournal.ReasonDataTruncation | UsnJournal.ReasonFileDelete
+                | UsnJournal.ReasonRenameOldName | UsnJournal.ReasonRenameNewName;
+            return (reason & pathOrSize) != 0;
+        }
+
+        void RequestExactMftRescan()
+        {
+            lock (exactRescanLock)
+            {
+                if (stop) return;
+                exactRescanTimer ??= new Timer(_ =>
+                {
+                    if (!stop) try
+                    {
+                        $"USN hard-link changes on {journal.Root} => exact MFT size rebuild".Debug();
+                        rescan();
+                    }
+                    catch { }
+                }, null, Timeout.Infinite, Timeout.Infinite);
+                exactRescanTimer.Change(ExactRescanQuietMs, Timeout.Infinite);
+            }
+        }
+
+        /// <summary>
         /// True when provably nothing is indexed for the file last known under this path:
         /// the index does not hold the path (the caller's MapPath just verified that) but
         /// still holds its parent directory - so the entry was pruned by path, not moved
@@ -321,11 +364,11 @@ namespace search.Models
             => frnMap.Set(frn, FSChangeProcessor.Lookup(path) ?? new PathNode(path));
 
         /// <summary>
-        /// FRN -> node map backed by fixed-size pages indexed by MFT entry number (the low
-        /// 48 bits of the FRN). Dense MFT ranges retain the flat-array speed and 16-byte
-        /// slot cost, while sparse or corrupt high record numbers allocate only their own
-        /// pages instead of an array up to max(FRN). The stored full FRN must match exactly,
-        /// so a reused record (same entry, new sequence) never resolves to the old file.
+        /// FRN -> node map. A normal MFT scan supplies its already allocated record-number
+        /// table directly, so lookup is one bounds check and array read with no second full
+        /// map. Generic/test sources use fixed-size pages; watcher mutations sit in a tiny
+        /// per-entry override map. The full FRN must match exactly, so a reused record
+        /// (same entry, new sequence) never resolves to the old file.
         /// Pages are published as an immutable table. Lookups are lock-free; Populate,
         /// Clear, Set and Remove serialize publication/mutation so watcher changes arriving
         /// during a repopulation wait and are applied to the new table rather than lost.
@@ -345,14 +388,27 @@ namespace search.Models
 
             sealed class PageTable
             {
-                public static PageTable Empty() => new(new Dictionary<ulong, Page>(), new());
+                public static PageTable Empty() => new(null, new Dictionary<ulong, Page>(), new(), new());
+                public readonly IFrnNodeSource Source;
                 public readonly Dictionary<ulong, Page> Pages;
                 public readonly NonBlocking.ConcurrentDictionary<ulong, INode> Sparse;
-                public PageTable(Dictionary<ulong, Page> pages, NonBlocking.ConcurrentDictionary<ulong, INode> sparse)
+                public readonly NonBlocking.ConcurrentDictionary<ulong, SourceOverride> Overrides;
+                public PageTable(IFrnNodeSource source, Dictionary<ulong, Page> pages,
+                    NonBlocking.ConcurrentDictionary<ulong, INode> sparse,
+                    NonBlocking.ConcurrentDictionary<ulong, SourceOverride> overrides)
                 {
+                    Source = source;
                     Pages = pages;
                     Sparse = sparse;
+                    Overrides = overrides;
                 }
+            }
+
+            sealed class SourceOverride
+            {
+                public readonly ulong Frn;
+                public readonly INode Node; //null = tombstone hiding the immutable scan slot
+                public SourceOverride(ulong frn, INode node) { Frn = frn; Node = node; }
             }
 
             readonly object mutationLock = new();
@@ -362,6 +418,15 @@ namespace search.Models
             {
                 var entry = frn & EntryMask;
                 var table = pageTable;
+                if (table.Source != null)
+                {
+                    if (!table.Overrides.IsEmpty && table.Overrides.TryGetValue(entry, out var changed))
+                    {
+                        node = changed.Frn == frn ? changed.Node : null;
+                        return node != null;
+                    }
+                    return table.Source.TryGetByFrn(frn, out node);
+                }
                 if (table.Pages.TryGetValue(entry >> PageBits, out var page))
                 {
                     var slot = (int)(entry & PageMask);
@@ -376,6 +441,19 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     var entry = frn & EntryMask;
+                    if (pageTable.Source != null)
+                    {
+                        //Metadata-only events keep the original MFT node in the live index.
+                        //Do not grow the override dictionary for those very common writes.
+                        if (pageTable.Source.TryGetByFrn(frn, out var scanned)
+                            && ReferenceEquals(scanned, node))
+                        {
+                            pageTable.Overrides.TryRemove(entry, out _);
+                            return;
+                        }
+                        pageTable.Overrides[entry] = new SourceOverride(frn, node);
+                        return;
+                    }
                     if (!pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
                     {
                         pageTable.Sparse[frn] = node;
@@ -393,6 +471,13 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     var entry = frn & EntryMask;
+                    if (pageTable.Source != null)
+                    {
+                        //A stale delete must not hide a newer owner of the same MFT slot.
+                        if (TryGetValue(frn, out _))
+                            pageTable.Overrides[entry] = new SourceOverride(frn, null);
+                        return;
+                    }
                     if (pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
                     {
                         var slot = (int)(entry & PageMask);
@@ -414,6 +499,12 @@ namespace search.Models
                 }
             }
 
+            public bool HasMultipleLinks(ulong frn)
+            {
+                var table = pageTable;
+                return table.Source?.HasMultipleLinks(frn) == true;
+            }
+
             /// <summary>
             /// (Re)fill from a drive scan in one pass. Only pages containing live records
             /// are allocated, bounding memory independently of the highest record number.
@@ -422,6 +513,13 @@ namespace search.Models
             {
                 lock (mutationLock)
                 {
+                    if (nodes is IFrnNodeSource source)
+                    {
+                        //The source owns both the record table and dense enumeration; retaining
+                        //it replaces the old 16-byte-per-slot Frns[] + Nodes[] page pair.
+                        pageTable = new PageTable(source, new Dictionary<ulong, Page>(), new(), new());
+                        return;
+                    }
                     var pages = new Dictionary<ulong, Page>();
                     var sparse = new NonBlocking.ConcurrentDictionary<ulong, INode>();
                     //At most ~64 MiB of dense pages. The count-derived limit requires a
@@ -455,7 +553,7 @@ namespace search.Models
                     //Set/Remove wait on mutationLock and therefore apply after this fresh
                     //table is visible. No event delta from the population window is lost.
                     pageTable = pages.Count == 0 && sparse.IsEmpty
-                        ? PageTable.Empty() : new PageTable(pages, sparse);
+                        ? PageTable.Empty() : new PageTable(null, pages, sparse, new());
                 }
             }
         }
@@ -470,9 +568,7 @@ namespace search.Models
             public override bool Exists => false; //Must never enter the index - it carries no metadata
             public override FileAttributes Attributes { get => 0; protected set { } }
             public override ulong Size { get => 0; protected set { } }
-            public override DateTime CreationTime { get => default; protected set { } }
             public override DateTime LastChangeTime { get => default; protected set { } }
-            public override DateTime LastAccessTime { get => default; protected set { } }
         }
 
         /// <summary>
@@ -493,6 +589,11 @@ namespace search.Models
         public void Dispose()
         {
             stop = true;
+            lock (exactRescanLock)
+            {
+                exactRescanTimer?.Dispose();
+                exactRescanTimer = null;
+            }
             journal.Dispose(); //The blocked read wakes within its finite timeout
         }
     }

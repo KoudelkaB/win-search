@@ -97,9 +97,7 @@ namespace search.Tests
             public override string Name => frn.ToString();
             public override FileAttributes Attributes { get => 0; protected set { } }
             public override ulong Size { get => 0; protected set { } }
-            public override DateTime CreationTime { get => default; protected set { } }
             public override DateTime LastChangeTime { get => default; protected set { } }
-            public override DateTime LastAccessTime { get => default; protected set { } }
         }
 
         [Fact]
@@ -114,6 +112,36 @@ namespace search.Tests
             Assert.False(map.TryGetValue(((ulong)8 << 48) | 42, out _)); //Reused record: same entry, newer sequence
             Assert.False(map.TryGetValue(41, out _));
             Assert.False(map.TryGetValue(0, out _));
+        }
+
+        [Fact]
+        public void FrnMapReusesTheMftRecordTableAndOverlaysWatcherChanges()
+        {
+            var mft = new FakeMft(1024).AddEmpty(5).AddRoot()
+                .AddRecord(sequence: 7, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "old.txt") });
+            using var stream = new MemoryStream(mft.Image());
+            var source = MftDriveReader.GetNodes(stream, mft.BytesPerRecord,
+                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root);
+            var frnSource = Assert.IsAssignableFrom<IFrnNodeSource>(source);
+            var scanned = ((ulong)7 << 48) | 6;
+            var map = new UsnDriveWatcher.FrnMap();
+
+            map.Populate(source);
+
+            Assert.True(map.TryGetValue(scanned, out var old));
+            Assert.Same(frnSource.DenseNodes[1], old);
+
+            var reused = ((ulong)8 << 48) | 6;
+            var replacement = new FrnNode(reused);
+            map.Set(reused, replacement);
+            Assert.False(map.TryGetValue(scanned, out _));
+            Assert.True(map.TryGetValue(reused, out var current));
+            Assert.Same(replacement, current);
+
+            map.Remove(scanned); //A stale delete must not remove the new sequence.
+            Assert.True(map.TryGetValue(reused, out _));
+            map.Remove(reused);
+            Assert.False(map.TryGetValue(reused, out _));
         }
 
         [Fact]
@@ -154,6 +182,19 @@ namespace search.Tests
 
             Assert.True(map.TryGetValue(sparse, out var node));
             Assert.Equal(sparse, node.Frn);
+        }
+
+        [Fact]
+        public void HardLinkAndMultiLinkedSizeChangesRequireAnExactMftRebuild()
+        {
+            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonHardLinkChange, false));
+            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonDataExtend, true));
+            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonFileDelete, true));
+            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonRenameNewName, true));
+
+            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonDataExtend, false));
+            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonBasicInfoChange, true));
+            Assert.InRange(UsnDriveWatcher.ExactRescanQuietMs, 1, 1999);
         }
 
         [Fact]

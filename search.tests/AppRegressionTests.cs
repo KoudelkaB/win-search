@@ -64,7 +64,6 @@ namespace search.Tests
         [InlineData("+C", false)]
         [InlineData("+Size", true)]
         [InlineData("-LastChangeTime", true)]
-        [InlineData("+LastAccessTime", true)]
         public void MetadataOnlyChangesMoveRowsOnlyForMetadataSorts(string sort, bool expected)
             => Assert.Equal(expected, SearchModel.MetadataSortMayMove(sort));
 
@@ -99,6 +98,7 @@ namespace search.Tests
             Assert.InRange(FSChangeProcessor.StormCoalesceWindowMs, FSChangeProcessor.NormalCoalesceWindowMs, 999);
             Assert.True(FSChangeProcessor.WatcherNotifyFilter.HasFlag(NotifyFilters.LastWrite));
             Assert.False(FSChangeProcessor.WatcherNotifyFilter.HasFlag(NotifyFilters.LastAccess));
+            Assert.False(FSChangeProcessor.WatcherNotifyFilter.HasFlag(NotifyFilters.CreationTime));
             Assert.Equal(0u, search.Core.UsnJournal.ReturnOnlyOnClose);
         }
 
@@ -136,9 +136,7 @@ namespace search.Tests
             public override string Name => Size.ToString();
             public override ulong Size { get; protected set; }
             public override string FullName => @"C:\" + Name;
-            public override DateTime CreationTime { get => default; protected set { } }
             public override DateTime LastChangeTime { get => default; protected set { } }
-            public override DateTime LastAccessTime { get => default; protected set { } }
         }
 
         [Fact]

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using search.Core;
 using search.Models;
@@ -17,6 +18,9 @@ namespace search.Tests
     /// </summary>
     public class UsnLiveTests
     {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool CreateHardLink(string newFileName, string existingFileName, IntPtr securityAttributes);
+
         static async Task<bool> WaitFor(Func<bool> condition, int timeoutMs = 15000)
         {
             var sw = Stopwatch.StartNew();
@@ -84,6 +88,40 @@ namespace search.Tests
                 watcher.Dispose();
                 FSChangeProcessor.Lookup = lookup;
                 FSChangeProcessor.ReconcileDirs = reconcile;
+            }
+        }
+
+        [Fact]
+        public async Task HardLinkJournalChangeSchedulesAnExactMftRescan()
+        {
+            var root = Path.GetPathRoot(Path.GetTempPath());
+            var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var watcher = UsnDriveWatcher.TryStart(root, _ => Task.CompletedTask,
+                () => requested.TrySetResult(), _ => { });
+            if (watcher == null)
+            {
+                Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
+                    $"USN journal failed to open on NTFS volume {root}");
+                return;
+            }
+
+            var dir = Path.Combine(Path.GetTempPath(), $"usn-hardlink-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var file = Path.Combine(dir, "source.bin");
+                var link = Path.Combine(dir, "link.bin");
+                File.WriteAllBytes(file, new byte[4096]);
+                Assert.True(CreateHardLink(link, file, IntPtr.Zero),
+                    $"CreateHardLink failed: {Marshal.GetLastWin32Error()}");
+
+                var completed = await Task.WhenAny(requested.Task, Task.Delay(15_000));
+                Assert.Same(requested.Task, completed);
+            }
+            finally
+            {
+                watcher.Dispose();
+                Directory.Delete(dir, recursive: true);
             }
         }
     }

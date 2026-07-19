@@ -64,7 +64,7 @@ namespace search.Models
         // yet still queried by plain path strings - so the bulk MFT load holds no full-path
         // strings at all. Watcher additions may key by the path string; it is the same
         // instance their FileNode stores anyway.
-        static NonBlocking.ConcurrentDictionary<object, INode> files = new(NodePath.KeyComparer);
+        static readonly DriveNodeIndex files = new();
         static ConcurrentBag<ZipNode> zipNodes = new();
         static INode[] exes;
         Dispatcher Dispatcher = Dispatcher.CurrentDispatcher; //Constructor is called from UI thread => get its dispatcher
@@ -633,8 +633,7 @@ namespace search.Models
             if (string.IsNullOrWhiteSpace(currentSort) || currentSort.Length < 2) return false;
             var key = currentSort.Substring(1);
             return key == nameof(INode.Size)
-                || key == nameof(INode.LastChangeTime)
-                || key == nameof(INode.LastAccessTime);
+                || key == nameof(INode.LastChangeTime);
         }
 
         /// <summary>Merge two already sorted sequences, keeping at most one published window.</summary>
@@ -684,7 +683,6 @@ namespace search.Models
                 case nameof(INode.Name): key = (a, b) => string.Compare(a.Name, b.Name); ascending = up; break;
                 case nameof(INode.Size): key = (a, b) => a.Size.CompareTo(b.Size); ascending = !up; break;
                 case nameof(INode.LastChangeTime): key = (a, b) => a.LastChangeTime.CompareTo(b.LastChangeTime); ascending = !up; break;
-                case nameof(INode.LastAccessTime): key = (a, b) => a.LastAccessTime.CompareTo(b.LastAccessTime); ascending = !up; break;
                 case nameof(INode.FullName): key = NodePath.ByPath.Compare; ascending = up; break;
                 case nameof(INode.Folder): key = NodePath.ByFolderThenName.Compare; ascending = up; break;
                 default: return null;
@@ -707,8 +705,11 @@ namespace search.Models
             }
         }
 
-        static List<INode> CopyFilesCancellable(Func<bool> isCanceled)
+        static IReadOnlyList<INode> CopyFilesCancellable(Func<bool> isCanceled)
         {
+            //A freshly published MFT shard already owns a dense immutable node array.
+            //Reuse it directly: no 2M-entry dictionary walk, list allocation or reference copy.
+            if (files.TryGetDenseSnapshot(out var dense)) return dense;
             //NonBlocking.ConcurrentDictionary.Values eagerly copies the entire dictionary
             //inside one non-cancellable call. Its live enumerator lets a superseding user
             //sort stop this copy every few thousand nodes; version validation below turns
@@ -903,7 +904,6 @@ namespace search.Models
             {
                 nameof(INode.Size) => n => n.Size,
                 nameof(INode.LastChangeTime) => n => (ulong)Math.Max(0, n.LastChangeTime.Ticks),
-                nameof(INode.LastAccessTime) => n => (ulong)Math.Max(0, n.LastAccessTime.Ticks),
                 _ => null
             };
             if (key == null) return null;
@@ -1021,7 +1021,7 @@ namespace search.Models
             //subtracting the aggregate too would double-count. A tree that leaves without
             //per-file events (move to recycle bin = rename of the top folder) stays counted
             //until the next MFT reload.
-            if (!n.IsDirectory) PropagateSizeDelta(path, -(long)n.Size);
+            if (!n.IsDirectory) PropagateSizeDelta(n, -(long)n.Size);
             return n;
         }
 
@@ -1060,7 +1060,7 @@ namespace search.Models
             {
                 if (!files.TryRemove(candidate, out var actual)) continue;
                 removed.Add(actual);
-                if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
+                if (!actual.IsDirectory) PropagateSizeDelta(actual, -(long)actual.Size);
             }
             if (removed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), removed);
             return removed.ToArray();
@@ -1153,7 +1153,7 @@ namespace search.Models
             {
                 if (!files.TryRemove(candidate, out var actual)) continue;
                 changed.Add(actual);
-                if (!actual.IsDirectory) PropagateSizeDelta(actual.FullName, -(long)actual.Size);
+                if (!actual.IsDirectory) PropagateSizeDelta(actual, -(long)actual.Size);
             }
             if (changed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), changed);
 
@@ -1177,7 +1177,7 @@ namespace search.Models
                 //rare flip between file and directory
                 var oldSize = n.IsDirectory ? 0L : (long)n.Size;
                 n.Refresh();
-                PropagateSizeDelta(path, (n.IsDirectory ? 0L : (long)n.Size) - oldSize);
+                PropagateSizeDelta(n, (n.IsDirectory ? 0L : (long)n.Size) - oldSize);
                 return n;
             }
             return null;
@@ -1198,26 +1198,44 @@ namespace search.Models
             var node = files.GetOrAdd(path, added);
             if (ReferenceEquals(node, added)) PatchFileAdded(node);
             //Only a first sighting contributes - an already indexed node was counted by the scan
-            if (ReferenceEquals(node, added) && !node.IsDirectory) PropagateSizeDelta(path, (long)node.Size);
+            if (ReferenceEquals(node, added) && !node.IsDirectory) PropagateSizeDelta(node, (long)node.Size);
             return node;
         }
 
         /// <summary>
-        /// Best-effort update of aggregated ancestor directory sizes for a file size delta.
-        /// Runs only on the serialized FS change thread; exact sizes are restored by the
-        /// next MFT reload (F12), which also heals drift from missed events.
+        /// Update aggregated ancestor directory sizes for a file-size delta. Ordinary MFT
+        /// nodes take the allocation-free parent-chain path below; hard-link ambiguity is
+        /// healed automatically by the USN watcher's quiet-window MFT rebuild.
         /// </summary>
-        void PropagateSizeDelta(string path, long delta)
+        void PropagateSizeDelta(INode node, long delta)
         {
             if (delta == 0) return;
             var changed = false;
-            for (var dir = Path.GetDirectoryName(path); dir != null; dir = Path.GetDirectoryName(dir))
-                if (files.TryGetValue(dir, out var d) && d.IsDirectory)
+            //MFT nodes already carry their parent chain. A cleanup storm can delete hundreds
+            //of thousands of files; walking these references avoids Path.GetDirectoryName
+            //allocations and a hash lookup for every ancestor of every deleted file.
+            if (node?.PathParent != null)
+            {
+                var depth = 0;
+                for (var dir = node.PathParent; dir != null && depth++ < 256; dir = dir.PathParent)
                 {
-                    d.AddSizeDelta(delta);
-                    pendingSizeRows[d] = 0;
+                    if (!dir.IsDirectory) continue;
+                    dir.AddSizeDelta(delta);
+                    pendingSizeRows[dir] = 0;
                     changed = true;
                 }
+            }
+            else
+            {
+                var path = node?.FullName;
+                for (var dir = Path.GetDirectoryName(path); dir != null; dir = Path.GetDirectoryName(dir))
+                    if (files.TryGetValue(dir, out var d) && d.IsDirectory)
+                    {
+                        d.AddSizeDelta(delta);
+                        pendingSizeRows[d] = 0;
+                        changed = true;
+                    }
+            }
             if (changed) RefreshSizesSoon();
         }
 
@@ -1788,6 +1806,8 @@ namespace search.Models
                         try
                         {
                             var fresh = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+                            IFrnNodeSource frnNodes = null;
+                            IReadOnlyList<INode> denseNodes = null;
                             var drive = new DriveInfo(root);
                             //IsReady of an unreachable network drive blocks in SMB timeouts for
                             //tens of seconds - probe with a deadline so a dead mapping only costs
@@ -1799,6 +1819,14 @@ namespace search.Models
                             if (skip == null)
                             {
                                 var entries = DriveEntries(drive, out var origin);
+                                frnNodes = entries as IFrnNodeSource;
+                                denseNodes = frnNodes?.DenseNodes;
+                                //MFT results know their exact live count. Allocate the final
+                                //shard at its target capacity once instead of walking every
+                                //power-of-two LOH resize on the way there.
+                                if (entries.TryGetNonEnumeratedCount(out var entryCount) && entryCount > 0)
+                                    fresh = new NonBlocking.ConcurrentDictionary<object, INode>(
+                                        Environment.ProcessorCount, entryCount, NodePath.KeyComparer);
                                 //The node itself is the key - no full path string is ever built or stored
                                 foreach (var n in entries)
                                 {
@@ -1814,7 +1842,7 @@ namespace search.Models
                                 $"drive {root} {skip} => its entries are dropped".Debug();
                                 origins.TryRemove(key, out _);
                             }
-                            PublishDrive(root, fresh, streamed); //Empty for a skipped drive => stale entries pruned
+                            PublishDrive(root, fresh, streamed, frnNodes, denseNodes); //Empty for a skipped drive => stale entries pruned
                             streamed = 0; //Deducted from the loading counter at the publish
                         }
                         catch { } //A failed scan keeps the drive's last good entries
@@ -1840,7 +1868,9 @@ namespace search.Models
         /// replaced by the fresh scan while all other drives' entries stay untouched. A finished
         /// drive shows immediately - a fast MFT drive never waits on the slowest drive's walk.
         /// </summary>
-        void PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh, long streamed = 0)
+        void PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh,
+            long streamed = 0, IEnumerable<INode> frnNodes = null,
+            IReadOnlyList<INode> denseNodes = null)
         {
             //Nothing new and nothing indexed under the drive => skip the subtree swap
             //(the common case for skipped/deselected drives on every refresh)
@@ -1854,16 +1884,9 @@ namespace search.Models
                 BeginBulkFilesMutation();
                 try
                 {
-                    files.TryGetValue(root, out var oldRoot); //Indexed drive root => identity checks on chained nodes
-                    //Swap the drive's subtree in place: remove the old entries, then add the fresh
-                    //scan. Rebuilding the dictionary would copy every other drive's entries too -
-                    //one more full-index allocation at the very peak of the load. Removing before
-                    //adding matters: upserting a fresh node over a same-path entry keeps the OLD
-                    //node instance as the entry's key, pinning the old node graph forever. Queries
-                    //observe bulkFilesMutations and retry rather than publishing this intermediate state.
-                    foreach (var kv in files)
-                        if (NodePath.IsUnder(kv.Value, oldRoot, root)) files.TryRemove(kv.Key, out _);
-                    foreach (var kv in fresh) files[kv.Key] = kv.Value;
+                    //The completed scan already is the final per-drive hash table. Publish it
+                    //by replacing one shard instead of copying every node to a second map.
+                    files.ReplaceDrive(root, fresh, denseNodes);
                     //files counts the streamed nodes from this very moment => deduct them from the
                     //streaming counter in the same breath, or the loading status double-counts them
                     //for as long as the archive re-add and exe recompute below take
@@ -1889,7 +1912,7 @@ namespace search.Models
                 .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
             //MFT nodes carry their file reference numbers - hand them to the drive's USN
             //watcher so deleted/renamed files resolve to paths (journal records have no names)
-            FSChangeProcessor.PopulateFrnMap(root, fresh.Values);
+            FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? fresh.Values);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
         }
 

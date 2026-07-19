@@ -2949,8 +2949,7 @@ namespace search
             // largest/newest to smallest/oldest. Their '+' token therefore maps to a
             // descending value order, unlike the text and content-result columns.
             if (sortBy == nameof(INode.Size) ||
-                sortBy == nameof(INode.LastChangeTime) ||
-                sortBy == nameof(INode.LastAccessTime))
+                sortBy == nameof(INode.LastChangeTime))
             {
                 ascending = !ascending;
             }
