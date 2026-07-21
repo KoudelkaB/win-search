@@ -13,6 +13,7 @@
         <local:IsDirectoryBooleanConverter x:Key="IsDirectoryBooleanConverter" />
         <local:IsFoundBooleanConverter x:Key="IsFoundBooleanConverter" />
         <local:ActiveFilterBrushConverter x:Key="ActiveFilterBrushConverter" />
+        <local:LiveUpdateHealthBrushConverter x:Key="LiveUpdateHealthBrushConverter" />
         <DataTemplate x:Key="HeaderTemplateArrowUp">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -163,8 +164,20 @@
                 <Label Content="{Binding LoadStatus}" ToolTip="{Binding LoadStatusTooltip}" Padding="0,0,5,0" />
                 <Button Content="{local:Loc Key=Drives}" Click="Drives_Click" Padding="6,0" Margin="0,0,5,0"
                         ToolTip="Choose which drives are indexed (NTFS drives by default)"/>
+                <Label Content="{Binding LiveUpdateHealthText}"
+                       Visibility="{Binding LiveUpdateHealthMessageVisible, Converter={StaticResource Bool2VisibilityConverter}}"
+                       Padding="0,0,8,0" FontWeight="DemiBold">
+                    <Label.Foreground>
+                        <MultiBinding Converter="{StaticResource LiveUpdateHealthBrushConverter}">
+                            <Binding Path="LiveHealthState"/>
+                            <Binding Path="LiveUpdateLatencyMs"/>
+                        </MultiBinding>
+                    </Label.Foreground>
+                </Label>
                 <Label Content="{Binding Status}" Padding="0" />
             </StackPanel>
+            <TextBlock Text="{Binding LiveUpdateHealthDetails}" FontSize="11" Foreground="#FF666666"
+                       Margin="5,-2,5,1" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
         <StackPanel Name="help" DockPanel.Dock="Right" Orientation="Vertical" Margin="5">
             <DockPanel LastChildFill="True">
@@ -342,7 +355,14 @@
                 <TextBox x:Name="inlineActionTextBox" PreviewKeyDown="InlineActionTextBox_KeyDown"/>
             </DockPanel>
         </Border>
-        <ListView x:Name="filesView" ItemsSource="{Binding Items}" GridViewColumnHeader.Click="ListViewColumnHeader_Click" SelectionMode="Extended"
+        <Border x:Name="liveUpdateBorder" BorderThickness="2" SnapsToDevicePixels="True">
+            <Border.BorderBrush>
+                <MultiBinding Converter="{StaticResource LiveUpdateHealthBrushConverter}">
+                    <Binding Path="LiveHealthState"/>
+                    <Binding Path="LiveUpdateLatencyMs"/>
+                </MultiBinding>
+            </Border.BorderBrush>
+            <ListView x:Name="filesView" ItemsSource="{Binding Items}" GridViewColumnHeader.Click="ListViewColumnHeader_Click" SelectionMode="Extended"
                   PreviewKeyDown="ListView_KeyDown" PreviewKeyUp="ListView_PreviewKeyUp"
                   PreviewMouseMove="FilesView_PreviewMouseMove"
                   PreviewMouseLeftButtonUp="FilesView_PreviewMouseLeftButtonUp"
@@ -450,6 +470,7 @@
                     </GridViewColumn>
                 </GridView>
             </ListView.View>
-        </ListView>
+            </ListView>
+        </Border>
     </DockPanel>
 </Window>

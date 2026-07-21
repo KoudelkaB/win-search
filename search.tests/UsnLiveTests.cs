@@ -92,6 +92,57 @@ namespace search.Tests
         }
 
         [Fact]
+        public async Task JournalReportsTheExactPathWhenAnIndexedFileIsDeleted()
+        {
+            var root = Path.GetPathRoot(Path.GetTempPath());
+            var events = new ConcurrentQueue<FsEvent>();
+            var indexed = new ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
+            var lookup = FSChangeProcessor.Lookup;
+            var target = "";
+            UsnDriveWatcher watcher = null;
+            var dir = Path.Combine(Path.GetTempPath(), $"usn-indexed-delete-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+            try
+            {
+                FSChangeProcessor.Lookup = path => indexed.TryGetValue(path, out var node) ? node : null;
+                watcher = UsnDriveWatcher.TryStart(root, e =>
+                {
+                    events.Enqueue(e);
+                    //Mirror the application handler synchronously. UsnDriveWatcher remaps
+                    //the FRN after this callback, so the following delete must resolve from
+                    //the same live index entry rather than fall back to a directory reconcile.
+                    if (e.ChangeType == WatcherChangeTypes.Created
+                        && string.Equals(e.FullPath, target, StringComparison.OrdinalIgnoreCase))
+                        indexed[e.FullPath] = new FileNode(e.FullPath);
+                    return Task.CompletedTask;
+                }, () => { }, _ => { });
+                if (watcher == null)
+                {
+                    Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
+                        $"USN journal failed to open on NTFS volume {root}");
+                    return;
+                }
+
+                target = Path.Combine(dir, "single.bin");
+                File.WriteAllBytes(target, new byte[4096]);
+                Assert.True(await WaitFor(() => indexed.ContainsKey(target)),
+                    $"the created file was not indexed; got: {string.Join("; ", events)}");
+
+                File.Delete(target);
+                Assert.True(await WaitFor(() => events.Any(e =>
+                        e.ChangeType == WatcherChangeTypes.Deleted
+                        && string.Equals(e.FullPath, target, StringComparison.OrdinalIgnoreCase))),
+                    $"no exact Deleted event for {target}; got: {string.Join("; ", events)}");
+            }
+            finally
+            {
+                watcher?.Dispose();
+                FSChangeProcessor.Lookup = lookup;
+                if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        [Fact]
         public async Task HardLinkJournalChangeSchedulesAnExactMftRescan()
         {
             var root = Path.GetPathRoot(Path.GetTempPath());

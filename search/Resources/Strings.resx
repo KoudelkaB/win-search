@@ -77,6 +77,10 @@ Release all keys</value></data>
   <data name="Error" xml:space="preserve"><value>Error</value></data>
   <data name="CommandFailed" xml:space="preserve"><value>Command failed</value></data>
   <data name="ItemsToFolders" xml:space="preserve"><value>{0} item(s) to {1} folder(s):</value></data>
+  <data name="LiveUpdatesDelayed" xml:space="preserve"><value>Live result updates delayed ({0:0} ms)</value></data>
+  <data name="LiveUpdatesSuspended" xml:space="preserve"><value>Live result updates suspended - indexing continues</value></data>
+  <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Catching up live results...</value></data>
+  <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→grid {0:0} ms  |  UI {1:0} ms  |  FS reflect {2:0} ms  |  Queue {3} (oldest {4:0} ms)  |  Refresh {5:0} ms  |  CPU {6:0.0} cores  |  RAM {7:0} MB</value></data>
   <data name="StatusSearching" xml:space="preserve"><value>Searching for '{0}' — {1} files checked in {2:0.0}s</value></data>
   <data name="StatusSearchFailed" xml:space="preserve"><value>Search failed: {0}</value></data>
   <data name="StatusSearchFinished" xml:space="preserve"><value>Search of '{0}' {1}; files (found/not/failed): {2}/{3}/{4} in {5:0.0}s</value></data>

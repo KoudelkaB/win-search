@@ -80,5 +80,31 @@ namespace search.Tests
             Assert.True(index.TryGetValue(d, out _));
             Assert.Equal(1, index.Count);
         }
+
+        [Fact]
+        public void RemovalHookRunsWhileTheEntryAndItsShardAreStillPublished()
+        {
+            var root = new TestNode(@"C:\");
+            var parent = new TestNode(@"C:\Users");
+            var file = new TestNode(@"C:\Users\probe.bin");
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"C:\", Map(root, parent, file));
+            var observedFile = false;
+            var observedParent = false;
+
+            Assert.True(index.TryRemove(file.FullName, current =>
+            {
+                observedFile = index.TryGetValue(file.FullName, out var indexedFile)
+                    && ReferenceEquals(indexedFile, current);
+                observedParent = index.TryGetValue(parent.FullName, out var indexedParent)
+                    && ReferenceEquals(indexedParent, parent);
+            }, out var removed));
+
+            Assert.True(observedFile);
+            Assert.True(observedParent);
+            Assert.Same(file, removed);
+            Assert.False(index.TryGetValue(file.FullName, out _));
+            Assert.True(index.TryGetValue(parent.FullName, out _));
+        }
     }
 }

@@ -41,6 +41,13 @@ namespace search.Models
         /// </summary>
         public string LoadStatusTooltip { get; private set; }
 
+        /// <summary>Health of automatic filesystem-to-grid delivery.</summary>
+        public LiveUpdateHealthState LiveHealthState { get; private set; } = LiveUpdateHealthState.Healthy;
+        public long LiveUpdateLatencyMs { get; private set; }
+        public string LiveUpdateHealthText { get; private set; } = "";
+        public string LiveUpdateHealthDetails { get; private set; } = "";
+        public bool LiveUpdateHealthMessageVisible { get; private set; }
+
         /// <summary>
         /// True while the filter update is running
         /// </summary>
@@ -69,6 +76,7 @@ namespace search.Models
         static INode[] exes;
         Dispatcher Dispatcher = Dispatcher.CurrentDispatcher; //Constructor is called from UI thread => get its dispatcher
         SemaphoreSlim Updating = new SemaphoreSlim(1, 1);
+        readonly LiveUpdateHealthMonitor health;
         internal const string DefaultSort = "+" + nameof(INode.LastChangeTime);
         string filter = null, sort = DefaultSort;
         NodeFilter nodeFilter = new NodeFilter("");
@@ -223,17 +231,48 @@ namespace search.Models
         volatile bool refreshPending = false; //true => files changed and no refresh published since => Items lag behind files
         int refreshQueued = 0; //1 => a data refresh is already queued and covers all changes arriving before it runs
         int deferredReconciliationQueued; //1 => a fast local sort has already queued its authoritative refresh
+        int tailReconciliationQueued; //1 => one quiet-time refill of a capped window is pending
+        long tailReconciliationRequestedAt;
         volatile Task dataRefreshPublished = Task.CompletedTask; //Completes when the queued data refresh has really hit the grid
         const int MaxItems = 100000; //Publish just the first 100 000 filtered items
+        internal const int IncrementalBatchLimit = 64;
+        internal const int TailReconciliationQuietMs = 2500;
+        internal const int MaxDataRefreshVersionRetries = 2;
 
         public Action BeforeItemsExchange = () => { };
         public Action AfterItemsExchange = () => { };
 
-        public async Task Update(string newFilter = null, string newSort = null)
+        public Task Update(string newFilter = null, string newSort = null)
+            => UpdateCore(newFilter, newSort, healthRecovery: false, skipDataDebounce: false);
+
+        async Task UpdateCore(string newFilter, string newSort, bool healthRecovery, bool skipDataDebounce)
         {
+            var dataRefreshRequest = (newFilter ?? newSort) == null;
+            if (dataRefreshRequest && !healthRecovery) health?.GridUpdatePending();
+            //In degraded mode filesystem events still mutate the authoritative index, but
+            //automatic presentation work collapses to one recovery refresh. User filter/sort
+            //commands carry a non-null argument and remain available.
+            if (dataRefreshRequest && !healthRecovery && health?.SuspendAutomaticGridUpdates == true)
+            {
+                refreshPending = true;
+                return;
+            }
+
             // A data refresh is already queued and covers this change too => skip the Task.Run
             // (change storms during a load would otherwise spawn thousands of tasks per second)
-            if ((newFilter ?? newSort) == null && Volatile.Read(ref refreshQueued) == 1) return;
+            if (dataRefreshRequest && Volatile.Read(ref refreshQueued) == 1)
+            {
+                if (!healthRecovery) return;
+                //A refresh can own the queue bit for a few instructions before publishing
+                //its completion task. Wait without recursive polling; degraded mode prevents
+                //new automatic refreshes from continually taking the bit behind it.
+                while (Volatile.Read(ref refreshQueued) == 1)
+                {
+                    var outstanding = dataRefreshPublished;
+                    if (outstanding.IsCompleted) await Task.Delay(25);
+                    else await outstanding;
+                }
+            }
 
             // Return immediately => do not slow down UI!!!
             await Task.Run(async () =>
@@ -243,6 +282,8 @@ namespace search.Models
                 var created = DateTime.Now;
                 object update = created;
                 TaskCompletionSource published = null;
+                var authoritativePublished = false;
+                var plannedDelayMs = 0L;
                 if (dataRefresh)
                 {
                     //Coalesce data refreshes - the single queued one covers all changes arriving before it runs
@@ -256,7 +297,12 @@ namespace search.Models
                     //data is really on the grid, which the "Loaded" status waits for
                     published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     dataRefreshPublished = published.Task;
-                    await Task.Delay(1000); //Batch bursts of changes
+                    if (!skipDataDebounce)
+                    {
+                        var delayWatch = Stopwatch.StartNew();
+                        await Task.Delay(1000); //Batch bursts of changes
+                        plannedDelayMs = delayWatch.ElapsedMilliseconds;
+                    }
                 }
                 else
                 {
@@ -267,7 +313,9 @@ namespace search.Models
                     //Debounce typing - the new update starts after a short pause
                     if (newFilter != null && filter != newFilter)
                     {
+                        var delayWatch = Stopwatch.StartNew();
                         await Task.Delay(150);
+                        plannedDelayMs = delayWatch.ElapsedMilliseconds;
                         if (!ReferenceEquals(update, lastUpdate)) return;
                     }
                 }
@@ -277,8 +325,10 @@ namespace search.Models
 
                 var waitWatch = Stopwatch.StartNew();
                 var queueDeferredReconciliation = false;
+                var queueTailReconciliation = false;
                 await Updating.WaitAsync();
                 var waitMs = waitWatch.ElapsedMilliseconds;
+                var refreshGeneration = health?.RefreshStarted(plannedDelayMs, waitMs) ?? 0;
                 try
                 {
                     if (dataRefresh)
@@ -323,10 +373,20 @@ namespace search.Models
 
                     if (IsCanceled()) return;
                     var queryWatch = Stopwatch.StartNew();
-                    var query = GetItems(refresh, IsCanceled);
-                    if (query == null || IsCanceled()) return;
+                    var query = GetItems(refresh, IsCanceled,
+                        dataRefresh ? MaxDataRefreshVersionRetries : int.MaxValue);
+                    if (query == null || IsCanceled())
+                    {
+                        //A membership storm can invalidate an expensive 100k-row selection
+                        //again and again. Incremental delivery is already keeping the visible
+                        //window live; abandon this run after a bounded number of retries and
+                        //reconcile once the change stream has been quiet for a moment.
+                        if (dataRefresh && !IsCanceled()) queueTailReconciliation = true;
+                        return;
+                    }
                     var items = query.Value.Items;
                     var queryMs = queryWatch.ElapsedMilliseconds;
+                    health?.RefreshQueryCompleted(queryMs, items.Count, query.Value.CacheStatus);
                     //These items were filtered from the current files => Items catch up on publish.
                     //Changes arriving from now on queue their own refresh and set the flag again.
                     if (refresh) refreshPending = false;
@@ -337,6 +397,7 @@ namespace search.Models
                         if (items.IsIdentical(Items))
                         {
                             itemsTruncated = query.Value.Truncated;
+                            authoritativePublished = refresh;
                             queueDeferredReconciliation = deferReconciliation;
                             $"update {(dataRefresh ? "refresh" : "user")} sort={sort} rows={items.Count}: wait {waitMs} ms, reason={refreshReason}, cache={query.Value.CacheStatus}, query {queryMs} ms, publish 0 ms".Debug();
                             return;
@@ -351,24 +412,50 @@ namespace search.Models
                     //the moment the user perceives as the sort completing. The UI thread block
                     //is only the raw list copy - WPF processes the Reset at render time.
                     var applied = false;
+                    var uiAppliedAt = 0L;
                     itemsComplete = false;
+                    var dispatcherWatch = Stopwatch.StartNew();
                     await Dispatcher.InvokeAsync(() =>
                     {
-                        if (IsCanceled()) return; //Do not flash outdated results
-                        BeforeItemsExchange();
-                        if (Items is RangeObservableCollection<INode> target) target.ReplaceRange(items);
-                        else
+                        var dispatcherWaitMs = dispatcherWatch.ElapsedMilliseconds;
+                        var applyWatch = Stopwatch.StartNew();
+                        try
                         {
-                            var fresh = new RangeObservableCollection<INode>();
-                            fresh.AddRange(items);
-                            Items = fresh;
+                            if (IsCanceled()) return; //Do not flash outdated results
+                            BeforeItemsExchange();
+                            if (Items is RangeObservableCollection<INode> target) target.ReplaceRange(items);
+                            else
+                            {
+                                var fresh = new RangeObservableCollection<INode>();
+                                fresh.AddRange(items);
+                                Items = fresh;
+                            }
+                            itemsTruncated = query.Value.Truncated;
+                            applied = true;
+                            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                            AfterItemsExchange();
                         }
-                        itemsTruncated = query.Value.Truncated;
-                        applied = true;
-                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
-                        AfterItemsExchange();
+                        finally
+                        {
+                            health?.RefreshApplied(dispatcherWaitMs, applyWatch.ElapsedMilliseconds);
+                            uiAppliedAt = Environment.TickCount64;
+                        }
                     }, DispatcherPriority.Background);
+                    if (applied && health != null && uiAppliedAt != 0)
+                    {
+                        //A collection Reset schedules DataBind/render work after this callback.
+                        //Measure when all higher-priority WPF work has drained without holding
+                        //the refresh semaphore or altering presentation behavior.
+                        try
+                        {
+                            _ = Dispatcher.BeginInvoke(() => health.RefreshUiSettled(refreshGeneration,
+                                Math.Max(0, Environment.TickCount64 - uiAppliedAt)),
+                                DispatcherPriority.ContextIdle);
+                        }
+                        catch { }
+                    }
                     itemsComplete = applied && !IsCanceled();
+                    authoritativePublished = refresh && itemsComplete;
                     queueDeferredReconciliation = applied && deferReconciliation;
                     $"update {(dataRefresh ? "refresh" : "user")} sort={sort} rows={items.Count}: wait {waitMs} ms, reason={refreshReason}, cache={query.Value.CacheStatus}, query {queryMs} ms, publish {queryWatch.ElapsedMilliseconds - queryMs} ms".Debug();
                 }
@@ -378,10 +465,13 @@ namespace search.Models
                 }
                 finally
                 {
+                    health?.RefreshCompleted();
+                    if (authoritativePublished) health?.GridUpdateReflected();
                     if (!IsCanceled()) Filtering = false; //When canceled the newer update owns the indicator
                     Updating.Release(); //Allow next change
                     published?.SetResult();
                     if (queueDeferredReconciliation) QueueDeferredReconciliation();
+                    if (queueTailReconciliation) QueueTailReconciliation();
                 }
             });
         }
@@ -395,6 +485,9 @@ namespace search.Models
 
         void QueueDeferredReconciliation()
         {
+            //The recovery refresh is authoritative and already covers this work. Spawning a
+            //new immediately-suppressed task from every finally block would form a hot loop.
+            if (health?.SuspendAutomaticGridUpdates == true) return;
             if (Interlocked.Exchange(ref deferredReconciliationQueued, 1) == 1) return;
             //A data refresh that the user sort superseded still owns refreshQueued until its
             //finally block completes. Wait for that exact task, then enqueue one fresh run
@@ -416,6 +509,47 @@ namespace search.Models
                 }
             });
         }
+
+        void ApplyLiveUpdateHealth(LiveUpdateHealthSnapshot snapshot)
+        {
+            LiveHealthState = snapshot.State;
+            LiveUpdateLatencyMs = snapshot.DisplayLatencyMs;
+            LiveUpdateHealthMessageVisible = snapshot.State != LiveUpdateHealthState.Healthy;
+            LiveUpdateHealthText = snapshot.State switch
+            {
+                LiveUpdateHealthState.Delayed => L.Format("LiveUpdatesDelayed", snapshot.DisplayLatencyMs),
+                LiveUpdateHealthState.Suspended => L.Text("LiveUpdatesSuspended"),
+                LiveUpdateHealthState.Recovering => L.Text("LiveUpdatesRecovering"),
+                _ => ""
+            };
+            var queue = string.IsNullOrWhiteSpace(snapshot.QueueRoot)
+                ? snapshot.QueueDepth.ToString()
+                : $"{snapshot.QueueRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)} "
+                    + $"{snapshot.QueueRootDepth}/{snapshot.QueueDepth}";
+            LiveUpdateHealthDetails = L.Format("LiveUpdatesHealthDetails",
+                snapshot.DisplayLatencyMs, snapshot.DispatcherDelayMs,
+                snapshot.ReflectionLatencyMs, queue, snapshot.OldestEventAgeMs,
+                snapshot.RefreshDurationMs, snapshot.CpuCores,
+                snapshot.PrivateMemoryBytes / (1024d * 1024));
+        }
+
+        async Task<bool> CatchUpLiveGrid()
+        {
+            try
+            {
+                //The ten-sample quiet window already coalesced the incident; another one-second
+                //debounce would only prolong the intentionally stale red interval.
+                await UpdateCore(null, null, healthRecovery: true, skipDataDebounce: true);
+                return true;
+            }
+            catch (Exception e)
+            {
+                await Log($"Live grid catch-up failed: {e}");
+                return false;
+            }
+        }
+
+        public void Dispose() => health?.Dispose();
 
         /// <summary>
         /// Apply changed nodes to the UI - in place when possible, otherwise queue a full refresh
@@ -441,82 +575,101 @@ namespace search.Models
             var currentSort = sort;
             var nf = nodeFilter;
             var compare = SortComparison(currentSort);
-            //While a scan runs, changes arrive in storms and each in-place insert costs an
-            //O(Items.Count) IndexOf on the UI thread - that saturates the dispatcher and starves
-            //the batch publish holding the Updating semaphore (frozen filter, endless Loading).
-            //The coalesced full refresh covers these changes instead.
-            if (Loading || compare == null || !itemsComplete) return false;
+            //Medium batches remain targeted even while a drive scan runs. The old Loading
+            //fallback converted every ordinary watcher notification into a complete Reset;
+            //WPF's deferred DataBind/render work then accumulated faster than it could drain.
+            //Large loading batches are intercepted by UpdateSmall before reaching this path.
+            if (compare == null || !itemsComplete) return false;
 
+            var dispatcherWatch = Stopwatch.StartNew();
             return await Dispatcher.InvokeAsync(() =>
             {
-                //Revalidate on the UI thread - Items are exchanged only here
-                if (!itemsComplete || currentFilter != filter || currentSort != sort) return false;
-                var items = Items;
-                //Membership screen for larger batches: most changed nodes are neither
-                //published nor entering the result, and IndexOf is a full scan of a
-                //possibly 100k-row list - a storm batch must not pay that per node.
-                //Kept in sync on insert; rows removed below only leave harmless false
-                //positives (their IndexOf just returns -1).
-                var published = changed.Length > 8
-                    ? new HashSet<object>(items, ReferenceEqualityComparer.Instance) : null;
-                var updated = false;
-                var exchanging = false; //Selection snapshot taken - only once a row really moves
-                List<INode> repaint = null; //Rows changed in place - repaint without touching the list
-                foreach (var node in changed)
+                var dispatcherWaitMs = dispatcherWatch.ElapsedMilliseconds;
+                var applyWatch = Stopwatch.StartNew();
+                try
                 {
-                    var index = published != null && !published.Contains(node) ? -1 : items.IndexOf(node);
-                    //Present in files under its path and matching the filter => it belongs to the result
-                    //(the node itself is a valid key - no full path is materialized here)
-                    var include = files.TryGetValue(node, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
-                    //Not shown and not entering the result => the view is unaffected. Most watcher
-                    //events land here - they must leave the grid (and its selection) alone.
-                    if (index < 0 && !include) continue;
-                    //Still shown at a position consistent with the sort => only its displayed values
-                    //changed. Repaint that row in place - remove+insert would churn the selection
-                    //(and the SHIFT+Up/Down anchor) for a row that does not move.
-                    if (index >= 0 && include
-                        && (index == 0 || compare(items[index - 1], node) <= 0)
-                        && (index == items.Count - 1 || compare(node, items[index + 1]) <= 0))
+                    //Revalidate on the UI thread - Items are exchanged only here
+                    if (!itemsComplete || currentFilter != filter || currentSort != sort) return false;
+                    var items = Items;
+                    //Membership screen for medium batches: most changed nodes are neither
+                    //published nor entering the result, and IndexOf is a full scan of a
+                    //possibly 100k-row list. One hash pass avoids that per off-screen node.
+                    //Kept in sync on insert; rows removed below only leave harmless false
+                    //positives (their IndexOf just returns -1).
+                    HashSet<object> published = null;
+                    if (changed.Length > 8)
                     {
-                        (repaint ??= new List<INode>()).Add(node);
-                        continue;
+                        //Do not allocate a 100k-entry set for a 14-node batch. Scan the dense
+                        //published list once and retain only the changed identities that occur.
+                        var changedSet = new HashSet<object>(changed, ReferenceEqualityComparer.Instance);
+                        published = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                        foreach (var item in items)
+                            if (changedSet.Contains(item)) published.Add(item);
                     }
-                    //Remove+Insert silently drops the row from the view's selection => snapshot it
-                    //once and restore after (same INode instances get re-inserted), so a selected file
-                    //stays selected while it keeps changing on disk
-                    if (!exchanging)
+                    var updated = false;
+                    var exchanging = false; //Selection snapshot taken - only once a row really moves
+                    List<INode> repaint = null; //Rows changed in place - repaint without touching the list
+                    foreach (var node in changed)
                     {
-                        exchanging = true;
-                        BeforeItemsExchange();
-                    }
-                    if (index >= 0)
-                    {
-                        items.RemoveAt(index);
-                        updated = true;
-                    }
-                    if (include)
-                    {
-                        var at = BinaryIndex(items, node, compare);
-                        //A new match arriving when the complete result already fills the
-                        //window creates an unknown tail even when it sorts beyond the window.
-                        if (index < 0 && !itemsTruncated && items.Count >= MaxItems)
-                            itemsTruncated = true;
-                        if (at < items.Count || items.Count < MaxItems) //Beyond the published window => skip
+                        var index = published != null && !published.Contains(node) ? -1 : items.IndexOf(node);
+                        //Present in files under its path and matching the filter => it belongs to the result
+                        //(the node itself is a valid key - no full path is materialized here)
+                        var include = files.TryGetValue(node, out var current) && ReferenceEquals(current, node) && nf.Matches(node);
+                        //Not shown and not entering the result => the view is unaffected. Most watcher
+                        //events land here - they must leave the grid (and its selection) alone.
+                        if (index < 0 && !include) continue;
+                        //Still shown at a position consistent with the sort => only its displayed values
+                        //changed. Repaint that row in place - remove+insert would churn the selection
+                        //(and the SHIFT+Up/Down anchor) for a row that does not move.
+                        if (index >= 0 && include
+                            && (index == 0 || compare(items[index - 1], node) <= 0)
+                            && (index == items.Count - 1 || compare(node, items[index + 1]) <= 0))
                         {
-                            items.Insert(at, node);
-                            published?.Add(node);
+                            (repaint ??= new List<INode>()).Add(node);
+                            continue;
+                        }
+                        //Remove+Insert silently drops the row from the view's selection => snapshot it
+                        //once and restore after (same INode instances get re-inserted), so a selected file
+                        //stays selected while it keeps changing on disk
+                        if (!exchanging)
+                        {
+                            exchanging = true;
+                            BeforeItemsExchange();
+                        }
+                        if (index >= 0)
+                        {
+                            items.RemoveAt(index);
                             updated = true;
                         }
+                        if (include)
+                        {
+                            var at = BinaryIndex(items, node, compare);
+                            //A new match arriving when the complete result already fills the
+                            //window creates an unknown tail even when it sorts beyond the window.
+                            if (index < 0 && !itemsTruncated && items.Count >= MaxItems)
+                                itemsTruncated = true;
+                            if (at < items.Count || items.Count < MaxItems) //Beyond the published window => skip
+                            {
+                                items.Insert(at, node);
+                                published?.Add(node);
+                                updated = true;
+                            }
+                        }
                     }
+                    if (exchanging)
+                    {
+                        while (items.Count > MaxItems) items.RemoveAt(items.Count - 1);
+                        AfterItemsExchange();
+                    }
+                    if (updated) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                    if (repaint != null) RowsRefreshRequested?.Invoke(repaint.ToArray());
+                    return true;
                 }
-                if (exchanging)
+                finally
                 {
-                    while (items.Count > MaxItems) items.RemoveAt(items.Count - 1);
-                    AfterItemsExchange();
+                    health?.GridMutationCompleted("incremental", changed.Length, Items.Count,
+                        dispatcherWaitMs, applyWatch.ElapsedMilliseconds);
                 }
-                if (updated) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
-                if (repaint != null) RowsRefreshRequested?.Invoke(repaint.ToArray());
-                return true;
             });
         }
 
@@ -546,81 +699,99 @@ namespace search.Models
             var compare = SortComparison(currentSort);
             if (Loading || compare == null || !itemsComplete) return new BatchUpdateOutcome(false);
 
-            return await Dispatcher.InvokeAsync(() =>
+            var dispatcherWatch = Stopwatch.StartNew();
+            var dispatcherWaitMs = 0L;
+            var applyMs = 0L;
+            var publishedRowCount = 0;
+            var gridMode = "bulk-skipped";
+            var outcome = await Dispatcher.InvokeAsync(() =>
             {
-                if (Loading || !itemsComplete || currentFilter != filter || currentSort != sort)
-                    return new BatchUpdateOutcome(false);
-
-                var items = Items;
-                var changedSet = new HashSet<object>(changed, ReferenceEqualityComparer.Instance);
-                var originalCount = items.Count;
-                var capped = itemsTruncated || originalCount >= MaxItems;
-                //Changed nodes already carry their new values, so the old last item is not
-                //a trustworthy boundary when it belongs to this batch. Use the last
-                //unchanged row; it is slightly stricter and therefore never admits a node
-                //that should remain outside the capped window.
-                var oldBoundary = capped
-                    ? items.Reverse().FirstOrDefault(item => !changedSet.Contains(item))
-                    : null;
-                var publishedChanged = new HashSet<object>(ReferenceEqualityComparer.Instance);
-                var kept = new List<INode>(originalCount);
-                foreach (var item in items)
+                dispatcherWaitMs = dispatcherWatch.ElapsedMilliseconds;
+                var applyWatch = Stopwatch.StartNew();
+                try
                 {
-                    if (changedSet.Contains(item)) publishedChanged.Add(item);
-                    else kept.Add(item);
-                }
+                    if (Loading || !itemsComplete || currentFilter != filter || currentSort != sort)
+                        return new BatchUpdateOutcome(false);
 
-                var candidates = new List<INode>(changed.Length);
-                var matchingChanged = 0;
-                var needsRefresh = capped && oldBoundary == null;
-                foreach (var node in changed)
-                {
-                    if (!files.TryGetValue(node, out var current) || !ReferenceEquals(current, node) || !nf.Matches(node))
-                        continue;
-                    matchingChanged++;
-
-                    if (oldBoundary != null && compare(node, oldBoundary) > 0)
+                    var items = Items;
+                    publishedRowCount = items.Count;
+                    var changedSet = new HashSet<object>(changed, ReferenceEqualityComparer.Instance);
+                    var originalCount = items.Count;
+                    var capped = itemsTruncated || originalCount >= MaxItems;
+                    //Changed nodes already carry their new values, so the old last item is not
+                    //a trustworthy boundary when it belongs to this batch. Use the last
+                    //unchanged row; it is slightly stricter and therefore never admits a node
+                    //that should remain outside the capped window.
+                    var oldBoundary = capped
+                        ? items.Reverse().FirstOrDefault(item => !changedSet.Contains(item))
+                        : null;
+                    var publishedChanged = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                    var kept = new List<INode>(originalCount);
+                    foreach (var item in items)
                     {
-                        //An unpublished node still lies beyond the window => no visible
-                        //effect. A formerly published node moved beyond the known boundary;
-                        //a row from the unknown tail must be pulled in by a coalesced refresh.
-                        if (publishedChanged.Contains(node)) needsRefresh = true;
-                        continue;
+                        if (changedSet.Contains(item)) publishedChanged.Add(item);
+                        else kept.Add(item);
                     }
-                    candidates.Add(node);
-                }
-                candidates.Sort(compare);
 
-                var merged = MergeSortedWindow(kept, candidates, compare, MaxItems);
-                if (capped && merged.Count < MaxItems) needsRefresh = true;
-                //When the previous result was complete, kept plus every matching changed
-                //node is the complete post-change set (including new nodes beyond the old
-                //boundary that were intentionally not added to candidates).
-                itemsTruncated = itemsTruncated || kept.Count + matchingChanged > MaxItems;
+                    var candidates = new List<INode>(changed.Length);
+                    var matchingChanged = 0;
+                    var needsRefresh = capped && oldBoundary == null;
+                    foreach (var node in changed)
+                    {
+                        if (!files.TryGetValue(node, out var current) || !ReferenceEquals(current, node) || !nf.Matches(node))
+                            continue;
+                        matchingChanged++;
 
-                var identical = merged.Count == originalCount;
-                for (var i = 0; identical && i < merged.Count; i++)
-                    identical = ReferenceEquals(merged[i], items[i]);
-                if (identical)
-                {
-                    //Metadata changed without crossing a neighbour. Rebind realized rows,
-                    //but leave the collection and selection completely untouched.
-                    RowsRefreshRequested?.Invoke(changed);
+                        if (oldBoundary != null && compare(node, oldBoundary) > 0)
+                        {
+                            //An unpublished node still lies beyond the window => no visible
+                            //effect. A formerly published node moved beyond the known boundary;
+                            //a row from the unknown tail must be pulled in by a coalesced refresh.
+                            if (publishedChanged.Contains(node)) needsRefresh = true;
+                            continue;
+                        }
+                        candidates.Add(node);
+                    }
+                    candidates.Sort(compare);
+
+                    var merged = MergeSortedWindow(kept, candidates, compare, MaxItems);
+                    if (capped && merged.Count < MaxItems) needsRefresh = true;
+                    //When the previous result was complete, kept plus every matching changed
+                    //node is the complete post-change set (including new nodes beyond the old
+                    //boundary that were intentionally not added to candidates).
+                    itemsTruncated = itemsTruncated || kept.Count + matchingChanged > MaxItems;
+
+                    var identical = merged.Count == originalCount;
+                    for (var i = 0; identical && i < merged.Count; i++)
+                        identical = ReferenceEquals(merged[i], items[i]);
+                    if (identical)
+                    {
+                        //Metadata changed without crossing a neighbour. Rebind realized rows,
+                        //but leave the collection and selection completely untouched.
+                        gridMode = "bulk-repaint";
+                        RowsRefreshRequested?.Invoke(changed);
+                        return new BatchUpdateOutcome(true, needsRefresh);
+                    }
+
+                    gridMode = "bulk-reset";
+                    BeforeItemsExchange();
+                    if (items is RangeObservableCollection<INode> target) target.ReplaceRange(merged);
+                    else
+                    {
+                        target = new RangeObservableCollection<INode>();
+                        target.AddRange(merged);
+                        Items = target;
+                    }
+                    AfterItemsExchange();
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                    publishedRowCount = Items.Count;
                     return new BatchUpdateOutcome(true, needsRefresh);
                 }
-
-                BeforeItemsExchange();
-                if (items is RangeObservableCollection<INode> target) target.ReplaceRange(merged);
-                else
-                {
-                    target = new RangeObservableCollection<INode>();
-                    target.AddRange(merged);
-                    Items = target;
-                }
-                AfterItemsExchange();
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
-                return new BatchUpdateOutcome(true, needsRefresh);
+                finally { applyMs = applyWatch.ElapsedMilliseconds; }
             });
+            health?.GridMutationCompleted(gridMode, changed.Length, publishedRowCount,
+                dispatcherWaitMs, applyMs);
+            return outcome;
         }
 
         /// <summary>
@@ -731,7 +902,8 @@ namespace search.Models
         /// <param name="refresh">refilter from files (false - use Items)</param>
         /// <param name="IsCanceled">Check if to cancel</param>
         /// <returns>null when canceled</returns>
-        QueryResult? GetItems(bool refresh, Func<bool> IsCanceled)
+        QueryResult? GetItems(bool refresh, Func<bool> IsCanceled,
+            int maxVersionRetries = int.MaxValue)
         {
             //Cancel
             var cts = new CancellationTokenSource();
@@ -781,7 +953,7 @@ namespace search.Models
                             if (sourceVersion != Volatile.Read(ref filesVersion)
                                 || !IsBulkFilesVersionStable(bulkVersion))
                             {
-                                retries++;
+                                if (++retries > maxVersionRetries) return null;
                                 continue;
                             }
                             var nf = nodeFilter;
@@ -793,7 +965,7 @@ namespace search.Models
                         }
                         if (sourceVersion != Volatile.Read(ref filesVersion))
                         {
-                            retries++;
+                            if (++retries > maxVersionRetries) return null;
                             continue;
                         }
                         truncated = all.Count > MaxItems;
@@ -828,7 +1000,7 @@ namespace search.Models
                     if (refresh && (sourceVersion != Volatile.Read(ref filesVersion)
                         || !IsBulkFilesVersionStable(bulkVersion)))
                     {
-                        retries++;
+                        if (++retries > maxVersionRetries) return null;
                         continue;
                     }
                     if (builtCache != null)
@@ -1015,14 +1187,21 @@ namespace search.Models
         /// <param name="path"></param>
         INode Remove(string path)
         {
-            if (!files.TryRemove(path, out var n)) return null;
+            //Apply the delta while this entry and its drive shard are still current. A
+            //path-backed watcher node has no parent references and resolves directories
+            //through the index; doing that after TryRemove allowed a concurrent MFT publish
+            //to place the lookup and the visible rows in different shard generations.
+            if (!files.TryRemove(path, SubtractFileSize, out var n)) return null;
             PatchFileRemoved(n);
-            //Directories are skipped: a recursive delete raises an event per contained file and
-            //subtracting the aggregate too would double-count. A tree that leaves without
-            //per-file events (move to recycle bin = rename of the top folder) stays counted
-            //until the next MFT reload.
-            if (!n.IsDirectory) PropagateSizeDelta(n, -(long)n.Size);
+            //Directories are routed through RemoveTrees by the batch handler. That method
+            //subtracts their remaining aggregate once and removes every indexed descendant;
+            //doing it here as well would double-count a recursive delete.
             return n;
+        }
+
+        void SubtractFileSize(INode node)
+        {
+            if (!node.IsDirectory) PropagateUnsignedSizeDelta(node, node.Size, subtract: true);
         }
 
         /// <summary>
@@ -1040,18 +1219,49 @@ namespace search.Models
         /// </summary>
         INode[] RemoveTrees(IReadOnlyList<string> paths)
         {
-            var roots = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            var prefixes = new List<string>(paths.Count);
+            var candidatesForRoot = new List<(string Path, INode Node)>(paths.Count);
+            var distinctRoots = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var path in paths)
             {
                 //Never uproot a whole drive from an event - only a drive scan may do that.
                 //A drive-root path here is a half-delivered watcher rename/delete (see IsDriveRoot).
                 if (IsDriveRoot(path)) continue;
                 if (!files.TryGetValue(path, out var root)) continue;
-                if (!roots.Add(root)) continue;
-                prefixes.Add(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
+                if (!distinctRoots.Add(root)) continue;
+                candidatesForRoot.Add((path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root));
             }
-            if (roots.Count == 0) return Array.Empty<INode>();
+            if (candidatesForRoot.Count == 0) return Array.Empty<INode>();
+
+            //USN may report one delete for the parent directory and more for directories
+            //inside it. Keep only top-level roots: subtracting both aggregates would count
+            //the nested tree twice. Ordering by path length lets a small accepted-path set
+            //identify ancestors in O(number of paths * directory depth), not O(paths²).
+            var acceptedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var treeRoots = new List<(string Path, INode Node)>();
+            foreach (var candidate in candidatesForRoot.OrderBy(x => x.Path.Length))
+            {
+                var nested = false;
+                for (var parent = Path.GetDirectoryName(candidate.Path);
+                    !string.IsNullOrEmpty(parent); parent = Path.GetDirectoryName(parent))
+                    if (acceptedPaths.Contains(parent.TrimEnd(Path.DirectorySeparatorChar,
+                        Path.AltDirectorySeparatorChar)))
+                    {
+                        nested = true;
+                        break;
+                    }
+                if (nested) continue;
+                acceptedPaths.Add(candidate.Path);
+                treeRoots.Add(candidate);
+            }
+
+            var roots = new HashSet<object>(treeRoots.Select(x => x.Node), ReferenceEqualityComparer.Instance);
+            var prefixes = treeRoots.Select(x => x.Path + Path.DirectorySeparatorChar).ToArray();
+
+            //The directory node already stores the aggregate of every indexed file below
+            //it. Subtract that value once from surviving ancestors. Walking every removed
+            //file was both expensive and dependent on receiving every descendant USN event.
+            foreach (var (_, root) in treeRoots) SubtractTreeSizeFromAncestors(root);
+
             var candidates = files.Values.AsParallel()
                 .Where(n => roots.Contains(n) || NodePath.IsUnderAny(n, roots, prefixes))
                 .ToArray();
@@ -1060,10 +1270,25 @@ namespace search.Models
             {
                 if (!files.TryRemove(candidate, out var actual)) continue;
                 removed.Add(actual);
-                if (!actual.IsDirectory) PropagateSizeDelta(actual, -(long)actual.Size);
             }
             if (removed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), removed);
             return removed.ToArray();
+        }
+
+        void SubtractTreeSizeFromAncestors(INode root)
+            => PropagateUnsignedSizeDelta(root, root?.Size ?? 0, subtract: true);
+
+        void PropagateUnsignedSizeDelta(INode node, ulong size, bool subtract)
+        {
+            var remaining = size;
+            //PropagateSizeDelta is signed; a practical tree fits in one pass, while the
+            //loop also keeps the arithmetic correct for aggregates beyond Int64.MaxValue.
+            while (remaining > 0)
+            {
+                var part = Math.Min(remaining, (ulong)long.MaxValue);
+                PropagateSizeDelta(node, subtract ? -(long)part : (long)part);
+                remaining -= part;
+            }
         }
 
         /// <summary>
@@ -1151,9 +1376,8 @@ namespace search.Models
             }).ToArray();
             foreach (var candidate in stale)
             {
-                if (!files.TryRemove(candidate, out var actual)) continue;
+                if (!files.TryRemove(candidate, SubtractFileSize, out var actual)) continue;
                 changed.Add(actual);
-                if (!actual.IsDirectory) PropagateSizeDelta(actual, -(long)actual.Size);
             }
             if (changed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), changed);
 
@@ -1211,19 +1435,14 @@ namespace search.Models
         {
             if (delta == 0) return;
             var changed = false;
+            var generation = Interlocked.Increment(ref sizeChangeGeneration);
             //MFT nodes already carry their parent chain. A cleanup storm can delete hundreds
             //of thousands of files; walking these references avoids Path.GetDirectoryName
             //allocations and a hash lookup for every ancestor of every deleted file.
             if (node?.PathParent != null)
             {
-                var depth = 0;
-                for (var dir = node.PathParent; dir != null && depth++ < 256; dir = dir.PathParent)
-                {
-                    if (!dir.IsDirectory) continue;
-                    dir.AddSizeDelta(delta);
-                    pendingSizeRows[dir] = 0;
-                    changed = true;
-                }
+                changed = ApplySizeDeltaToParentChain(node, delta,
+                    dir => pendingSizeRows[dir] = generation) != 0;
             }
             else
             {
@@ -1232,16 +1451,31 @@ namespace search.Models
                     if (files.TryGetValue(dir, out var d) && d.IsDirectory)
                     {
                         d.AddSizeDelta(delta);
-                        pendingSizeRows[d] = 0;
+                        pendingSizeRows[d] = generation;
                         changed = true;
                     }
             }
             if (changed) RefreshSizesSoon();
         }
 
+        internal static int ApplySizeDeltaToParentChain(INode node, long delta, Action<INode> markChanged)
+        {
+            var changed = 0;
+            var depth = 0;
+            for (var dir = node?.PathParent; dir != null && depth++ < 256; dir = dir.PathParent)
+            {
+                if (!dir.IsDirectory) continue;
+                dir.AddSizeDelta(delta);
+                markChanged?.Invoke(dir);
+                changed++;
+            }
+            return changed;
+        }
+
         int sizeRefreshQueued = 0; //1 => a row repaint covering all size changes so far is already queued
+        long sizeChangeGeneration;
         //Directories whose aggregated size changed since the last coalesced repaint
-        readonly NonBlocking.ConcurrentDictionary<INode, byte> pendingSizeRows = new();
+        readonly NonBlocking.ConcurrentDictionary<INode, long> pendingSizeRows = new();
         /// <summary>
         /// Repaint the rows of directories whose aggregated size changed, coalesced to one
         /// refresh per 2s - never per event, which would saturate the dispatcher during change
@@ -1257,9 +1491,19 @@ namespace search.Models
                 //Reset before the snapshot: a directory added after the snapshot finds the
                 //flag cleared and queues the next round - no size change is ever dropped
                 Interlocked.Exchange(ref sizeRefreshQueued, 0);
-                var changed = pendingSizeRows.Keys.ToArray();
-                foreach (var node in changed) pendingSizeRows.TryRemove(node, out _);
-                if (changed.Length > 0) RowsRefreshRequested?.Invoke(changed);
+                var pending = pendingSizeRows.ToArray();
+                var changed = pending.Select(change => change.Key).ToArray();
+                //Remove only the exact generation captured above. If another delete changed
+                //the same directory meanwhile, its newer generation remains queued instead
+                //of being accidentally consumed by this older repaint batch.
+                foreach (var change in pending) ConsumePendingSizeChange(pendingSizeRows, change);
+                if (changed.Length > 0)
+                {
+                    if (health?.SuspendAutomaticGridUpdates == true) refreshPending = true;
+                    else if (sort?.Length > 1 && sort.Substring(1) == nameof(INode.Size))
+                        await UpdateSmall(changed);
+                    else RowsRefreshRequested?.Invoke(changed);
+                }
             });
         }
 
@@ -1471,6 +1715,12 @@ namespace search.Models
 
         public SearchModel()
         {
+            health = new LiveUpdateHealthMonitor(Dispatcher,
+                FSChangeProcessor.GetHealthSnapshot,
+                FSChangeProcessor.GetRecentEvents,
+                () => new HealthWorkState(Loading, Filtering, Searching),
+                ApplyLiveUpdateHealth,
+                CatchUpLiveGrid);
             FSChangeProcessor.ShouldIndex = DriveSelectionStore.IsEnabled;
             FSChangeProcessor.Lookup = FindByPath;
             FSChangeProcessor.ReconcileDirs = ReconcileDirectories;
@@ -1506,16 +1756,30 @@ namespace search.Models
                 void FlushDeletes()
                 {
                     if (pendingDeletes.Count == 0) return;
-                    var trees = new List<string>();
-                    var removed = new List<INode>();
+                    //Discover every tree before mutating anything. USN commonly reports a
+                    //directory delete together with deletes of its children; those children
+                    //are covered by the directory's stored aggregate and must not each walk
+                    //their parent chain as well.
+                    var trees = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var path in pendingDeletes)
                     {
                         var indexed = files.TryGetValue(path, out var i) ? i : null;
-                        if (indexed?.IsDirectory == true || HasArchiveChildren(indexed)) trees.Add(path);
-                        else removed.Add(Remove(path));
+                        if (indexed?.IsDirectory == true || HasArchiveChildren(indexed))
+                            trees.Add(path.TrimEnd(Path.DirectorySeparatorChar,
+                                Path.AltDirectorySeparatorChar));
+                    }
+
+                    var removed = new List<INode>();
+                    foreach (var path in pendingDeletes)
+                    {
+                        var normalized = path.TrimEnd(Path.DirectorySeparatorChar,
+                            Path.AltDirectorySeparatorChar);
+                        if (trees.Contains(normalized) || IsBelowPendingTree(normalized, trees))
+                            continue;
+                        removed.Add(Remove(path));
                     }
                     pendingDeletes.Clear();
-                    if (trees.Count > 0) removed.AddRange(RemoveTrees(trees));
+                    if (trees.Count > 0) removed.AddRange(RemoveTrees(trees.ToArray()));
                     RecordStructuralNodes(removed);
                 }
 
@@ -1606,6 +1870,12 @@ namespace search.Models
         /// </summary>
         async Task UpdateSmall(IEnumerable<INode> changed, IEnumerable<INode> metadataOnly = null)
         {
+            health?.GridUpdatePending();
+            if (health?.SuspendAutomaticGridUpdates == true)
+            {
+                refreshPending = true;
+                return;
+            }
             var unique = new HashSet<object>(ReferenceEqualityComparer.Instance);
             var nodeList = new List<INode>();
             foreach (var node in changed)
@@ -1617,7 +1887,11 @@ namespace search.Models
                 foreach (var directory in pendingSizeRows.Keys)
                     if (directory != null && unique.Add(directory)) nodeList.Add(directory);
             var nodes = nodeList.ToArray();
-            if (nodes.Length == 0) return;
+            if (nodes.Length == 0)
+            {
+                health?.GridUpdateReflected();
+                return;
+            }
 
             //Changed does not alter path-based filter membership. A non-matching node can
             //never be published; under a non-metadata sort a matching node cannot move,
@@ -1644,26 +1918,118 @@ namespace search.Models
                     }
                     if (repaint.Count > 0) RowsRefreshRequested?.Invoke(repaint.ToArray());
                     nodes = work.ToArray();
-                    if (nodes.Length == 0) return;
+                    if (nodes.Length == 0)
+                    {
+                        health?.GridUpdateReflected();
+                        return;
+                    }
                 }
             }
 
-            if (await TryBulkRemove(nodes)) return;
-            if (nodes.Length <= 8)
+            if (await TryBulkRemove(nodes))
             {
-                if (await TryIncrementalUpdate(nodes)) return;
+                health?.GridUpdateReflected();
+                return;
+            }
+            //A real loading storm is covered by the drive's authoritative publish. Do not
+            //reset a 100k-row grid while the scan is still producing more changes; small
+            //batches below stay live through the targeted path.
+            if (DefersLoadingBatch(Loading, nodes.Length))
+            {
+                refreshPending = true;
+                return;
+            }
+            if (UsesIncrementalBatch(nodes.Length))
+            {
+                if (await TryIncrementalUpdate(nodes))
+                {
+                    health?.GridUpdateReflected();
+                    return;
+                }
+                if (Loading)
+                {
+                    //Unknown sort/partial view: the final drive publish is authoritative.
+                    refreshPending = true;
+                    return;
+                }
             }
             else
             {
                 var bulk = await TryBulkIncrementalUpdate(nodes);
                 if (bulk.Handled)
                 {
-                    if (bulk.NeedsRefresh) _ = Update();
+                    if (bulk.NeedsRefresh) QueueTailReconciliation();
+                    health?.GridUpdateReflected();
                     return;
                 }
             }
             var nf = nodeFilter;
             if (nodes.Any(nf.Matches)) _ = Update();
+            else health?.GridUpdateReflected();
+        }
+
+        internal static bool UsesIncrementalBatch(int count)
+            => count >= 0 && count <= IncrementalBatchLimit;
+
+        internal static bool DefersLoadingBatch(bool loading, int count)
+            => loading && !UsesIncrementalBatch(count);
+
+        /// <summary>
+        /// A capped grid may temporarily lose rows only at its invisible tail. Refill it once
+        /// filesystem activity has been quiet for a moment instead of refiltering millions of
+        /// index entries after every cache-file deletion.
+        /// </summary>
+        void QueueTailReconciliation()
+        {
+            refreshPending = true;
+            Interlocked.Exchange(ref tailReconciliationRequestedAt, Environment.TickCount64);
+            if (Interlocked.Exchange(ref tailReconciliationQueued, 1) == 1) return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (refreshPending && health?.SuspendAutomaticGridUpdates != true)
+                    {
+                        var requested = Interlocked.Read(ref tailReconciliationRequestedAt);
+                        var remaining = TailReconciliationQuietMs
+                            - (Environment.TickCount64 - requested);
+                        if (remaining > 0) await Task.Delay((int)Math.Min(remaining, int.MaxValue));
+                        if (requested != Interlocked.Read(ref tailReconciliationRequestedAt)) continue;
+                        if (!refreshPending || health?.SuspendAutomaticGridUpdates == true) return;
+
+                        //The quiet-time delay already supplied the coalescing window.
+                        await UpdateCore(null, null, healthRecovery: false, skipDataDebounce: true);
+                        return;
+                    }
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref tailReconciliationQueued, 0);
+                    //Close the race where a new tail hole arrived between the final timestamp
+                    //check and releasing the ownership bit.
+                    if (refreshPending && health?.SuspendAutomaticGridUpdates != true
+                        && Environment.TickCount64 - Interlocked.Read(ref tailReconciliationRequestedAt)
+                            < TailReconciliationQuietMs)
+                        QueueTailReconciliation();
+                }
+            });
+        }
+
+        internal static bool ConsumePendingSizeChange(
+            NonBlocking.ConcurrentDictionary<INode, long> pending,
+            KeyValuePair<INode, long> change)
+            => pending.TryRemove(change);
+
+        /// <summary>Whether a deleted path is covered by a directory delete in this batch.</summary>
+        internal static bool IsBelowPendingTree(string path, IReadOnlySet<string> trees)
+        {
+            if (string.IsNullOrEmpty(path) || trees == null || trees.Count == 0) return false;
+            for (var parent = Path.GetDirectoryName(path); !string.IsNullOrEmpty(parent);
+                parent = Path.GetDirectoryName(parent))
+                if (trees.Contains(parent.TrimEnd(Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar))) return true;
+            return false;
         }
 
         /// <summary>
@@ -1681,49 +2047,76 @@ namespace search.Models
             if (removed.Any(n => files.TryGetValue(n, out var current) && ReferenceEquals(current, n))) return false;
 
             var needsRefresh = false;
+            var visibleRowsRemoved = false;
+            var dispatcherWatch = Stopwatch.StartNew();
+            var dispatcherWaitMs = 0L;
+            var applyMs = 0L;
+            var publishedRowCount = 0;
+            var gridMode = "remove-scan";
             var handled = await Dispatcher.InvokeAsync(() =>
             {
-                if (!itemsComplete) return false; //Revalidate on the UI thread - Items are exchanged only here
-                var items = Items;
-                var set = new HashSet<object>(removed, ReferenceEqualityComparer.Instance);
-                List<int> hits = null;
-                for (var i = 0; i < items.Count; i++)
-                    if (set.Contains(items[i])) (hits ??= new List<int>()).Add(i);
-
-                //A capped window needs rows pulled in from beyond MaxItems after a visible
-                //removal. Deleted files also changed surviving ancestor directory sizes,
-                //which can invalidate a size ordering even when no deleted row is visible.
-                needsRefresh = BulkRemovalNeedsRefresh(itemsTruncated, sort, hits != null);
-                if (hits == null) return true; //Nothing published - the grid (and selection) stays untouched
-
-                BeforeItemsExchange();
-                if (hits.Count <= 300)
+                dispatcherWaitMs = dispatcherWatch.ElapsedMilliseconds;
+                var applyWatch = Stopwatch.StartNew();
+                try
                 {
-                    //Few visible rows - remove in place (backwards: earlier indexes stay valid)
-                    for (var i = hits.Count - 1; i >= 0; i--) items.RemoveAt(hits[i]);
+                    if (!itemsComplete) return false; //Revalidate on the UI thread - Items are exchanged only here
+                    var items = Items;
+                    publishedRowCount = items.Count;
+                    var set = new HashSet<object>(removed, ReferenceEqualityComparer.Instance);
+                    List<int> hits = null;
+                    for (var i = 0; i < items.Count; i++)
+                        if (set.Contains(items[i])) (hits ??= new List<int>()).Add(i);
+                    visibleRowsRemoved = hits != null;
+
+                    //A capped window needs rows pulled in from beyond MaxItems after a visible
+                    //removal. Surviving ancestor size rows are reordered independently by the
+                    //coalesced targeted size update; they do not require a 100k-row query here.
+                    needsRefresh = BulkRemovalNeedsRefresh(itemsTruncated, sort, hits != null);
+                    if (hits == null) return true; //Nothing published - the grid (and selection) stays untouched
+
+                    BeforeItemsExchange();
+                    if (hits.Count <= 300)
+                    {
+                        gridMode = "remove-in-place";
+                        //Few visible rows - remove in place (backwards: earlier indexes stay valid)
+                        for (var i = hits.Count - 1; i >= 0; i--) items.RemoveAt(hits[i]);
+                    }
+                    else
+                    {
+                        gridMode = "remove-reset";
+                        //Each RemoveAt shifts the tail of a possibly 100k-row list - beyond a few
+                        //hundred rows one rebuilt collection is cheaper than the shifts
+                        var target = new RangeObservableCollection<INode>();
+                        target.AddRange(items.Where(x => !set.Contains(x)));
+                        Items = target;
+                    }
+                    AfterItemsExchange();
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
+                    publishedRowCount = Items.Count;
+                    return true;
                 }
-                else
-                {
-                    //Each RemoveAt shifts the tail of a possibly 100k-row list - beyond a few
-                    //hundred rows one rebuilt collection is cheaper than the shifts
-                    var target = new RangeObservableCollection<INode>();
-                    target.AddRange(items.Where(x => !set.Contains(x)));
-                    Items = target;
-                }
-                AfterItemsExchange();
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
-                return true;
+                finally { applyMs = applyWatch.ElapsedMilliseconds; }
             });
+            health?.GridMutationCompleted(gridMode, removed.Length, publishedRowCount,
+                dispatcherWaitMs, applyMs);
 
-            //Keep the deletion instant, then let the existing coalesced refresh refill or
-            //resort in the background without holding up this drive's event queue.
-            if (handled && needsRefresh) _ = Update();
+            //Keep the deletion instant, then let one quiet-window refresh refill a capped
+            //tail without repeatedly selecting 100k rows during a deletion storm.
+            if (handled && needsRefresh)
+            {
+                if (CanDeferTailReconciliation(itemsTruncated, sort, visibleRowsRemoved))
+                    QueueTailReconciliation();
+                else _ = Update();
+            }
             return handled;
         }
 
         internal static bool BulkRemovalNeedsRefresh(bool truncated, string currentSort, bool visibleRowsRemoved)
-            => visibleRowsRemoved && truncated
-                || currentSort?.Length > 1 && currentSort.Substring(1) == nameof(INode.Size);
+            => visibleRowsRemoved && truncated;
+
+        internal static bool CanDeferTailReconciliation(bool truncated, string currentSort,
+            bool visibleRowsRemoved)
+            => truncated && visibleRowsRemoved;
 
         /// <summary>
         /// True for "C:\" (any drive/watcher root) and for null/empty. Watcher events carrying
@@ -1973,7 +2366,8 @@ namespace search.Models
             LoadStatus.Debug();
             // Clean freed memory
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-            UIRefreshRequested?.Invoke();
+            if (health?.SuspendAutomaticGridUpdates == true) refreshPending = true;
+            else UIRefreshRequested?.Invoke();
         }
 
         async Task Log(string text)

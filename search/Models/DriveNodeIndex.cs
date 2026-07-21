@@ -115,17 +115,27 @@ namespace search.Models
         }
 
         public bool TryRemove(object key, out INode node)
+            => TryRemove(key, null, out node);
+
+        /// <summary>
+        /// Remove one entry, optionally running a short non-structural mutation while the
+        /// entry and its current drive shard are still published. Size propagation uses
+        /// this to resolve path-backed ancestors before a concurrent drive scan can replace
+        /// the shard between removal and the parent lookups.
+        /// </summary>
+        public bool TryRemove(object key, Action<INode> beforeRemove, out INode node)
         {
             lock (mutationLock)
             {
                 var routed = Find(shards, RootOf(key));
-                if (routed != null && routed.Map.TryRemove(key, out node))
+                if (TryRemove(routed, key, beforeRemove, out node))
                 {
                     routed.DenseNodes = null;
                     return true;
                 }
                 foreach (var shard in shards)
-                    if (!ReferenceEquals(shard, routed) && shard.Map.TryRemove(key, out node))
+                    if (!ReferenceEquals(shard, routed)
+                        && TryRemove(shard, key, beforeRemove, out node))
                     {
                         shard.DenseNodes = null;
                         return true;
@@ -133,6 +143,17 @@ namespace search.Models
                 node = null;
                 return false;
             }
+        }
+
+        static bool TryRemove(Shard shard, object key, Action<INode> beforeRemove,
+            out INode node)
+        {
+            node = null;
+            if (shard == null || !shard.Map.TryGetValue(key, out var current)) return false;
+            beforeRemove?.Invoke(current);
+            //All membership mutations use mutationLock. The freshly published replacement
+            //map is no longer written by its scanner, so the same entry must still be here.
+            return shard.Map.TryRemove(key, out node);
         }
 
         /// <summary>Atomically replace one drive while every other drive keeps its shard.</summary>

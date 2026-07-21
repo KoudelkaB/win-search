@@ -18,16 +18,22 @@ namespace search
     {
         internal const long MaxLogBytes = 2 * 1024 * 1024;
         internal const int LogBackupCount = 3;
+        internal const long MaxHealthLogBytes = 512 * 1024;
+        internal const int HealthLogBackupCount = 2;
         internal static readonly TimeSpan ClipboardRetention = TimeSpan.FromDays(1);
 
         private static readonly SemaphoreSlim LogLock = new SemaphoreSlim(1, 1);
-        private static readonly string[] KnownLogs = { "search.run.log", "log.txt" };
+        private static readonly string[] KnownLogs = { "search.run.log", "log.txt", "health.log" };
 
         internal static void RunStartupCleanup(string tempRoot, string currentTempFolder, DateTime utcNow)
         {
             CleanupTempFolders(tempRoot, currentTempFolder, utcNow);
             foreach (var log in KnownLogs)
-                TryRotateLog(UserDataPaths.For(log));
+            {
+                var path = UserDataPaths.For(log);
+                if (log == "health.log") TryRotateLog(path, 0, MaxHealthLogBytes, HealthLogBackupCount);
+                else TryRotateLog(path);
+            }
         }
 
         internal static void CleanupTempFolders(string tempRoot, string currentTempFolder, DateTime utcNow)
@@ -85,12 +91,18 @@ namespace search
         }
 
         internal static void AppendLog(string fileName, string text)
+            => AppendLog(fileName, text, MaxLogBytes, LogBackupCount);
+
+        internal static void AppendHealthLog(string text)
+            => AppendLog("health.log", text, MaxHealthLogBytes, HealthLogBackupCount);
+
+        static void AppendLog(string fileName, string text, long maxBytes, int backupCount)
         {
             LogLock.Wait();
             try
             {
                 var path = UserDataPaths.For(fileName);
-                TryRotateLog(path, Encoding.UTF8.GetByteCount(text));
+                TryRotateLog(path, Encoding.UTF8.GetByteCount(text), maxBytes, backupCount);
                 File.AppendAllText(path, text, Encoding.UTF8);
             }
             catch { }
@@ -117,15 +129,18 @@ namespace search
         }
 
         internal static void TryRotateLog(string path, int incomingBytes = 0)
+            => TryRotateLog(path, incomingBytes, MaxLogBytes, LogBackupCount);
+
+        internal static void TryRotateLog(string path, int incomingBytes, long maxBytes, int backupCount)
         {
             try
             {
                 var info = new FileInfo(path);
-                if (!info.Exists || info.Length + incomingBytes <= MaxLogBytes) return;
+                if (!info.Exists || info.Length + incomingBytes <= maxBytes) return;
 
-                var oldest = path + "." + LogBackupCount;
+                var oldest = path + "." + backupCount;
                 if (File.Exists(oldest)) File.Delete(oldest);
-                for (var i = LogBackupCount - 1; i >= 1; i--)
+                for (var i = backupCount - 1; i >= 1; i--)
                 {
                     var source = path + "." + i;
                     if (File.Exists(source)) File.Move(source, path + "." + (i + 1));

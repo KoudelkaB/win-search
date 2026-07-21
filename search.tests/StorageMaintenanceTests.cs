@@ -64,6 +64,28 @@ namespace search.Tests
         }
 
         [Fact]
+        public void HealthLogUsesItsSmallerIndependentRotationWindow()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var log = Path.Combine(root, "health.log");
+                File.WriteAllBytes(log, new byte[StorageMaintenance.MaxHealthLogBytes + 1]);
+                for (var i = 1; i <= StorageMaintenance.HealthLogBackupCount; i++)
+                    File.WriteAllText(log + "." + i, i.ToString());
+
+                StorageMaintenance.TryRotateLog(log, 0,
+                    StorageMaintenance.MaxHealthLogBytes, StorageMaintenance.HealthLogBackupCount);
+
+                Assert.False(File.Exists(log));
+                Assert.True(File.Exists(log + ".1"));
+                Assert.Equal("1", File.ReadAllText(log + ".2"));
+                Assert.False(File.Exists(log + ".3"));
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
+        [Fact]
         public void ClipboardCleanupKeepsOnlyMaterializationsStillReferenced()
         {
             var root = CreateRoot();

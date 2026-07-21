@@ -1,6 +1,7 @@
 using SharpCompress.Archives;
 using SharpCompress.Writers.Zip;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Collections.Specialized;
 using System.IO;
@@ -28,12 +29,72 @@ namespace search.Tests
         [Theory]
         [InlineData(true, "+Name", true, true)]   //Refill the capped window after visible removals
         [InlineData(true, "+Name", false, false)] //An unseen removal cannot leave a hole
-        [InlineData(false, "+Size", false, true)] //Surviving ancestor sizes may need reordering
-        [InlineData(false, "-Size", true, true)]
+        [InlineData(false, "+Size", false, false)] //Ancestor rows are reordered by the targeted size update
+        [InlineData(false, "-Size", true, false)]
+        [InlineData(true, "+Size", true, true)]
         [InlineData(false, "+Name", true, false)]
-        public void BulkRemovalRefreshesOnlyForWindowBackfillOrSizeOrdering(
+        public void BulkRemovalRefreshesOnlyForWindowBackfill(
             bool truncated, string sort, bool visibleRowsRemoved, bool expected)
             => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(truncated, sort, visibleRowsRemoved));
+
+        [Theory]
+        [InlineData(0, true)]
+        [InlineData(8, true)]
+        [InlineData(14, true)] //The batch that caused the recorded 1.3 s UI stall
+        [InlineData(64, true)]
+        [InlineData(65, false)]
+        public void MediumWatcherBatchesAvoidAFullGridReset(int changes, bool incremental)
+            => Assert.Equal(incremental, SearchModel.UsesIncrementalBatch(changes));
+
+        [Theory]
+        [InlineData(true, 14, false)]
+        [InlineData(true, 64, false)]
+        [InlineData(true, 65, true)]
+        [InlineData(false, 1000, false)]
+        public void DriveLoadingDefersOnlyLargeWatcherStorms(bool loading, int changes, bool deferred)
+            => Assert.Equal(deferred, SearchModel.DefersLoadingBatch(loading, changes));
+
+        [Theory]
+        [InlineData(true, "+Name", true, true)]
+        [InlineData(true, "+LastChangeTime", true, true)]
+        [InlineData(true, "+Size", true, true)] //Size rows move incrementally; only tail backfill waits
+        [InlineData(false, "+Name", true, false)]
+        [InlineData(true, "+Name", false, false)]
+        public void OnlyInvisibleTailBackfillWaitsForFilesystemQuiet(
+            bool truncated, string sort, bool visibleRowsRemoved, bool expected)
+            => Assert.Equal(expected,
+                SearchModel.CanDeferTailReconciliation(truncated, sort, visibleRowsRemoved));
+
+        [Fact]
+        public void OlderSizeBatchCannotConsumeANewerChangeOfTheSameDirectory()
+        {
+            var directory = (INode)new KeyNode(1);
+            var pending = new NonBlocking.ConcurrentDictionary<INode, long>();
+            pending[directory] = 1;
+            var olderBatch = pending.Single();
+
+            pending[directory] = 2;
+
+            Assert.False(SearchModel.ConsumePendingSizeChange(pending, olderBatch));
+            Assert.Equal(2, pending[directory]);
+            Assert.True(SearchModel.ConsumePendingSizeChange(pending,
+                new KeyValuePair<INode, long>(directory, 2)));
+            Assert.Empty(pending);
+        }
+
+        [Theory]
+        [InlineData(@"Q:\Docs\single.bin", true)]
+        [InlineData(@"Q:\Docs\Sub\nested.bin", true)]
+        [InlineData(@"Q:\Docs2\sibling.bin", false)]
+        [InlineData(@"Q:\other.bin", false)]
+        public void FolderDeleteCoversOnlyItsRealDescendants(string path, bool expected)
+        {
+            IReadOnlySet<string> trees = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                @"Q:\Docs"
+            };
+            Assert.Equal(expected, SearchModel.IsBelowPendingTree(path, trees));
+        }
 
         [Theory]
         [InlineData("+Name", "-Name", true, true)]

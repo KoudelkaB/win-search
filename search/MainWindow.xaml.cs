@@ -93,6 +93,7 @@ namespace search
                 Broker.StartupElevationAccepted -= Broker_StartupElevationAccepted;
                 WindowLayoutStore.Save(this, CaptureColumnWidths());
                 SaveWorkspaceSettings();
+                Model?.Dispose();
             };
 
             DataContext = new Models.SearchModel();

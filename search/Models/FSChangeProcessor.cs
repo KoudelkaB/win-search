@@ -33,10 +33,14 @@ namespace search.Models
         /// </summary>
         sealed class DriveQueue
         {
-            readonly ConcurrentQueue<(FsEvent Event, TaskCompletionSource Done)> normal = new(), urgent = new();
+            readonly record struct QueuedChange(FsEvent Event, TaskCompletionSource Done, long QueuedAt);
+
+            readonly ConcurrentQueue<QueuedChange> normal = new(), urgent = new();
             readonly AutoResetEvent signal = new(false);
-            readonly List<(FsEvent Event, TaskCompletionSource Done)> batch = new();
+            readonly List<QueuedChange> batch = new();
             int normalCount, urgentCount;
+            int activeCount;
+            long activeOldestQueued;
 
             //A short quiet window folds save/build bursts into one metadata/grid pass. Once
             //the queue is clearly busy, extend the same window (from its original start) to
@@ -76,12 +80,25 @@ namespace search.Models
                                 }
                             }
                             if (batch.Count == 0) continue;
+                            var processingStarted = Environment.TickCount64;
+                            var oldestQueued = batch.Min(x => x.QueuedAt);
+                            Interlocked.Exchange(ref activeOldestQueued, oldestQueued);
+                            Volatile.Write(ref activeCount, batch.Count);
+                            var eventCount = 0;
                             try
                             {
                                 var events = CoalesceChangedEvents(batch.Select(x => x.Event));
+                                eventCount = events.Length;
                                 if (events.Length > 0) Changed(events).Wait();
                             }
                             catch { }
+                            finally
+                            {
+                                RecordCompletedBatch(Math.Max(0, Environment.TickCount64 - oldestQueued),
+                                    Math.Max(0, Environment.TickCount64 - processingStarted), eventCount);
+                                Interlocked.Exchange(ref activeOldestQueued, 0);
+                                Volatile.Write(ref activeCount, 0);
+                            }
                             foreach (var item in batch) item.Done?.TrySetResult();
                         }
                     }
@@ -107,15 +124,17 @@ namespace search.Models
             public Task Enqueue(FsEvent e, bool priority = false)
             {
                 var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var queued = new QueuedChange(e, done, Environment.TickCount64);
+                RecordRecent(e, queued.QueuedAt);
                 if (priority)
                 {
-                    urgent.Enqueue((e, done));
+                    urgent.Enqueue(queued);
                     Interlocked.Increment(ref urgentCount);
                     signal.Set();
                 }
                 else
                 {
-                    normal.Enqueue((e, done));
+                    normal.Enqueue(queued);
                     //The transition from empty wakes the consumer. Further normal events
                     //are intentionally silent while its time window is open; otherwise a
                     //write storm would wake the thread once per notification just to keep
@@ -123,6 +142,19 @@ namespace search.Models
                     if (Interlocked.Increment(ref normalCount) == 1) signal.Set();
                 }
                 return done.Task;
+            }
+
+            public (int Count, long OldestAgeMs) Health(long now)
+            {
+                var count = Math.Max(0, Volatile.Read(ref normalCount))
+                    + Math.Max(0, Volatile.Read(ref urgentCount))
+                    + Math.Max(0, Volatile.Read(ref activeCount));
+                var oldest = long.MaxValue;
+                if (normal.TryPeek(out var normalItem)) oldest = Math.Min(oldest, normalItem.QueuedAt);
+                if (urgent.TryPeek(out var urgentItem)) oldest = Math.Min(oldest, urgentItem.QueuedAt);
+                var active = Interlocked.Read(ref activeOldestQueued);
+                if (active != 0) oldest = Math.Min(oldest, active);
+                return (count, oldest == long.MaxValue ? 0 : Math.Max(0, now - oldest));
             }
         }
 
@@ -161,6 +193,14 @@ namespace search.Models
 
         static readonly NonBlocking.ConcurrentDictionary<string, DriveQueue> queues = new(StringComparer.OrdinalIgnoreCase);
         static readonly NonBlocking.ConcurrentDictionary<string, IDisposable> sources = new(StringComparer.OrdinalIgnoreCase); //Watcher or USN reader per drive root
+        const int RecentEventCapacity = 32;
+        static readonly FsEvent[] recentEvents = new FsEvent[RecentEventCapacity];
+        static readonly long[] recentEventTicks = new long[RecentEventCapacity];
+        static int recentEventSequence;
+        static long lastBatchCompletedTick;
+        static long lastReflectionLatencyMs;
+        static long lastBatchDurationMs;
+        static int lastBatchEventCount;
         static Action<string> Started;
         static Func<FsEvent[], Task> Changed;
         static int started = 0;
@@ -205,6 +245,68 @@ namespace search.Models
         {
             try { return Path.GetPathRoot(path) is { Length: > 0 } r ? r : path; }
             catch { return path; }
+        }
+
+        static void RecordCompletedBatch(long reflectionLatencyMs, long durationMs, int eventCount)
+        {
+            Interlocked.Exchange(ref lastReflectionLatencyMs, reflectionLatencyMs);
+            Interlocked.Exchange(ref lastBatchDurationMs, durationMs);
+            Interlocked.Exchange(ref lastBatchEventCount, eventCount);
+            Interlocked.Exchange(ref lastBatchCompletedTick, Environment.TickCount64);
+        }
+
+        static void RecordRecent(FsEvent e, long queuedAt)
+        {
+            if (e == null) return;
+            var sequence = Interlocked.Increment(ref recentEventSequence);
+            var slot = (sequence & int.MaxValue) % RecentEventCapacity;
+            recentEventTicks[slot] = queuedAt;
+            recentEvents[slot] = e;
+        }
+
+        internal static FsPipelineHealth GetHealthSnapshot()
+        {
+            var now = Environment.TickCount64;
+            var depth = 0;
+            var oldest = 0L;
+            var slowestRoot = "";
+            var slowestDepth = 0;
+            foreach (var pair in queues)
+            {
+                var health = pair.Value.Health(now);
+                depth += health.Count;
+                if (health.OldestAgeMs > oldest)
+                {
+                    oldest = health.OldestAgeMs;
+                    slowestRoot = pair.Key;
+                    slowestDepth = health.Count;
+                }
+            }
+
+            //A completed batch is a latency sample, not a permanent warning. Once quiet,
+            //the dispatcher heartbeat remains the live signal and the border can return green.
+            var recent = now - Interlocked.Read(ref lastBatchCompletedTick) <= 3000;
+            return new FsPipelineHealth(depth, oldest,
+                recent ? Interlocked.Read(ref lastReflectionLatencyMs) : 0,
+                recent ? Interlocked.Read(ref lastBatchDurationMs) : 0,
+                recent ? Volatile.Read(ref lastBatchEventCount) : 0,
+                slowestRoot, slowestDepth);
+        }
+
+        internal static string[] GetRecentEvents()
+        {
+            var current = Volatile.Read(ref recentEventSequence);
+            var count = Math.Min(Math.Max(0, current), RecentEventCapacity);
+            var result = new List<string>(count);
+            for (var i = count - 1; i >= 0; i--)
+            {
+                var sequence = current - i;
+                var slot = (sequence & int.MaxValue) % RecentEventCapacity;
+                var e = recentEvents[slot];
+                if (e == null) continue;
+                result.Add($"+{Math.Max(0, Environment.TickCount64 - recentEventTicks[slot])}ms {e}");
+            }
+            return result.ToArray();
         }
 
         /// <summary>

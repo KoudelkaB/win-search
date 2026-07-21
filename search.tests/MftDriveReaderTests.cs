@@ -73,6 +73,83 @@ namespace search.Tests
         }
 
         [Fact]
+        public void WholeTreeDeletionSubtractsItsAggregateOnceFromSurvivingParents()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[]
+                {
+                    FakeMft.FileName(FakeMft.RootEntry, "Docs")
+                })
+                .AddRecord(attributes: new[]
+                {
+                    FakeMft.FileName(6, "large.bin"), FakeMft.ResidentData(123)
+                })
+                .Parse();
+            var root = nodes.Single(n => n.Name == "Q:");
+            var docs = nodes.Single(n => n.Name == "Docs");
+
+            var changed = SearchModel.ApplySizeDeltaToParentChain(docs, -(long)docs.Size, null);
+
+            Assert.Equal(1, changed);
+            Assert.Equal(0UL, root.Size);
+            Assert.Equal(123UL, docs.Size); //Removed node itself is discarded, never decremented.
+        }
+
+        [Fact]
+        public void IndexedMftFileCanBeRemovedByPathAndDecrementsTheRootAggregate()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[]
+                {
+                    FakeMft.FileName(FakeMft.RootEntry, "Docs")
+                })
+                .AddRecord(attributes: new[]
+                {
+                    FakeMft.FileName(6, "single.bin"), FakeMft.ResidentData(123)
+                })
+                .Parse();
+            var map = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+            foreach (var node in nodes) map[node] = node;
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(FakeMft.Root, map, nodes);
+            var root = nodes.Single(n => n.Name == "Q:");
+
+            Assert.True(index.TryRemove(@"Q:\Docs\single.bin", out var removed));
+            Assert.Equal(123UL, removed.Size);
+            Assert.Equal(2, SearchModel.ApplySizeDeltaToParentChain(
+                removed, -(long)removed.Size, null));
+            Assert.Equal(0UL, root.Size);
+        }
+
+        [Fact]
+        public void FileDeleteBeforeItsParentTreeDeleteIsNotSubtractedTwice()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[]
+                {
+                    FakeMft.FileName(FakeMft.RootEntry, "Docs")
+                })
+                .AddRecord(attributes: new[]
+                {
+                    FakeMft.FileName(6, "single.bin"), FakeMft.ResidentData(123)
+                })
+                .Parse();
+            var root = nodes.Single(n => n.Name == "Q:");
+            var docs = nodes.Single(n => n.Name == "Docs");
+            var file = nodes.Single(n => n.Name == "single.bin");
+
+            //One drive queue is FIFO. If the child record is delivered first it reduces
+            //the directory aggregate; the later tree delete therefore has no remainder.
+            SearchModel.ApplySizeDeltaToParentChain(file, -(long)file.Size, null);
+            Assert.Equal(0UL, docs.Size);
+            Assert.Equal(0UL, root.Size);
+
+            if (docs.Size > 0)
+                SearchModel.ApplySizeDeltaToParentChain(docs, -(long)docs.Size, null);
+            Assert.Equal(0UL, root.Size);
+        }
+
+        [Fact]
         public void ReadsNonResidentDataSizes()
         {
             var nodes = WithRoot(1024)
