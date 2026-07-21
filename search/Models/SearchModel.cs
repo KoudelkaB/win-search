@@ -1497,13 +1497,20 @@ namespace search.Models
                 //the same directory meanwhile, its newer generation remains queued instead
                 //of being accidentally consumed by this older repaint batch.
                 foreach (var change in pending) ConsumePendingSizeChange(pendingSizeRows, change);
-                if (changed.Length > 0)
+                if (changed.Length == 0) return;
+                if (health?.SuspendAutomaticGridUpdates == true)
                 {
-                    if (health?.SuspendAutomaticGridUpdates == true) refreshPending = true;
-                    else if (sort?.Length > 1 && sort.Substring(1) == nameof(INode.Size))
-                        await UpdateSmall(changed);
-                    else RowsRefreshRequested?.Invoke(changed);
+                    refreshPending = true;
+                    return;
                 }
+                //Repaint unconditionally: a directory whose aggregate changed usually keeps
+                //its row (the drive root is always the largest row of a size sort), and a
+                //collection update alone leaves such a row showing its old value. Only rows
+                //realized on screen are touched, so this stays cheap under any sort.
+                RowsRefreshRequested?.Invoke(changed);
+                //Under a size sort the new aggregates can also reorder rows.
+                if (sort?.Length > 1 && sort.Substring(1) == nameof(INode.Size))
+                    await UpdateSmall(changed);
             });
         }
 

@@ -316,14 +316,9 @@ namespace search
                     var changed = new HashSet<object>(nodes, ReferenceEqualityComparer.Instance);
                     rows = RealizedRows(filesView).Where(row => changed.Contains(row.DataContext));
                 }
-                foreach (var row in rows.ToArray())
-                {
-                    //INode raises no change notifications => rebind the row to re-read its values.
-                    //Off-screen rows need nothing: virtualization rebinds them when realized.
-                    var context = row.DataContext;
-                    row.DataContext = null;
-                    row.DataContext = context;
-                }
+                //INode raises no change notifications => make each row re-read its values.
+                //Off-screen rows need nothing: virtualization binds them when realized.
+                foreach (var row in rows.ToArray()) RefreshRow(row, inlineRenameNode);
             });
         }
 
@@ -2496,6 +2491,30 @@ namespace search
                 if (nested != null) return nested;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Make one realized row re-read every value it displays. INode raises no change
+        /// notifications, and the row's DataContext alone does not reach the cells: a GridView
+        /// column with a CellTemplate is a ContentPresenter that the GridViewRowPresenter feeds
+        /// from the row's CONTENT. Re-setting Content is what makes the presenter hand every
+        /// column its value again - without it a directory row that keeps its position (the
+        /// drive root is always the largest row of a size sort) showed its old aggregate until
+        /// something reset the whole collection.
+        /// </summary>
+        internal static void RefreshRow(ListViewItem row, object renaming = null)
+        {
+            var item = row.Content;
+            if (item == null) return;
+            //Re-setting Content rebuilds the cell visuals, which would drop the inline name
+            //editor mid-rename. That row's own size cannot be what the user is watching.
+            if (renaming != null && ReferenceEquals(item, renaming)) return;
+            row.Content = null;
+            row.Content = item;
+            //Inherited-DataContext bindings (DisplayMemberBinding columns, the row style's
+            //triggers) read the container's own DataContext, which Content does not carry.
+            row.DataContext = null;
+            row.DataContext = item;
         }
 
         static IEnumerable<ListViewItem> RealizedRows(DependencyObject parent)
