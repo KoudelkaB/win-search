@@ -134,10 +134,11 @@ namespace search.Models
                 {
                     if (ghosts.Count > (1 << 16)) ghosts.Clear(); //Bound memory - losing entries only costs reconciles
                     var changedSeen = new HashSet<ulong>(); //Coalesce data-change records per file
+                    var createdSeen = new HashSet<ulong>(); //Create reason repeats while the same handle is open
                     foreach (var r in batch)
                     {
                         if (stop) return;
-                        Translate(r, pendingRenames, unresolvedParents, changedSeen, ghosts);
+                        Translate(r, pendingRenames, unresolvedParents, changedSeen, createdSeen, ghosts);
                     }
                     //Wait for the batch's last event only: the drive queue is FIFO with a single
                     //consumer, so journal order is preserved without waiting between events, and
@@ -164,7 +165,9 @@ namespace search.Models
             }
         }
 
-        void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames, HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen, HashSet<ulong> ghosts)
+        void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames,
+            HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen,
+            HashSet<ulong> createdSeen, HashSet<ulong> ghosts)
         {
             if (RequiresExactMftRescan(r.Reason, frnMap.HasMultipleLinks(r.Frn)))
                 RequestExactMftRescan();
@@ -233,6 +236,10 @@ namespace search.Models
                     ghosts.Add(r.Frn); //Vanished before we read - nothing was indexed
                     return;
                 }
+                //USN reason flags are cumulative for an open-close session. Several records
+                //for the same new file can therefore all carry FILE_CREATE; the first queued
+                //event observes the final on-disk metadata when the serialized handler runs.
+                if (!createdSeen.Add(r.Frn)) return;
                 ghosts.Remove(r.Frn);
                 Process(new FsEvent(WatcherChangeTypes.Created, path));
                 Remap(r.Frn, path);

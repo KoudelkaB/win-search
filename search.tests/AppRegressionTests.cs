@@ -27,17 +27,6 @@ namespace search.Tests
             => Assert.Equal(root, SearchModel.IsDriveRoot(path));
 
         [Theory]
-        [InlineData(true, "+Name", true, true)]   //Refill the capped window after visible removals
-        [InlineData(true, "+Name", false, false)] //An unseen removal cannot leave a hole
-        [InlineData(false, "+Size", false, false)] //Ancestor rows are reordered by the targeted size update
-        [InlineData(false, "-Size", true, false)]
-        [InlineData(true, "+Size", true, true)]
-        [InlineData(false, "+Name", true, false)]
-        public void BulkRemovalRefreshesOnlyForWindowBackfill(
-            bool truncated, string sort, bool visibleRowsRemoved, bool expected)
-            => Assert.Equal(expected, SearchModel.BulkRemovalNeedsRefresh(truncated, sort, visibleRowsRemoved));
-
-        [Theory]
         [InlineData(0, true)]
         [InlineData(8, true)]
         [InlineData(14, true)] //The batch that caused the recorded 1.3 s UI stall
@@ -53,17 +42,6 @@ namespace search.Tests
         [InlineData(false, 1000, false)]
         public void DriveLoadingDefersOnlyLargeWatcherStorms(bool loading, int changes, bool deferred)
             => Assert.Equal(deferred, SearchModel.DefersLoadingBatch(loading, changes));
-
-        [Theory]
-        [InlineData(true, "+Name", true, true)]
-        [InlineData(true, "+LastChangeTime", true, true)]
-        [InlineData(true, "+Size", true, true)] //Size rows move incrementally; only tail backfill waits
-        [InlineData(false, "+Name", true, false)]
-        [InlineData(true, "+Name", false, false)]
-        public void OnlyInvisibleTailBackfillWaitsForFilesystemQuiet(
-            bool truncated, string sort, bool visibleRowsRemoved, bool expected)
-            => Assert.Equal(expected,
-                SearchModel.CanDeferTailReconciliation(truncated, sort, visibleRowsRemoved));
 
         [Fact]
         public void OlderSizeBatchCannotConsumeANewerChangeOfTheSameDirectory()
@@ -95,6 +73,16 @@ namespace search.Tests
             };
             Assert.Equal(expected, SearchModel.IsBelowPendingTree(path, trees));
         }
+
+        [Theory]
+        [InlineData(@"C:\Sdk\es", @"C:\Sdk\fr\file.dll", false)]
+        [InlineData(@"C:\Sdk\es", @"C:\Sdk\es", true)]
+        [InlineData(@"C:\Sdk\es", @"C:\Sdk\es\file.dll", true)]
+        [InlineData(@"C:\Sdk\es\file.dll", @"C:\Sdk\es", true)]
+        [InlineData(@"C:\Sdk\es", @"C:\Sdk\esperanto\file.dll", false)]
+        [InlineData(@"c:\sdk\ES\", @"C:\Sdk\es\file.dll", true)]
+        public void PendingDeletesFlushOnlyForOverlappingPaths(string deleted, string current, bool expected)
+            => Assert.Equal(expected, SearchModel.PathsOverlap(deleted, current));
 
         [Theory]
         [InlineData("+Name", "-Name", true, true)]
@@ -193,11 +181,184 @@ namespace search.Tests
         sealed class KeyNode : INode
         {
             public KeyNode(ulong size) => Size = size;
+            public void SetSize(ulong size) => Size = size;
             public override FileAttributes Attributes { get => 0; protected set { } }
             public override string Name => Size.ToString();
             public override ulong Size { get; protected set; }
             public override string FullName => @"C:\" + Name;
             public override DateTime LastChangeTime { get => default; protected set { } }
+        }
+
+        [Fact]
+        public void ResultWindowPromotesReserveRowsWithoutAFullSourceQuery()
+        {
+            var nodes = Enumerable.Range(1, 8).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var window = new LiveResultWindow<INode>(visibleLimit: 3, reserveLimit: 3,
+                reserveLowWatermark: 3);
+            window.Reset(nodes.Take(6).ToList(), unknownTail: true);
+            var visible = nodes.Take(3).ToList();
+            var operations = new List<LiveResultWindow<INode>.Operation>();
+
+            window.Apply(nodes[1], include: false, (a, b) => a.Size.CompareTo(b.Size), operations);
+            LiveResultWindow<INode>.ApplyOperations(visible, operations);
+
+            Assert.Equal(new ulong[] { 1, 3, 4 }, visible.Select(n => n.Size));
+            Assert.Equal(2, window.ReserveCount);
+            Assert.True(window.NeedsRefill);
+
+            //A previously unknown-tail node improves enough to enter the visible prefix.
+            ((KeyNode)nodes[7]).SetSize(0);
+            operations.Clear();
+            window.Apply(nodes[7], include: true, (a, b) => a.Size.CompareTo(b.Size), operations);
+            LiveResultWindow<INode>.ApplyOperations(visible, operations);
+
+            Assert.Equal(new ulong[] { 0, 1, 3 }, visible.Select(n => n.Size));
+            Assert.Equal(3, window.ReserveCount);
+            Assert.False(window.NeedsRefill);
+        }
+
+        [Fact]
+        public void MutableSortKeyIsRemovedBeforeItIsReinserted()
+        {
+            var nodes = Enumerable.Range(1, 6).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var window = new LiveResultWindow<INode>(3, 3, 1);
+            window.Reset(nodes.ToList(), unknownTail: true);
+            var visible = nodes.Take(3).ToList();
+            var operations = new List<LiveResultWindow<INode>.Operation>();
+
+            ((KeyNode)nodes[1]).SetSize(10);
+            window.Apply(nodes[1], include: true, (a, b) => a.Size.CompareTo(b.Size), operations);
+            LiveResultWindow<INode>.ApplyOperations(visible, operations);
+
+            Assert.Equal(new ulong[] { 1, 3, 4 }, visible.Select(n => n.Size));
+            Assert.Equal(new ulong[] { 1, 3, 4 }, window.VisibleSnapshot().Select(n => n.Size));
+        }
+
+        [Fact]
+        public void AdjacentMutableKeysAreRemovedBeforeSmallBatchBinaryInsertion()
+        {
+            var nodes = Enumerable.Range(1, 6).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var window = new LiveResultWindow<INode>(3, 3, 1);
+            window.Reset(nodes.ToList(), unknownTail: false);
+            var visible = nodes.Take(3).ToList();
+            var operations = new List<LiveResultWindow<INode>.Operation>();
+
+            ((KeyNode)nodes[1]).SetSize(9);
+            ((KeyNode)nodes[2]).SetSize(8);
+            window.ApplySmallBatch(new[] { nodes[1], nodes[2] }, _ => true,
+                (a, b) => a.Size.CompareTo(b.Size), operations);
+            LiveResultWindow<INode>.ApplyOperations(visible, operations);
+
+            Assert.Equal(new ulong[] { 1, 4, 5 }, visible.Select(n => n.Size));
+            Assert.Equal(window.VisibleSnapshot(), visible);
+        }
+
+        [Fact]
+        public void LargeDeltaMergesOnlyTheMaterializedWindow()
+        {
+            var nodes = Enumerable.Range(1, 6).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var zero = (INode)new KeyNode(0);
+            var between = (INode)new KeyNode(45);
+            var included = new HashSet<INode>(new[] { zero, between }, ReferenceEqualityComparer.Instance);
+            var changed = new[] { nodes[1], nodes[2], zero, between };
+            var window = new LiveResultWindow<INode>(3, 3, 1);
+            window.Reset(nodes.ToList(), unknownTail: true);
+
+            var visible = window.ApplyBatch(changed, included.Contains,
+                (a, b) => a.Size.CompareTo(b.Size));
+
+            Assert.Equal(new ulong[] { 0, 1, 4 }, visible.Select(n => n.Size));
+            //The new size-45 node is worse than the last known row. It cannot safely fill
+            //the private tail because an unmaterialized size-7 node may precede it.
+            Assert.Equal(2, window.ReserveCount);
+            Assert.True(window.HasUnknownTail);
+        }
+
+        [Fact]
+        public void ExactShortTailDoesNotRequestARefill()
+        {
+            var nodes = Enumerable.Range(1, 4).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var window = new LiveResultWindow<INode>(3, 3, 1);
+            window.Reset(nodes.ToList(), unknownTail: false);
+            var visible = nodes.Take(3).ToList();
+            var operations = new List<LiveResultWindow<INode>.Operation>();
+
+            window.Apply(nodes[0], include: false, (a, b) => a.Size.CompareTo(b.Size), operations);
+            LiveResultWindow<INode>.ApplyOperations(visible, operations);
+
+            Assert.Equal(new ulong[] { 2, 3, 4 }, visible.Select(n => n.Size));
+            Assert.False(window.IsTruncated);
+            Assert.False(window.NeedsRefill);
+        }
+
+        [Fact]
+        public void OneLargeDeleteCanMarkTheVisibleWindowIncomplete()
+        {
+            var nodes = Enumerable.Range(1, 8).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var window = new LiveResultWindow<INode>(visibleLimit: 3, reserveLimit: 2,
+                reserveLowWatermark: 1);
+            window.Reset(nodes.Take(5).ToList(), unknownTail: true);
+
+            var visible = window.ApplyBatch(nodes.Take(4).ToArray(), _ => false,
+                (a, b) => a.Size.CompareTo(b.Size));
+
+            Assert.Single(visible);
+            Assert.True(window.NeedsRefill);
+            Assert.True(window.IsVisibleIncomplete);
+        }
+
+        [Fact]
+        public void UnknownOffscreenNodeCannotPretendToRefillAReserveHole()
+        {
+            var nodes = Enumerable.Range(1, 7).Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var window = new LiveResultWindow<INode>(visibleLimit: 3, reserveLimit: 2,
+                reserveLowWatermark: 2);
+            window.Reset(nodes.Take(5).ToList(), unknownTail: true);
+
+            //The old tail row becomes much worse. Nodes 6 and 7 are known to exist beyond
+            //the materialized prefix, so row 5 cannot be kept as the apparent next reserve.
+            ((KeyNode)nodes[4]).SetSize(100);
+            window.ApplyBatch(new[] { nodes[4] }, _ => true,
+                (a, b) => a.Size.CompareTo(b.Size));
+
+            Assert.Equal(new ulong[] { 1, 2, 3 }, window.VisibleSnapshot().Select(n => n.Size));
+            Assert.Equal(1, window.ReserveCount);
+            Assert.True(window.NeedsRefill);
+        }
+
+        [Fact]
+        public void RandomSmallBatchesKeepTheExternalGridEqualToTheWindow()
+        {
+            var rnd = new Random(731);
+            var nodes = Enumerable.Range(0, 25)
+                .Select(i => (INode)new KeyNode((ulong)(i * 1000))).ToArray();
+            var included = new HashSet<INode>(nodes, ReferenceEqualityComparer.Instance);
+            Comparison<INode> compare = (a, b) => a.Size.CompareTo(b.Size);
+            var window = new LiveResultWindow<INode>(visibleLimit: 20, reserveLimit: 10,
+                reserveLowWatermark: 3);
+            window.Reset(nodes.OrderBy(n => n.Size).ToList(), unknownTail: false);
+            var visible = window.VisibleSnapshot().ToList();
+
+            for (var batch = 0; batch < 250; batch++)
+            {
+                var changed = nodes.OrderBy(_ => rnd.Next()).Take(rnd.Next(1, 6)).ToArray();
+                foreach (var node in changed)
+                {
+                    ((KeyNode)node).SetSize((ulong)(batch * 100 + rnd.Next(100)));
+                    if (rnd.Next(5) == 0)
+                    {
+                        if (!included.Remove(node)) included.Add(node);
+                    }
+                }
+
+                var operations = new List<LiveResultWindow<INode>.Operation>();
+                window.ApplySmallBatch(changed, included.Contains, compare, operations);
+                LiveResultWindow<INode>.ApplyOperations(visible, operations);
+
+                var expected = included.OrderBy(n => n.Size).Take(20).ToArray();
+                Assert.Equal(expected, window.VisibleSnapshot());
+                Assert.Equal(expected, visible);
+            }
         }
 
         [Fact]
