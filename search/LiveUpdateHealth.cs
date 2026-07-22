@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -32,7 +33,13 @@ namespace search
         long BatchDurationMs,
         int BatchEventCount,
         string SlowestRoot = "",
-        int SlowestQueueDepth = 0);
+        int SlowestQueueDepth = 0,
+        int WaitingQueueDepth = 0,
+        int ActiveBatchCount = 0,
+        long ActiveBatchMs = 0,
+        string ActiveStage = "",
+        long ActiveStageMs = 0,
+        string ActivePath = "");
 
     internal readonly record struct HealthWorkState(bool Loading, bool Filtering, bool Searching);
 
@@ -231,11 +238,26 @@ namespace search
     {
         public DateTime Utc { get; init; }
         public long UiMs { get; init; }
+        public long UiOperationMs { get; init; }
+        public string UiOperationName { get; init; }
+        public string UiOperationPriority { get; init; }
+        public bool UiOperationActive { get; init; }
+        public int UiPending { get; init; }
+        public int UiPendingMax { get; init; }
+        public double UiThreadCpuPercent { get; init; }
+        public string UiThreadState { get; init; }
+        public string UiThreadWaitReason { get; init; }
         public long FsMs { get; init; }
         public int Queue { get; init; }
         public long QueueOldMs { get; init; }
         public string QueueRoot { get; init; }
         public int QueueRootDepth { get; init; }
+        public int QueueWaiting { get; init; }
+        public int QueueActive { get; init; }
+        public long QueueActiveMs { get; init; }
+        public string QueueStage { get; init; }
+        public long QueueStageMs { get; init; }
+        public string QueuePath { get; init; }
         public long BatchMs { get; init; }
         public int BatchEvents { get; init; }
         public long RefreshMs { get; init; }
@@ -272,7 +294,7 @@ namespace search
 
     internal sealed class HealthEpisodeRecord
     {
-        public int Version { get; init; } = 4;
+        public int Version { get; init; } = 6;
         public string Kind { get; init; }
         public DateTime Utc { get; init; }
         public int ProcessId { get; init; }
@@ -281,6 +303,261 @@ namespace search
         public double DurationSeconds { get; init; }
         public string[] RecentEvents { get; init; }
         public HealthSample[] Samples { get; init; }
+    }
+
+    internal readonly record struct DispatcherActivitySnapshot(
+        long OperationMs, string Name, string Priority, bool Active, int Pending, int MaxPending);
+
+    /// <summary>
+    /// Low-allocation dispatcher flight recorder. It deliberately retains no completed
+    /// DispatcherOperation/delegate instances, which could otherwise keep arbitrary UI object
+    /// graphs alive and turn diagnostics into a source of memory pressure.
+    /// </summary>
+    internal sealed class DispatcherActivityProbe : IDisposable
+    {
+        readonly DispatcherHooks hooks;
+        readonly object sync = new();
+        static readonly FieldInfo operationMethod = FindOperationMethod();
+        DispatcherOperation activeOperation;
+        long activeStarted;
+        int activePriority = (int)DispatcherPriority.Inactive;
+        long longestCompleted;
+        int longestPriority = (int)DispatcherPriority.Inactive;
+        string longestName = "";
+        int pending;
+        int maxPending;
+
+        static FieldInfo FindOperationMethod()
+        {
+            //WPF does not expose the callback identity publicly. Resolve its private
+            //Delegate field by type rather than a framework-version-specific field name;
+            //failure is harmless and simply leaves the diagnostic name empty.
+            try
+            {
+                foreach (var field in typeof(DispatcherOperation).GetFields(
+                    BindingFlags.Instance | BindingFlags.NonPublic))
+                    if (typeof(Delegate).IsAssignableFrom(field.FieldType)) return field;
+            }
+            catch { }
+            return null;
+        }
+
+        static string OperationName(DispatcherOperation operation)
+        {
+            if (operation == null || operationMethod == null) return "";
+            try
+            {
+                if (operationMethod.GetValue(operation) is not Delegate callback) return "";
+                var method = callback.Method;
+                var owner = method.DeclaringType?.FullName;
+                return string.IsNullOrEmpty(owner) ? method.Name : owner + "." + method.Name;
+            }
+            catch { return ""; }
+        }
+
+        public DispatcherActivityProbe(Dispatcher dispatcher)
+        {
+            hooks = (dispatcher ?? throw new ArgumentNullException(nameof(dispatcher))).Hooks;
+            hooks.OperationPosted += OperationPosted;
+            hooks.OperationStarted += OperationStarted;
+            hooks.OperationCompleted += OperationCompleted;
+            hooks.OperationAborted += OperationAborted;
+        }
+
+        void OperationPosted(object sender, DispatcherHookEventArgs e)
+        {
+            var count = Interlocked.Increment(ref pending);
+            var observed = Volatile.Read(ref maxPending);
+            while (count > observed)
+            {
+                var prior = Interlocked.CompareExchange(ref maxPending, count, observed);
+                if (prior == observed) break;
+                observed = prior;
+            }
+        }
+
+        void OperationStarted(object sender, DispatcherHookEventArgs e)
+        {
+            Volatile.Write(ref activeOperation, e.Operation);
+            Volatile.Write(ref activePriority, (int)e.Operation.Priority);
+            Interlocked.Exchange(ref activeStarted, Environment.TickCount64);
+        }
+
+        void OperationCompleted(object sender, DispatcherHookEventArgs e)
+        {
+            Complete(e.Operation);
+            DecrementPending();
+        }
+
+        void OperationAborted(object sender, DispatcherHookEventArgs e)
+        {
+            //An operation normally aborts before it starts. Do not let an unrelated queued
+            //operation with the same priority clear the currently executing operation.
+            if (ReferenceEquals(Volatile.Read(ref activeOperation), e.Operation))
+            {
+                Interlocked.Exchange(ref activeOperation, null);
+                Interlocked.Exchange(ref activeStarted, 0);
+            }
+            DecrementPending();
+        }
+
+        void Complete(DispatcherOperation operation)
+        {
+            if (!ReferenceEquals(Interlocked.Exchange(ref activeOperation, null), operation))
+                return;
+            var started = Interlocked.Exchange(ref activeStarted, 0);
+            if (started == 0) return;
+            var duration = Math.Max(0, Environment.TickCount64 - started);
+            lock (sync)
+            {
+                if (duration <= longestCompleted) return;
+                longestCompleted = duration;
+                longestPriority = (int)operation.Priority;
+                longestName = OperationName(operation);
+            }
+        }
+
+        void DecrementPending()
+        {
+            if (Interlocked.Decrement(ref pending) >= 0) return;
+            //The probe can attach while startup operations are already queued, so their
+            //completion has no matching Posted notification in this probe's lifetime.
+            Interlocked.Exchange(ref pending, 0);
+        }
+
+        public DispatcherActivitySnapshot Snapshot(long now)
+        {
+            var activeAt = Interlocked.Read(ref activeStarted);
+            var activeMs = activeAt == 0 ? 0 : Math.Max(0, now - activeAt);
+            var priority = Volatile.Read(ref activePriority);
+            long completedMs;
+            int completedPriority;
+            string completedName;
+            lock (sync)
+            {
+                completedMs = longestCompleted;
+                completedPriority = longestPriority;
+                completedName = longestName;
+                longestCompleted = 0;
+                longestPriority = (int)DispatcherPriority.Inactive;
+                longestName = "";
+            }
+            var active = activeMs >= completedMs;
+            var operationMs = active ? activeMs : completedMs;
+            var operationPriority = active ? priority : completedPriority;
+            var operationName = active
+                ? OperationName(Volatile.Read(ref activeOperation)) : completedName;
+            var currentPending = Math.Max(0, Volatile.Read(ref pending));
+            var peakPending = Math.Max(currentPending,
+                Interlocked.Exchange(ref maxPending, currentPending));
+            return new DispatcherActivitySnapshot(operationMs, operationName,
+                ((DispatcherPriority)operationPriority).ToString(), activeAt != 0 && active,
+                currentPending, peakPending);
+        }
+
+        public void Dispose()
+        {
+            hooks.OperationPosted -= OperationPosted;
+            hooks.OperationStarted -= OperationStarted;
+            hooks.OperationCompleted -= OperationCompleted;
+            hooks.OperationAborted -= OperationAborted;
+        }
+    }
+
+    internal readonly record struct UiThreadActivitySnapshot(
+        double CpuPercent, string State, string WaitReason);
+
+    /// <summary>Distinguishes a CPU-busy UI thread from one blocked in a native wait.</summary>
+    internal sealed class UiThreadActivityProbe : IDisposable
+    {
+        readonly ProcessThread thread;
+        long lastCpuTicks;
+
+        public UiThreadActivityProbe(Process process, int nativeThreadId)
+        {
+            try
+            {
+                foreach (ProcessThread candidate in process.Threads)
+                    if (candidate.Id == nativeThreadId)
+                    {
+                        thread = candidate;
+                        lastCpuTicks = candidate.TotalProcessorTime.Ticks;
+                        break;
+                    }
+            }
+            catch { }
+        }
+
+        public UiThreadActivitySnapshot Snapshot(long elapsedMs)
+        {
+            if (thread == null) return default;
+            try
+            {
+                var ticks = thread.TotalProcessorTime.Ticks;
+                var cpu = Math.Max(0, ticks - lastCpuTicks) * 100d
+                    / TimeSpan.TicksPerMillisecond / Math.Max(1, elapsedMs);
+                lastCpuTicks = ticks;
+                var state = thread.ThreadState;
+                var wait = state == System.Diagnostics.ThreadState.Wait
+                    ? thread.WaitReason.ToString() : "";
+                return new UiThreadActivitySnapshot(Math.Round(cpu, 1), state.ToString(), wait);
+            }
+            catch { return default; }
+        }
+
+        public void Dispose() => thread?.Dispose();
+    }
+
+    internal enum UiLagEpisodeAction { None, Write }
+
+    /// <summary>
+    /// Records orange-only UI stalls after they recover. A stall escalating to red is already
+    /// covered by the richer critical episode, and a cooldown bounds repeated disk writes.
+    /// </summary>
+    internal sealed class UiLagEpisodeGate
+    {
+        internal const int HealthySamplesBeforeWrite = 3;
+        internal const int CooldownMs = 60000;
+        bool active;
+        int healthySamples;
+        long started;
+        long cooldownUntil;
+
+        public long LastDurationMs { get; private set; }
+
+        public UiLagEpisodeAction Observe(long now, long uiLagMs, bool coveredByCriticalEpisode)
+        {
+            if (coveredByCriticalEpisode)
+            {
+                active = false;
+                healthySamples = 0;
+                cooldownUntil = now + CooldownMs;
+                return UiLagEpisodeAction.None;
+            }
+            if (!active)
+            {
+                if (uiLagMs >= LiveUpdateHealthStateMachine.DispatcherWarningMs
+                    && now >= cooldownUntil)
+                {
+                    active = true;
+                    started = now;
+                    healthySamples = 0;
+                }
+                return UiLagEpisodeAction.None;
+            }
+            if (uiLagMs >= LiveUpdateHealthStateMachine.DispatcherWarningMs)
+            {
+                healthySamples = 0;
+                return UiLagEpisodeAction.None;
+            }
+            if (++healthySamples < HealthySamplesBeforeWrite) return UiLagEpisodeAction.None;
+
+            LastDurationMs = Math.Max(0, now - started);
+            active = false;
+            healthySamples = 0;
+            cooldownUntil = now + CooldownMs;
+            return UiLagEpisodeAction.Write;
+        }
     }
 
     /// <summary>
@@ -313,6 +590,9 @@ namespace search
         readonly object stateLock = new();
         readonly object gridMetricLock = new();
         readonly Thread thread;
+        readonly DispatcherActivityProbe dispatcherActivity;
+        readonly UiThreadActivityProbe uiThreadActivity;
+        readonly UiLagEpisodeGate uiLagEpisode = new();
 
         long refreshStarted;
         long lastRefreshDuration;
@@ -356,6 +636,9 @@ namespace search
         int episodePostSamplesRemaining;
         int pipelineHealthySamples;
 
+        [DllImport("kernel32.dll")]
+        static extern uint GetCurrentThreadId();
+
         public LiveUpdateHealthMonitor(Dispatcher dispatcher,
             Func<FsPipelineHealth> filesystem,
             Func<string[]> recentEvents,
@@ -369,6 +652,14 @@ namespace search
             this.workState = workState ?? (() => default);
             this.publish = publish ?? (_ => { });
             this.catchUp = catchUp ?? (() => Task.FromResult(true));
+
+            //SearchModel constructs this monitor on the WPF thread. Keep the fallback for
+            //tests/future callers so the native id always belongs to the dispatcher owner.
+            var uiThreadId = dispatcher.CheckAccess()
+                ? unchecked((int)GetCurrentThreadId())
+                : dispatcher.Invoke(() => unchecked((int)GetCurrentThreadId()));
+            dispatcherActivity = new DispatcherActivityProbe(dispatcher);
+            uiThreadActivity = new UiThreadActivityProbe(process, uiThreadId);
 
             lastSampleTick = Environment.TickCount64;
             lastCpuTicks = process.TotalProcessorTime.Ticks;
@@ -534,6 +825,8 @@ namespace search
             ThreadPool.GetAvailableThreads(out var availableWorkers, out _);
             var pendingWork = ThreadPool.PendingWorkItemCount;
             var threadPoolStarved = availableWorkers <= 1 && pendingWork > 0;
+            var dispatcherSample = dispatcherActivity.Snapshot(now);
+            var uiThreadSample = uiThreadActivity.Snapshot(elapsed);
 
             string sampledGridMode;
             int sampledGridChanged;
@@ -573,11 +866,26 @@ namespace search
             {
                 Utc = DateTime.UtcNow,
                 UiMs = dispatcherDelay,
+                UiOperationMs = dispatcherSample.OperationMs,
+                UiOperationName = dispatcherSample.Name,
+                UiOperationPriority = dispatcherSample.Priority,
+                UiOperationActive = dispatcherSample.Active,
+                UiPending = dispatcherSample.Pending,
+                UiPendingMax = dispatcherSample.MaxPending,
+                UiThreadCpuPercent = uiThreadSample.CpuPercent,
+                UiThreadState = uiThreadSample.State,
+                UiThreadWaitReason = uiThreadSample.WaitReason,
                 FsMs = reflectionLatency,
                 Queue = fs.QueueDepth,
                 QueueOldMs = fs.OldestEventAgeMs,
                 QueueRoot = fs.SlowestRoot,
                 QueueRootDepth = fs.SlowestQueueDepth,
+                QueueWaiting = fs.WaitingQueueDepth,
+                QueueActive = fs.ActiveBatchCount,
+                QueueActiveMs = fs.ActiveBatchMs,
+                QueueStage = fs.ActiveStage,
+                QueueStageMs = fs.ActiveStageMs,
+                QueuePath = fs.ActivePath,
                 BatchMs = fs.BatchDurationMs,
                 BatchEvents = fs.BatchEventCount,
                 RefreshMs = refreshMs,
@@ -612,6 +920,16 @@ namespace search
                 State = current
             };
             history.Add(sample);
+
+            var measuredUiLag = Math.Max(dispatcherDelay, dispatcherSample.OperationMs);
+            if (uiLagEpisode.Observe(now, measuredUiLag,
+                current == LiveUpdateHealthState.Suspended || episodeActive)
+                == UiLagEpisodeAction.Write)
+            {
+                WriteEpisode("ui-lag", "dispatcher-delay",
+                    uiLagEpisode.LastDurationMs / 1000d,
+                    history.Snapshot(30), recentEvents());
+            }
 
             //Drive queues are isolated. A stalled network share is important evidence, but
             //must not suspend presentation of unrelated healthy drives such as C:. Log one
@@ -784,6 +1102,8 @@ namespace search
             if (Interlocked.Exchange(ref disposed, 1) != 0) return;
             stop.Set();
             if (Thread.CurrentThread != thread) thread.Join(2000);
+            dispatcherActivity.Dispose();
+            uiThreadActivity.Dispose();
             stop.Dispose();
             process.Dispose();
         }

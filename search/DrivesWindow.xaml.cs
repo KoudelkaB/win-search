@@ -1,7 +1,9 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 
@@ -9,7 +11,7 @@ namespace search
 {
     /// <summary>
     /// Lets the user choose which drives are indexed. Drives without an explicit choice
-    /// default to NTFS only. Each drive's details are probed on its own thread - a dead
+    /// default to local NTFS only. Each drive's details are probed on its own thread - a dead
     /// network mapping shows "not ready" after its probe times out instead of freezing
     /// the dialog.
     /// </summary>
@@ -27,6 +29,7 @@ namespace search
         }
 
         readonly ObservableCollection<DriveChoice> choices = new();
+        public IReadOnlyList<string> ChangedRoots { get; private set; } = Array.Empty<string>();
 
         public DrivesWindow()
         {
@@ -60,20 +63,20 @@ namespace search
                     long size = 0;
                     try
                     {
-                        if (drive.IsReady)
+                        if (DriveAvailability.IsReady(drive))
                         {
                             format = drive.DriveFormat;
                             size = drive.TotalSize;
                         }
                     }
                     catch { }
-                    var ntfs = string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase);
+                    var defaultEnabled = DriveSelectionStore.DefaultEnabled(drive.DriveType, format);
                     Dispatcher.Invoke(() =>
                     {
                         choice.Details = $"{format ?? L.Text("NotReady")} · {TypeName(drive.DriveType)}"
                             + (size > 0 ? $" · {size >> 30} GB" : "")
                             + (drive.VolumeLabelSafe() is string l && l.Length > 0 ? $" · {l}" : "");
-                        if (!known) choice.IsChecked = ntfs; //No explicit choice => the NTFS-only default
+                        if (!known) choice.IsChecked = defaultEnabled; //No explicit choice => local NTFS only
                     });
                 })
                 { IsBackground = true }.Start();
@@ -93,8 +96,9 @@ namespace search
         void Ok_Click(object sender, RoutedEventArgs e)
         {
             var selection = DriveSelectionStore.Load();
-            foreach (var c in choices) selection.Drives[c.Key] = c.IsChecked;
-            DriveSelectionStore.Save(selection);
+            ChangedRoots = DriveSelectionStore.ApplyChoices(selection,
+                choices.Select(c => (c.Key, c.Root, c.IsChecked)));
+            DriveSelectionStore.Save(selection, ChangedRoots);
             DialogResult = true;
         }
     }

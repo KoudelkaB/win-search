@@ -2,9 +2,11 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using search.Core;
 
@@ -37,11 +39,14 @@ namespace search.Models
         const ulong FileReferenceMask = 0xffffffffffff;
         const ulong MaxFileTime = 2650467743999999999; // DateTime.MaxValue.ToFileTimeUtc()
 
-        public static IEnumerable<INode> GetNodes(Stream mft, int bytesPerRecord, long length, string driveRoot, int chunkBytes = MftChunkReader.DefaultChunkBytes)
+        public static IEnumerable<INode> GetNodes(Stream mft, int bytesPerRecord, long length,
+            string driveRoot, int chunkBytes = MftChunkReader.DefaultChunkBytes,
+            CancellationToken cancellationToken = default, bool drainOnCancellation = true)
         {
             if (mft == null)
                 return Enumerable.Empty<INode>();
 
+            var phase = Stopwatch.StartNew();
             var rootName = driveRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var recordCount = checked((int)(length / bytesPerRecord));
             var parsed = new MftNode[recordCount];
@@ -63,10 +68,11 @@ namespace search.Models
             var extensionLinks = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)>();
             var extensionNames = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)>();
             var pendingSizes = new ConcurrentQueue<MftNode>();
+            var parallelOptions = new ParallelOptions { CancellationToken = cancellationToken };
 
             MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
             {
-                Parallel.ForEach(Partitioner.Create(0, count), range =>
+                Parallel.ForEach(Partitioner.Create(0, count), parallelOptions, range =>
                 {
                     for (var i = range.Item1; i < range.Item2; i++)
                     {
@@ -94,7 +100,10 @@ namespace search.Models
                         if (linkParents != null) baseHardLinks[(uint)index] = linkParents;
                     }
                 });
-            }, chunkBytes);
+            }, chunkBytes, cancellationToken, drainOnCancellation);
+            var readParseMs = phase.ElapsedMilliseconds;
+            phase.Restart();
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (recordCount == 0)
                 return Enumerable.Empty<INode>();
@@ -127,10 +136,15 @@ namespace search.Models
 
             // Still nameless - every $FILE_NAME lost, so its path is unknowable.
             for (var i = 0; i < parsed.Length; i++)
-                if (parsed[i]?.Name == null) parsed[i] = null;
-
-            foreach (var node in parsed)
             {
+                if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                if (parsed[i]?.Name == null) parsed[i] = null;
+            }
+
+            for (var i = 0; i < parsed.Length; i++)
+            {
+                if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                var node = parsed[i];
                 if (node == null) continue;
                 var parentReference = parentReferences[node.EntryNumber];
                 var parentEntry = (uint)(parentReference & FileReferenceMask);
@@ -140,7 +154,7 @@ namespace search.Models
                     node.Parent = parent;
             }
 
-            DropOrphans(parsed);
+            DropOrphans(parsed, cancellationToken);
 
             // Merge overflowed hard-link parents into their (surviving) base records
             foreach (var (baseIndex, contribution) in extensionLinks)
@@ -159,19 +173,25 @@ namespace search.Models
                 baseHardLinks[baseIndex] = links.ToArray();
             }
 
-            CalculateFolderSizes(parsed, baseHardLinks);
+            var linkMs = phase.ElapsedMilliseconds;
+            phase.Restart();
+            CalculateFolderSizesAndPathHashes(parsed, baseHardLinks, parentReferences, cancellationToken);
+            var aggregateHashMs = phase.ElapsedMilliseconds;
+            phase.Restart();
 
             var liveCount = 0;
-            foreach (var node in parsed)
-                if (node != null) liveCount++;
+            for (var i = 0; i < parsed.Length; i++)
+            {
+                if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                if (parsed[i] != null) liveCount++;
+            }
             var dense = new INode[liveCount];
             var at = 0;
-            foreach (var node in parsed)
-                if (node != null)
-                {
-                    node.SetPathHash(NodePath.ComputePathHash(node));
-                    dense[at++] = node;
-                }
+            for (var i = 0; i < parsed.Length; i++)
+            {
+                if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                if (parsed[i] != null) dense[at++] = parsed[i];
+            }
             //Only genuinely multi-linked live records need to survive as sparse metadata.
             //The USN journal reports a hard-link mutation but an unprivileged record cannot
             //name the removed link, so the watcher uses this bit to request an exact MFT
@@ -181,7 +201,8 @@ namespace search.Models
                 if (links.Length > 1 && entry < (uint)parsed.Length && parsed[entry] != null)
                     hardLinkedEntries.Add(entry);
             hardLinkedEntries.Sort();
-            return new MftNodeCollection(parsed, dense, hardLinkedEntries.ToArray());
+            return new MftNodeCollection(parsed, dense, hardLinkedEntries.ToArray(),
+                new MftLoadTiming(readParseMs, linkMs, aggregateHashMs, phase.ElapsedMilliseconds));
         }
 
         static MftNode ParseRecord(ReadOnlySpan<byte> record, int index, string rootName,
@@ -396,7 +417,7 @@ namespace search.Models
         /// with the drive root and break every file operation. Anything that still exists
         /// is re-delivered by the change watcher or the next rescan.
         /// </summary>
-        static void DropOrphans(MftNode[] nodes)
+        static void DropOrphans(MftNode[] nodes, CancellationToken cancellationToken)
         {
             if (nodes.Length <= RootEntryNumber || nodes[RootEntryNumber] == null)
             {
@@ -409,8 +430,10 @@ namespace search.Models
             const byte Keep = 1, Drop = 2, Visiting = 3;
             var state = new byte[nodes.Length];
             var chain = new List<MftNode>(64);
+            var checkedNodes = 0;
             foreach (var start in nodes)
             {
+                if ((checkedNodes++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (start == null) continue;
                 var node = start;
                 byte verdict = 0;
@@ -450,17 +473,70 @@ namespace search.Models
         /// <summary>
         /// A file counts once per hard link (per non-DOS $FILE_NAME), so folder sizes
         /// match what a directory walk and Explorer's folder properties report.
+        ///
+        /// The former implementation added every file to every ancestor independently,
+        /// making this O(files * path depth). Aggregate direct file contributions first,
+        /// then fold each directory into its parent exactly once. The parent-reference
+        /// sidecar is dead after tree linking, so it is reused as the size scratch array.
+        /// Directory path hashes are finalized top-down; file hashes can then use their
+        /// cached parent hash in parallel instead of recursively re-hashing every ancestor.
         /// </summary>
-        static void CalculateFolderSizes(MftNode[] nodes,
-            NonBlocking.ConcurrentDictionary<uint, ulong[]> hardLinks)
+        static void CalculateFolderSizesAndPathHashes(MftNode[] nodes,
+            NonBlocking.ConcurrentDictionary<uint, ulong[]> hardLinks, ulong[] folderSizes,
+            CancellationToken cancellationToken)
         {
+            Array.Clear(folderSizes);
+            var directories = new List<MftNode>();
+            var chain = new List<MftNode>(64);
+            var root = nodes.Length > RootEntryNumber ? nodes[RootEntryNumber] : null;
+            if (root == null) return;
+
+            //pathHash is not published yet, so use it temporarily as the directory depth.
+            //DropOrphans already proved that every surviving chain reaches the root.
+            root.BuildDepth = 1;
+            var maxDepth = 1;
+            var checkedNodes = 0;
+            foreach (var directory in nodes)
+            {
+                if ((checkedNodes++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                if (directory?.IsDirectory != true) continue;
+                directories.Add(directory);
+                if (directory.BuildDepth == 0)
+                {
+                    var current = directory;
+                    while (current != null && current.BuildDepth == 0)
+                    {
+                        chain.Add(current);
+                        current = current.Parent;
+                    }
+                    var depth = current?.BuildDepth ?? 0;
+                    for (var i = chain.Count - 1; i >= 0; i--)
+                        chain[i].BuildDepth = ++depth;
+                    chain.Clear();
+                }
+                if (directory.BuildDepth > maxDepth) maxDepth = directory.BuildDepth;
+            }
+
+            var levels = new List<MftNode>[maxDepth + 1];
+            foreach (var directory in directories)
+                (levels[directory.BuildDepth] ??= new List<MftNode>()).Add(directory);
+
+            static void Add(ulong[] sizes, MftNode parent, ulong size)
+            {
+                if (parent?.IsDirectory == true)
+                    sizes[parent.EntryNumber] = unchecked(sizes[parent.EntryNumber] + size);
+            }
+
+            //Each file contributes only to its immediate link parent(s).
+            checkedNodes = 0;
             foreach (var node in nodes)
             {
+                if ((checkedNodes++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (node == null || node.IsDirectory) continue;
 
                 if (!hardLinks.TryGetValue(node.EntryNumber, out var links))
                 {
-                    AddToChain(node.Parent, node.Size);
+                    Add(folderSizes, node.Parent, node.Size);
                 }
                 else
                 {
@@ -469,18 +545,41 @@ namespace search.Models
                         var entry = (uint)(link & FileReferenceMask);
                         if (entry < (uint)nodes.Length && nodes[entry] is { } parent && parent != node
                             && SequencesMatch((ushort)(link >> 48), parent.SequenceNumber))
-                            AddToChain(parent, node.Size);
+                            Add(folderSizes, parent, node.Size);
                     }
                 }
             }
 
-            static void AddToChain(MftNode parent, ulong size)
+            //Children are complete before their parent, so every directory is propagated once.
+            for (var depth = maxDepth; depth >= 1; depth--)
             {
-                // The depth cap guards against parent cycles in corrupt records
-                var depth = 0;
-                for (; parent != null && depth++ < 255; parent = parent.Parent)
-                    parent.AddSize(size);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (levels[depth] == null) continue;
+                foreach (var directory in levels[depth])
+                {
+                    directory.SetSize(folderSizes[directory.EntryNumber]);
+                    Add(folderSizes, directory.Parent, directory.Size);
+                }
             }
+
+            //Replace the temporary depth with the real cached path hash, parents first.
+            foreach (var directory in levels[1])
+                directory.SetPathHash(NodePath.ComputePathHash(directory));
+            for (var depth = 2; depth <= maxDepth; depth++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (levels[depth] == null) continue;
+                foreach (var directory in levels[depth])
+                    directory.SetPathHash(NodePath.ComputeChildPathHash(directory.Parent, directory.Name));
+            }
+
+            Parallel.ForEach(Partitioner.Create(0, nodes.Length),
+                new ParallelOptions { CancellationToken = cancellationToken }, range =>
+            {
+                for (var i = range.Item1; i < range.Item2; i++)
+                    if (nodes[i] is { IsDirectory: false } file)
+                        file.SetPathHash(NodePath.ComputeChildPathHash(file.Parent, file.Name));
+            });
         }
 
         sealed class MftNode : INode
@@ -488,6 +587,10 @@ namespace search.Models
             readonly ulong frn;
             string name;
             int pathHash;
+
+            //Before publication the same slot temporarily carries directory depth. This
+            //accessor adds no per-node storage; SetPathHash overwrites it with the final hash.
+            internal int BuildDepth { get => pathHash; set => pathHash = value; }
 
             public MftNode(ulong frn, string name, FileAttributes attributes, ulong size, DateTime lastChangeTime)
             {
@@ -547,15 +650,18 @@ namespace search.Models
             readonly INode[] dense;
             readonly uint[] hardLinkedEntries;
 
-            public MftNodeCollection(MftNode[] byEntry, INode[] dense, uint[] hardLinkedEntries)
+            public MftNodeCollection(MftNode[] byEntry, INode[] dense, uint[] hardLinkedEntries,
+                MftLoadTiming loadTiming)
             {
                 this.byEntry = byEntry;
                 this.dense = dense;
                 this.hardLinkedEntries = hardLinkedEntries;
+                LoadTiming = loadTiming;
             }
 
             public int Count => dense.Length;
             public IReadOnlyList<INode> DenseNodes => dense;
+            public MftLoadTiming LoadTiming { get; }
 
             public bool TryGetByFrn(ulong frn, out INode node)
             {

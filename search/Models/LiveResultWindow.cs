@@ -21,6 +21,7 @@ namespace search.Models
         readonly int reserveLimit;
         readonly int reserveLowWatermark;
         List<T> known = new();
+        HashSet<T> knownIdentities = new(ReferenceEqualityComparer.Instance);
         bool hasUnknownTail;
 
         public LiveResultWindow(int visibleLimit, int reserveLimit, int reserveLowWatermark)
@@ -50,6 +51,7 @@ namespace search.Models
             if (sortedPrefix.Count > Capacity)
                 sortedPrefix.RemoveRange(Capacity, sortedPrefix.Count - Capacity);
             known = sortedPrefix;
+            knownIdentities = new HashSet<T>(known, ReferenceEqualityComparer.Instance);
             hasUnknownTail = unknownTail;
         }
 
@@ -73,7 +75,10 @@ namespace search.Models
             if (compare == null) throw new ArgumentNullException(nameof(compare));
             if (operations == null) throw new ArgumentNullException(nameof(operations));
 
-            var oldIndex = ReferenceIndexOf(known, item);
+            //The overwhelming majority of filesystem events concern rows outside the
+            //104k materialized prefix. Avoid a linear identity scan for those events; only
+            //a confirmed member pays ReferenceIndexOf to obtain its mutable list index.
+            var oldIndex = knownIdentities.Contains(item) ? ReferenceIndexOf(known, item) : -1;
             //The mutable key still fits between its neighbours: membership and position did
             //not change, so the caller only has to repaint a realized row.
             if (oldIndex >= 0 && include
@@ -83,6 +88,7 @@ namespace search.Models
             if (oldIndex >= 0)
             {
                 known.RemoveAt(oldIndex);
+                knownIdentities.Remove(item);
                 if (oldIndex < visibleLimit)
                 {
                     operations.Add(new Operation(OperationKind.RemoveAt, oldIndex));
@@ -117,9 +123,12 @@ namespace search.Models
             }
 
             known.Insert(insertAt, item);
+            knownIdentities.Add(item);
             if (known.Count > Capacity)
             {
+                var dropped = known[known.Count - 1];
                 known.RemoveAt(known.Count - 1);
+                knownIdentities.Remove(dropped);
                 hasUnknownTail = true;
             }
         }
@@ -189,6 +198,7 @@ namespace search.Models
 
             var totalKnown = kept.Count + candidates.Count;
             known = MergePrefix(kept, candidates, compare, Capacity);
+            knownIdentities = new HashSet<T>(known, ReferenceEqualityComparer.Instance);
             if (totalKnown > Capacity) hasUnknownTail = true;
             return VisibleSnapshot();
         }

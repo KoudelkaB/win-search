@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using search.Core;
 
@@ -209,7 +210,8 @@ namespace search
         /// installed) and parse it while it streams in - the payload is consumed exactly,
         /// so the status line follows and the channel stays balanced.
         /// </summary>
-        internal static IEnumerable<Models.INode> ReadMftNodes(string volumeMountPoint)
+        internal static IEnumerable<Models.INode> ReadMftNodes(string volumeMountPoint,
+            CancellationToken cancellationToken = default)
         {
             IEnumerable<Models.INode> nodes = null;
             Run(Command.READ_MFT, s => WriteLine(s, volumeMountPoint), s =>
@@ -218,7 +220,8 @@ namespace search
                 var parts = header?.Split(' ');
                 if (parts?.Length != 2 || !int.TryParse(parts[0], out var bytesPerRecord) || !long.TryParse(parts[1], out var length))
                     throw new Exception(header ?? "Broker pipe closed.");
-                nodes = Models.MftDriveReader.GetNodes(s, bytesPerRecord, length, volumeMountPoint);
+                nodes = Models.MftDriveReader.GetNodes(s, bytesPerRecord, length, volumeMountPoint,
+                    cancellationToken: cancellationToken, drainOnCancellation: true);
             });
             return nodes;
         }

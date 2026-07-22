@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
+using System.Threading;
 using search.Core;
 
 namespace search.Models
@@ -23,9 +24,11 @@ namespace search.Models
     /// </summary>
     internal static class MftSource
     {
-        public static IEnumerable<INode> TryGetNodes(DriveInfo drive, out MftOrigin origin)
+        public static IEnumerable<INode> TryGetNodes(DriveInfo drive, out MftOrigin origin,
+            CancellationToken cancellationToken = default)
         {
             var volume = drive.RootDirectory.FullName;
+            cancellationToken.ThrowIfCancellationRequested();
 
             // Elevated (admin shell, "Run as administrator", or the VS debugger): read the
             // volume directly in-process. This must come before the service pipe, otherwise
@@ -37,8 +40,10 @@ namespace search.Models
                     origin = MftOrigin.Direct;
                     using var raw = RawMft.Open(volume);
                     using var stream = raw.CreateStream();
-                    return MftDriveReader.GetNodes(stream, raw.BytesPerMftRecord, raw.Length, volume);
+                    return MftDriveReader.GetNodes(stream, raw.BytesPerMftRecord, raw.Length, volume,
+                        cancellationToken: cancellationToken, drainOnCancellation: false);
                 }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception e)
                 {
                     $"direct MFT read of {volume} failed: {e.Message}".Debug();
@@ -54,9 +59,10 @@ namespace search.Models
                 if (Broker.Available)
                 {
                     origin = MftOrigin.Broker;
-                    return Broker.ReadMftNodes(volume);
+                    return Broker.ReadMftNodes(volume, cancellationToken);
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception e)
             {
                 $"broker MFT read of {volume} failed: {e.Message}".Debug();
@@ -67,9 +73,10 @@ namespace search.Models
             try
             {
                 origin = MftOrigin.Service;
-                var nodes = FromService(volume);
+                var nodes = FromService(volume, cancellationToken);
                 if (nodes != null) return nodes;
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception e)
             {
                 $"service MFT read of {volume} failed: {e.Message}".Debug();
@@ -82,9 +89,10 @@ namespace search.Models
                 if (Broker.WaitAvailable(TimeSpan.FromSeconds(60)))
                 {
                     origin = MftOrigin.Broker;
-                    return Broker.ReadMftNodes(volume);
+                    return Broker.ReadMftNodes(volume, cancellationToken);
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception e)
             {
                 $"broker MFT read of {volume} failed: {e.Message}".Debug();
@@ -98,7 +106,7 @@ namespace search.Models
         /// Request the raw $MFT from the WinSearchService and parse it as it streams in.
         /// Returns null when the service is not installed/running (fast connect timeout).
         /// </summary>
-        static IEnumerable<INode> FromService(string volume)
+        static IEnumerable<INode> FromService(string volume, CancellationToken cancellationToken)
         {
             using var pipe = new NamedPipeClientStream(".", ServicePipe.PipeName, PipeDirection.InOut);
             try
@@ -129,7 +137,8 @@ namespace search.Models
                 throw new InvalidDataException($"Invalid MFT header from the service: {bytesPerRecord}/{length}.");
 
             // GetNodes consumes the whole payload before returning, so disposing the pipe here is safe
-            return MftDriveReader.GetNodes(pipe, bytesPerRecord, length, volume);
+            return MftDriveReader.GetNodes(pipe, bytesPerRecord, length, volume,
+                cancellationToken: cancellationToken, drainOnCancellation: false);
         }
     }
 }

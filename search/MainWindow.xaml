@@ -366,9 +366,10 @@
                   PreviewKeyDown="ListView_KeyDown" PreviewKeyUp="ListView_PreviewKeyUp"
                   PreviewMouseMove="FilesView_PreviewMouseMove"
                   PreviewMouseLeftButtonUp="FilesView_PreviewMouseLeftButtonUp"
+                  ScrollViewer.CanContentScroll="True"
                   VirtualizingPanel.IsVirtualizing="True"
                   VirtualizingPanel.VirtualizationMode="Recycling"
-                  VirtualizingPanel.CacheLength="1,1" VirtualizingPanel.CacheLengthUnit="Page">
+                  VirtualizingPanel.CacheLength="0.25,0.25" VirtualizingPanel.CacheLengthUnit="Page">
             <ListView.ContextMenu>
                 <ContextMenu Opened="FilesContextMenu_Opened" Closed="FilesContextMenu_Closed">
                     <MenuItem Header="{local:Loc Key=Open}" InputGestureText="Enter" Click="ContextOpen_Click"/>

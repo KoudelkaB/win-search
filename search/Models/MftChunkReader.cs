@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace search.Models
@@ -24,7 +25,9 @@ namespace search.Models
         /// must never block on an unread remainder nor desync its channel.
         /// Returns the total number of whole records.
         /// </summary>
-        public static int Read(Stream stream, int bytesPerRecord, long length, Action<byte[], int, int> process, int chunkBytes = DefaultChunkBytes)
+        public static int Read(Stream stream, int bytesPerRecord, long length,
+            Action<byte[], int, int> process, int chunkBytes = DefaultChunkBytes,
+            CancellationToken cancellationToken = default, bool drainOnCancellation = true)
         {
             if (bytesPerRecord <= 0)
                 throw new InvalidDataException($"Unsupported MFT record size: {bytesPerRecord}.");
@@ -40,6 +43,7 @@ namespace search.Models
                 var turn = 0;
                 while (index < recordCount)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var records = Math.Min(recordsPerChunk, recordCount - index);
 
                     // The buffer was handed to process two chunks ago - wait before overwriting
@@ -49,13 +53,27 @@ namespace search.Models
                     consumed += (long)records * bytesPerRecord;
 
                     var first = index;
-                    pending[turn] = Task.Run(() => process(buffer, first, records));
+                    pending[turn] = Task.Run(() =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        process(buffer, first, records);
+                    }, cancellationToken);
                     index += records;
                     turn ^= 1;
                 }
 
                 pending[0].GetAwaiter().GetResult();
                 pending[1].GetAwaiter().GetResult();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                try { Task.WaitAll(pending); } catch { }
+                //The broker reuses one framed pipe, so its unread payload must be consumed
+                //before another command. Direct/service streams are disposable and skip it.
+                if (drainOnCancellation)
+                    try { Drain(stream, length - consumed); } catch { }
+                throw;
             }
             catch
             {

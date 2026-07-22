@@ -41,6 +41,10 @@ namespace search.Models
             int normalCount, urgentCount;
             int activeCount;
             long activeOldestQueued;
+            long activeStarted;
+            long activeStageStarted;
+            string activeStage = "";
+            string activePath = "";
 
             //A short quiet window folds save/build bursts into one metadata/grid pass. Once
             //the queue is clearly busy, extend the same window (from its original start) to
@@ -83,19 +87,27 @@ namespace search.Models
                             var processingStarted = Environment.TickCount64;
                             var oldestQueued = batch.Min(x => x.QueuedAt);
                             Interlocked.Exchange(ref activeOldestQueued, oldestQueued);
+                            Interlocked.Exchange(ref activeStarted, processingStarted);
                             Volatile.Write(ref activeCount, batch.Count);
                             var eventCount = 0;
                             try
                             {
+                                SetActiveStage("coalesce", batch[0].Event?.FullPath);
                                 var events = CoalesceChangedEvents(batch.Select(x => x.Event));
                                 eventCount = events.Length;
-                                if (events.Length > 0) Changed(events).Wait();
+                                if (events.Length > 0)
+                                {
+                                    SetActiveStage("handler", events[0].FullPath);
+                                    Changed(events).Wait();
+                                }
                             }
                             catch { }
                             finally
                             {
                                 RecordCompletedBatch(Math.Max(0, Environment.TickCount64 - oldestQueued),
                                     Math.Max(0, Environment.TickCount64 - processingStarted), eventCount);
+                                ClearActiveStage();
+                                Interlocked.Exchange(ref activeStarted, 0);
                                 Interlocked.Exchange(ref activeOldestQueued, 0);
                                 Volatile.Write(ref activeCount, 0);
                             }
@@ -144,17 +156,40 @@ namespace search.Models
                 return done.Task;
             }
 
-            public (int Count, long OldestAgeMs) Health(long now)
+            public void SetActiveStage(string stage, string path)
             {
-                var count = Math.Max(0, Volatile.Read(ref normalCount))
-                    + Math.Max(0, Volatile.Read(ref urgentCount))
-                    + Math.Max(0, Volatile.Read(ref activeCount));
+                Volatile.Write(ref activePath, path ?? "");
+                Volatile.Write(ref activeStage, stage ?? "");
+                Interlocked.Exchange(ref activeStageStarted, Environment.TickCount64);
+            }
+
+            void ClearActiveStage()
+            {
+                Interlocked.Exchange(ref activeStageStarted, 0);
+                Volatile.Write(ref activeStage, "");
+                Volatile.Write(ref activePath, "");
+            }
+
+            public (int Count, int Waiting, int Active, long OldestAgeMs,
+                long ActiveMs, string Stage, long StageMs, string Path) Health(long now)
+            {
+                var waiting = Math.Max(0, Volatile.Read(ref normalCount))
+                    + Math.Max(0, Volatile.Read(ref urgentCount));
+                var activeCountNow = Math.Max(0, Volatile.Read(ref activeCount));
+                var count = waiting + activeCountNow;
                 var oldest = long.MaxValue;
                 if (normal.TryPeek(out var normalItem)) oldest = Math.Min(oldest, normalItem.QueuedAt);
                 if (urgent.TryPeek(out var urgentItem)) oldest = Math.Min(oldest, urgentItem.QueuedAt);
                 var active = Interlocked.Read(ref activeOldestQueued);
                 if (active != 0) oldest = Math.Min(oldest, active);
-                return (count, oldest == long.MaxValue ? 0 : Math.Max(0, now - oldest));
+                var activeAt = Interlocked.Read(ref activeStarted);
+                var stageAt = Interlocked.Read(ref activeStageStarted);
+                return (count, waiting, activeCountNow,
+                    oldest == long.MaxValue ? 0 : Math.Max(0, now - oldest),
+                    activeAt == 0 ? 0 : Math.Max(0, now - activeAt),
+                    Volatile.Read(ref activeStage) ?? "",
+                    stageAt == 0 ? 0 : Math.Max(0, now - stageAt),
+                    Volatile.Read(ref activePath) ?? "");
             }
         }
 
@@ -185,7 +220,21 @@ namespace search.Models
                     continue;
                 }
                 Flush();
-                if (e != null) result.Add(e);
+                if (e != null)
+                {
+                    //USN reason flags accumulate while a handle is open and records from
+                    //one create session can cross journal read batches. Repeated adjacent
+                    //create/delete notifications for the same path are idempotent and only
+                    //inflate the serialized handler/UI work. A different structural event
+                    //or a Changed record remains an ordering barrier.
+                    var prior = result.Count == 0 ? null : result[result.Count - 1];
+                    var repeatable = e.ChangeType is WatcherChangeTypes.Created
+                        or WatcherChangeTypes.Deleted;
+                    if (!repeatable || prior == null || prior.ChangeType != e.ChangeType
+                        || !string.Equals(prior.FullPath, e.FullPath,
+                            StringComparison.OrdinalIgnoreCase))
+                        result.Add(e);
+                }
             }
             Flush();
             return result.ToArray();
@@ -209,7 +258,8 @@ namespace search.Models
         /// Which drive roots should be indexed (set by the model to the user's drive
         /// selection). A drive that is not indexed is not watched either - its scan still
         /// runs once so a newly deselected drive gets its stale entries pruned.
-        /// May block on flaky network drives - only called from a drive's own task.
+        /// Unknown network drives are rejected without touching SMB; selected network drives
+        /// are handled by the model's bounded availability probe.
         /// </summary>
         public static Func<string, bool> ShouldIndex = _ => true;
 
@@ -241,6 +291,17 @@ namespace search.Models
         static DriveQueue QueueFor(string path)
             => queues.GetOrAdd(RootOf(path), _ => new DriveQueue());
 
+        /// <summary>
+        /// Marks the exact operation currently holding a drive's serialized queue. This is
+        /// sampled only into bounded incident logs; healthy operation performs no disk writes.
+        /// </summary>
+        internal static void ReportActiveStage(FsEvent e, string stage)
+        {
+            if (e?.FullPath == null) return;
+            if (queues.TryGetValue(RootOf(e.FullPath), out var queue))
+                queue.SetActiveStage(stage, e.FullPath);
+        }
+
         static string RootOf(string path)
         {
             try { return Path.GetPathRoot(path) is { Length: > 0 } r ? r : path; }
@@ -271,15 +332,27 @@ namespace search.Models
             var oldest = 0L;
             var slowestRoot = "";
             var slowestDepth = 0;
+            var waiting = 0;
+            var activeCount = 0;
+            var activeMs = 0L;
+            var activeStage = "";
+            var activeStageMs = 0L;
+            var activePath = "";
             foreach (var pair in queues)
             {
                 var health = pair.Value.Health(now);
                 depth += health.Count;
+                waiting += health.Waiting;
                 if (health.OldestAgeMs > oldest)
                 {
                     oldest = health.OldestAgeMs;
                     slowestRoot = pair.Key;
                     slowestDepth = health.Count;
+                    activeCount = health.Active;
+                    activeMs = health.ActiveMs;
+                    activeStage = health.Stage;
+                    activeStageMs = health.StageMs;
+                    activePath = health.Path;
                 }
             }
 
@@ -290,7 +363,8 @@ namespace search.Models
                 recent ? Interlocked.Read(ref lastReflectionLatencyMs) : 0,
                 recent ? Interlocked.Read(ref lastBatchDurationMs) : 0,
                 recent ? Volatile.Read(ref lastBatchEventCount) : 0,
-                slowestRoot, slowestDepth);
+                slowestRoot, slowestDepth, waiting, activeCount, activeMs,
+                activeStage, activeStageMs, activePath);
         }
 
         internal static string[] GetRecentEvents()
@@ -333,7 +407,17 @@ namespace search.Models
         /// </summary>
         public static void RefreshFromNFT() => DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName)
             .Union(sources.Keys, StringComparer.OrdinalIgnoreCase).ToList()
-            .ForEach(d => Task.Run(() => AddFolder(d)));
+            .ForEach(RefreshDrive);
+
+        /// <summary>
+        /// Retry one selected drive from the source setup onward. A network mapping that was
+        /// temporarily unavailable needs both a new watcher and a new directory scan; retrying
+        /// only the scan would load a snapshot that immediately becomes stale.
+        /// </summary>
+        public static void RefreshDrive(string root)
+        {
+            if (!string.IsNullOrWhiteSpace(root)) Task.Run(() => AddFolder(root));
+        }
 
         static void DisposeSource(this string path)
         {

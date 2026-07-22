@@ -22,10 +22,19 @@ namespace search.Models
         // in an uninterruptible syscall) stalls and is abandoned so it can never wedge the load.
         static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(15);
 
-        public static IEnumerable<INode> Walk(DriveInfo drive) => Walk(drive, StallTimeout);
+        public static IEnumerable<INode> Walk(DriveInfo drive)
+            => Walk(drive, StallTimeout, CancellationToken.None);
+
+        public static IEnumerable<INode> Walk(DriveInfo drive, CancellationToken cancellationToken)
+            => Walk(drive, StallTimeout, cancellationToken);
 
         public static IEnumerable<INode> Walk(DriveInfo drive, TimeSpan stallTimeout)
+            => Walk(drive, stallTimeout, CancellationToken.None);
+
+        public static IEnumerable<INode> Walk(DriveInfo drive, TimeSpan stallTimeout,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var options = new EnumerationOptions
             {
                 IgnoreInaccessible = true,
@@ -54,7 +63,8 @@ namespace search.Models
             {
                 var worker = new Thread(() =>
                 {
-                    while (Volatile.Read(ref pending) > 0 && !token.IsCancellationRequested)
+                    while (Volatile.Read(ref pending) > 0 && !token.IsCancellationRequested
+                        && !cancellationToken.IsCancellationRequested)
                     {
                         if (!queue.TryDequeue(out var dir))
                         {
@@ -65,7 +75,7 @@ namespace search.Models
                         {
                             foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
                             {
-                                if (token.IsCancellationRequested) break;
+                                if (token.IsCancellationRequested || cancellationToken.IsCancellationRequested) break;
                                 var node = new FileNode(info);
                                 result.Add(node);
                                 Volatile.Write(ref lastProgress, Environment.TickCount64);
@@ -91,6 +101,11 @@ namespace search.Models
             // Stall watchdog: cancel once the walk stops producing entries for stallTimeout.
             while (workers.Any(w => w.IsAlive))
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    cts.Cancel();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 if (Environment.TickCount64 - Volatile.Read(ref lastProgress) > stallTimeout.TotalMilliseconds)
                 {
                     cts.Cancel(); // Workers not stuck in a syscall exit at once
@@ -99,25 +114,36 @@ namespace search.Models
                     foreach (var w in workers) w.Join((int)Math.Max(0, grace - Environment.TickCount64));
                     break;
                 }
-                Thread.Sleep(1000);
+                if (cancellationToken.WaitHandle.WaitOne(1000))
+                {
+                    cts.Cancel();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
             }
 
-            AggregateFolderSizes(result);
+            cancellationToken.ThrowIfCancellationRequested();
+            AggregateFolderSizes(result, cancellationToken);
             return result;
         }
 
         /// <summary>
         /// The MFT path computes folder sizes - keep the walk consistent with it
         /// </summary>
-        static void AggregateFolderSizes(IEnumerable<INode> nodes)
+        static void AggregateFolderSizes(IEnumerable<INode> nodes, CancellationToken cancellationToken)
         {
             var dirs = new Dictionary<string, FileNode>(StringComparer.OrdinalIgnoreCase);
+            var checkedNodes = 0;
             foreach (var n in nodes)
+            {
+                if ((checkedNodes++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (n.IsDirectory && n is FileNode f)
                     dirs.TryAdd(f.FullName, f);
+            }
 
+            checkedNodes = 0;
             foreach (var file in nodes.Where(n => !n.IsDirectory))
             {
+                if ((checkedNodes++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
                 // Add the file size to every ancestor directory up to the drive root
                 for (var dir = Path.GetDirectoryName(file.FullName); dir != null; dir = Path.GetDirectoryName(dir))
                     if (dirs.TryGetValue(dir, out var d))

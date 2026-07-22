@@ -4,6 +4,9 @@ using System.IO;
 
 namespace search.Models
 {
+    internal readonly record struct MftLoadTiming(
+        long ReadParseMs, long LinkMs, long AggregateHashMs, long DenseMs);
+
     /// <summary>
     /// Base of every file-system entry the search works with (MFT records, watcher events, archive entries).
     /// </summary>
@@ -96,6 +99,7 @@ namespace search.Models
     internal interface IFrnNodeSource : IReadOnlyCollection<INode>
     {
         IReadOnlyList<INode> DenseNodes { get; }
+        MftLoadTiming LoadTiming { get; }
         bool TryGetByFrn(ulong frn, out INode node);
         bool HasMultipleLinks(ulong frn);
     }

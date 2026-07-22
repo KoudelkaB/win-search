@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Windows.Input;
 using search.Models;
 using Xunit;
@@ -106,6 +107,17 @@ namespace search.Tests
                 sortChanged, complete, truncated, pending));
 
         [Theory]
+        [InlineData(true, 100_000, 339, true)]   //Recorded Documents subtree -> direct children incident
+        [InlineData(true, 100_000, 25_000, false)] //Exactly fourfold is not a substantial shrink
+        [InlineData(true, 4_095, 100, false)]    //Small old views are cheap to reset in place
+        [InlineData(false, 100_000, 339, false)] //Automatic refresh keeps the stable source
+        [InlineData(true, 339, 100_000, false)]  //Expansion has no large old view to retire
+        public void LargeFilterShrinkRetiresTheOldWpfCollectionView(bool filterChanged,
+            int currentRows, int newRows, bool expected)
+            => Assert.Equal(expected,
+                SearchModel.PreferFreshItemsSource(filterChanged, currentRows, newRows));
+
+        [Theory]
         [InlineData(null, false)]
         [InlineData("+Name", false)]
         [InlineData("-Folder", false)]
@@ -138,6 +150,22 @@ namespace search.Tests
             Assert.Same(created, result[2]);
             Assert.Same(finalAfterCreateA, result[3]);
             Assert.Same(deleted, result[4]);
+        }
+
+        [Fact]
+        public void WatcherChangeWindowCollapsesAdjacentDuplicateCreatesOnly()
+        {
+            var firstCreate = new FsEvent(WatcherChangeTypes.Created, @"C:\asset.png");
+            var duplicateCreate = new FsEvent(WatcherChangeTypes.Created, @"c:\ASSET.png");
+            var changed = new FsEvent(WatcherChangeTypes.Changed, @"C:\asset.png");
+            var laterCreate = new FsEvent(WatcherChangeTypes.Created, @"C:\asset.png");
+
+            var result = FSChangeProcessor.CoalesceChangedEvents(new[]
+            {
+                firstCreate, duplicateCreate, changed, laterCreate
+            });
+
+            Assert.Equal(new[] { firstCreate, changed, laterCreate }, result);
         }
 
         [Fact]
@@ -186,6 +214,17 @@ namespace search.Tests
             public override string Name => Size.ToString();
             public override ulong Size { get; protected set; }
             public override string FullName => @"C:\" + Name;
+            public override DateTime LastChangeTime { get => default; protected set { } }
+        }
+
+        sealed class PathKeyNode : INode
+        {
+            readonly string path;
+            public PathKeyNode(string path) => this.path = path;
+            public override FileAttributes Attributes { get => 0; protected set { } }
+            public override string Name => Path.GetFileName(path);
+            public override ulong Size { get; protected set; }
+            public override string FullName => path;
             public override DateTime LastChangeTime { get => default; protected set { } }
         }
 
@@ -449,6 +488,83 @@ namespace search.Tests
         {
             var nodes = Enumerable.Range(0, 200_000).Select(i => (INode)new KeyNode((ulong)i));
             Assert.Null(SearchModel.SelectTop(nodes, (a, b) => a.Size.CompareTo(b.Size), 10, () => true));
+        }
+
+        [Fact]
+        public void PublishedLimitIsSelectedFromAllIndexedDrivesBeforePathSortIsTruncated()
+        {
+            var nodes = Enumerable.Range(0, 100_100)
+                .Select(i => (INode)new PathKeyNode($@"C:\bulk\{i:D6}.dat"))
+                .Concat(Enumerable.Range(0, 30)
+                    .Select(i => (INode)new PathKeyNode($@"P:\share\{i:D3}.dat")))
+                .Concat(Enumerable.Range(0, 30)
+                    .Select(i => (INode)new PathKeyNode($@"S:\share\{i:D3}.dat")))
+                .ToArray();
+            Comparison<INode> folderDescending =
+                (a, b) => NodePath.ByFolderThenName.Compare(b, a);
+
+            var published = SearchModel.SelectTop(nodes, folderDescending, 100_000);
+
+            Assert.Equal(100_000, published.Count);
+            Assert.Equal(30, published.Count(n => n.FullName.StartsWith(@"P:\")));
+            Assert.Equal(30, published.Count(n => n.FullName.StartsWith(@"S:\")));
+            Assert.StartsWith(@"S:\", published[0].FullName);
+        }
+
+        [Fact]
+        public void DriveReadinessProbeIsBoundedAndReportsSuccessfulReconnect()
+        {
+            Assert.True(DriveAvailability.ProbeWithTimeout(() => true, TimeSpan.FromMilliseconds(100)));
+            Assert.False(DriveAvailability.ProbeWithTimeout(() => throw new IOException(),
+                TimeSpan.FromMilliseconds(100)));
+            Assert.False(DriveAvailability.ProbeWithTimeout(() =>
+            {
+                Thread.Sleep(100);
+                return true;
+            }, TimeSpan.FromMilliseconds(10)));
+        }
+
+        [Theory]
+        [InlineData(DriveType.Fixed, "NTFS", true)]
+        [InlineData(DriveType.Network, "NTFS", false)]
+        [InlineData(DriveType.Fixed, "ReFS", false)]
+        public void RawMftIsNeverAttemptedForMappedNetworkDrives(
+            DriveType type, string format, bool expected)
+            => Assert.Equal(expected, SearchModel.CanUseMftSource(type, format));
+
+        [Theory]
+        [InlineData(DriveType.Fixed, "NTFS", true)]
+        [InlineData(DriveType.Removable, "NTFS", true)]
+        [InlineData(DriveType.Network, "NTFS", false)]
+        [InlineData(DriveType.Fixed, "ReFS", false)]
+        public void OnlyNonNetworkNtfsDrivesAreSelectedByDefault(
+            DriveType type, string format, bool expected)
+            => Assert.Equal(expected, DriveSelectionStore.DefaultEnabled(type, format));
+
+        [Fact]
+        public void DriveDialogRefreshesOnlyRootsWhoseSelectionChanged()
+        {
+            var selection = new DriveSelection
+            {
+                Drives = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["C:"] = true,
+                    ["P:"] = false,
+                    ["S:"] = false
+                }
+            };
+
+            var changed = DriveSelectionStore.ApplyChoices(selection, new[]
+            {
+                (Key: "C:", Root: @"C:\", Enabled: true),
+                (Key: "P:", Root: @"P:\", Enabled: false),
+                (Key: "S:", Root: @"S:\", Enabled: true)
+            });
+
+            Assert.Equal(new[] { @"S:\" }, changed);
+            Assert.True(selection.Drives["C:"]);
+            Assert.False(selection.Drives["P:"]);
+            Assert.True(selection.Drives["S:"]);
         }
 
         [Theory]

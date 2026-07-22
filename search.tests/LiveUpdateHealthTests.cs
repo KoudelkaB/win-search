@@ -148,12 +148,45 @@ namespace search.Tests
         }
 
         [Fact]
+        public void OrangeOnlyUiLagIsWrittenAfterRecoveryAndThenCooledDown()
+        {
+            var gate = new UiLagEpisodeGate();
+            var warning = LiveUpdateHealthStateMachine.DispatcherWarningMs;
+
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(1_000, warning, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(2_000, 0, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(3_000, 0, false));
+            Assert.Equal(UiLagEpisodeAction.Write, gate.Observe(4_000, 0, false));
+            Assert.Equal(3_000, gate.LastDurationMs);
+
+            //The next warning falls inside the one-minute disk-write cooldown.
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(5_000, warning, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(6_000, 0, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(7_000, 0, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(8_000, 0, false));
+        }
+
+        [Fact]
+        public void RedUiLagCancelsTheOrangeOnlyEpisode()
+        {
+            var gate = new UiLagEpisodeGate();
+            var warning = LiveUpdateHealthStateMachine.DispatcherWarningMs;
+
+            gate.Observe(1_000, warning, false);
+            gate.Observe(2_000, warning, coveredByCriticalEpisode: true);
+
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(3_000, 0, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(4_000, 0, false));
+            Assert.Equal(UiLagEpisodeAction.None, gate.Observe(5_000, 0, false));
+        }
+
+        [Fact]
         public void HealthLogHasASeparateSmallDiskBudget()
         {
             Assert.True(StorageMaintenance.MaxHealthLogBytes < StorageMaintenance.MaxLogBytes);
             Assert.True(StorageMaintenance.HealthLogBackupCount < StorageMaintenance.LogBackupCount);
             Assert.Equal(120, LiveUpdateHealthMonitor.HistorySamples);
-            Assert.Equal(4, new HealthEpisodeRecord().Version);
+            Assert.Equal(6, new HealthEpisodeRecord().Version);
         }
     }
 }

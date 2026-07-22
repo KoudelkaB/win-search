@@ -41,7 +41,7 @@
   <data name="Changed" xml:space="preserve"><value>Changed</value></data>
   <data name="Folder" xml:space="preserve"><value>Folder</value></data>
   <data name="IndexedDrives" xml:space="preserve"><value>Indexed drives</value></data>
-  <data name="ChooseDrives" xml:space="preserve"><value>Choose which drives are indexed and searched. Unchecked drives are neither scanned nor watched. Drives without an explicit choice follow the default: NTFS drives are indexed.</value></data>
+  <data name="ChooseDrives" xml:space="preserve"><value>Choose which drives are indexed and searched. Unchecked drives are neither scanned nor watched. Local NTFS drives are selected by default; network drives require explicit selection.</value></data>
   <data name="OK" xml:space="preserve"><value>OK</value></data>
   <data name="Checking" xml:space="preserve"><value>checking…</value></data>
   <data name="NotReady" xml:space="preserve"><value>not ready</value></data>

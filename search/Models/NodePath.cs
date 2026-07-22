@@ -200,6 +200,22 @@ namespace search.Models
         /// <summary>Compute a path hash before an immutable node publishes its cached value.</summary>
         internal static int ComputePathHash(INode n) => (int)HashUp(n, MaxWalk).Hash;
 
+        /// <summary>
+        /// Compute a child's canonical path hash from an already finalized parent hash.
+        /// MFT finalization processes directories top-down, so this avoids walking the
+        /// complete ancestor chain independently for every one of millions of records.
+        /// </summary>
+        internal static int ComputeChildPathHash(INode parent, string name)
+        {
+            if (parent == null) return (int)HashChars(FnvSeed, name ?? "");
+            var hash = parent.TryGetPathHash(out var cached)
+                ? (uint)cached : HashUp(parent, MaxWalk).Hash;
+            var tail = parent.PathParent == null ? parent.FullName : parent.Name;
+            if (string.IsNullOrEmpty(tail) || tail[^1] != '\\')
+                hash = (hash ^ '\\') * FnvPrime;
+            return (int)HashChars(hash, name ?? "");
+        }
+
         static (uint Hash, char Last) HashUp(INode n, int budget)
         {
             var prefix = n.PathParent == null ? n.FullName : budget <= 0 ? n.Name : null;

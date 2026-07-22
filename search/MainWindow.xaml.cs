@@ -375,8 +375,10 @@ namespace search
         void Drives_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new DrivesWindow { Owner = this };
-            //A changed selection reflects on the next scan => refresh right away
-            if (dialog.ShowDialog() == true) FSChangeProcessor.RefreshFromNFT();
+            //Refresh only roots whose effective selection changed. Refreshing every drive
+            //made a quick S: toggle start two unrelated 25-second C: MFT scans.
+            if (dialog.ShowDialog() == true)
+                foreach (var root in dialog.ChangedRoots) FSChangeProcessor.RefreshDrive(root);
         }
 
         void PinFilter_Click(object sender, RoutedEventArgs e)

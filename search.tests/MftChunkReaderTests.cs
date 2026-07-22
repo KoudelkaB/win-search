@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Threading;
 using search.Models;
 using Xunit;
 
@@ -67,6 +68,22 @@ namespace search.Tests
             Assert.Throws<InvalidOperationException>(
                 () => MftChunkReader.Read(stream, 100, 1000, (_, _, _) => throw new InvalidOperationException(), chunkBytes: 200));
             Assert.Equal(1000, stream.Position);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void CancellationOnlyDrainsReusablePipePayloads(bool drainOnCancellation)
+        {
+            var stream = new MemoryStream(new byte[10_000]);
+            using var cts = new CancellationTokenSource();
+
+            Assert.ThrowsAny<OperationCanceledException>(() => MftChunkReader.Read(
+                stream, 100, stream.Length, (_, _, _) => cts.Cancel(), chunkBytes: 200,
+                cancellationToken: cts.Token, drainOnCancellation: drainOnCancellation));
+
+            if (drainOnCancellation) Assert.Equal(stream.Length, stream.Position);
+            else Assert.True(stream.Position < stream.Length);
         }
     }
 }

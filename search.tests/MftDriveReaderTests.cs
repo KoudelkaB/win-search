@@ -96,6 +96,27 @@ namespace search.Tests
         }
 
         [Fact]
+        public void DeepHierarchyAggregatesOnceAndKeepsCanonicalPathHashes()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(5, "A") })
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(6, "B") })
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(7, "C") })
+                .AddRecord(attributes: new[]
+                {
+                    FakeMft.FileName(8, "deep.bin"), FakeMft.ResidentData(123)
+                })
+                .Parse();
+
+            Assert.Equal(123UL, nodes.Single(n => n.Name == "Q:").Size);
+            Assert.All(nodes.Where(n => n.IsDirectory), n => Assert.Equal(123UL, n.Size));
+            var map = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+            foreach (var node in nodes) map[node] = node;
+            Assert.True(map.TryGetValue(@"Q:\A\B\C\deep.bin", out var deep));
+            Assert.Equal("deep.bin", deep.Name);
+        }
+
+        [Fact]
         public void IndexedMftFileCanBeRemovedByPathAndDecrementsTheRootAggregate()
         {
             var nodes = WithRoot(1024)

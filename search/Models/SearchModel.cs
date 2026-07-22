@@ -523,11 +523,25 @@ namespace search.Models
 
                             if (!identical)
                             {
-                                //One Reset publishes the final replayed prefix. The ItemsSource
-                                //instance stays stable, preserving virtualization and scroll state.
+                                //A Reset on a 100k ObservableCollection makes WPF's existing
+                                //ListCollectionView reconcile the entire old source even when a
+                                //new filter has only a few hundred rows. Retire that large view
+                                //for a substantial filter shrink; ordinary refreshes keep the
+                                //stable collection and its scroll/selection state.
+                                var replaceSource = PreferFreshItemsSource(filterChanged,
+                                    Items.Count, items.Length);
                                 BeforeItemsExchange();
                                 itemsComplete = false;
-                                if (Items is RangeObservableCollection<INode> target) target.ReplaceRange(items);
+                                if (replaceSource)
+                                {
+                                    var fresh = new RangeObservableCollection<INode>();
+                                    fresh.AddRange(items);
+                                    //The Fody-woven setter raises Items immediately, before
+                                    //AfterItemsExchange checks surviving selection/focus.
+                                    Items = fresh;
+                                }
+                                else if (Items is RangeObservableCollection<INode> target)
+                                    target.ReplaceRange(items);
                                 else
                                 {
                                     var fresh = new RangeObservableCollection<INode>();
@@ -602,6 +616,16 @@ namespace search.Models
         internal static bool SortChangeNeedsFullSource(string currentSort, string newSort, bool truncated)
             => truncated && currentSort != newSort;
 
+        /// <summary>
+        /// Replacing the collection instance is cheaper than asking WPF to Reset a very
+        /// large existing CollectionView when a user filter collapses it to a small result.
+        /// Keep the source stable for normal refreshes and modest changes so scrolling and
+        /// selection retain their established incremental behavior.
+        /// </summary>
+        internal static bool PreferFreshItemsSource(bool filterChanged, int currentRows, int newRows)
+            => filterChanged && currentRows >= 4096
+            && (long)Math.Max(0, newRows) * 4 < currentRows;
+
         void QueueDeferredReconciliation()
         {
             //The recovery refresh is authoritative and already covers this work. Spawning a
@@ -668,7 +692,21 @@ namespace search.Models
             }
         }
 
-        public void Dispose() => health?.Dispose();
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref modelDisposed, 1);
+            DriveSelectionStore.SelectionChanged -= DriveSelectionChanged;
+            //The scan owns/disposes its CTS after any abandoned pipe drain has finished.
+            foreach (var active in activeDriveScans.Values)
+                try { active.Cancel(); } catch { }
+            foreach (var retry in driveRetries.ToArray())
+                if (driveRetries.TryRemove(retry.Key, out var cts))
+                {
+                    try { cts.Cancel(); } catch { }
+                    cts.Dispose();
+                }
+            health?.Dispose();
+        }
 
         /// <summary>
         /// Apply changed nodes to the UI - in place when possible, otherwise queue a full refresh
@@ -1759,6 +1797,7 @@ namespace search.Models
 
         public SearchModel()
         {
+            DriveSelectionStore.SelectionChanged += DriveSelectionChanged;
             health = new LiveUpdateHealthMonitor(Dispatcher,
                 FSChangeProcessor.GetHealthSnapshot,
                 FSChangeProcessor.GetRecentEvents,
@@ -1797,9 +1836,11 @@ namespace search.Models
                 //nine folders empties nine rows at once instead of one by one, each paced
                 //by its own full-index scan.
                 var pendingDeletes = new List<string>();
+                FsEvent pendingDeleteEvent = null;
                 void FlushDeletes()
                 {
                     if (pendingDeletes.Count == 0) return;
+                    FSChangeProcessor.ReportActiveStage(pendingDeleteEvent, "delete-index");
                     //Discover every tree before mutating anything. USN commonly reports a
                     //directory delete together with deletes of its children; those children
                     //are covered by the directory's stored aggregate and must not each walk
@@ -1823,6 +1864,7 @@ namespace search.Models
                         removed.Add(Remove(path));
                     }
                     pendingDeletes.Clear();
+                    pendingDeleteEvent = null;
                     if (trees.Count > 0) removed.AddRange(RemoveTrees(trees.ToArray()));
                     RecordStructuralNodes(removed);
                 }
@@ -1843,6 +1885,14 @@ namespace search.Models
                     try
                     {
                         //Status = $"WATCHED {++watched}. changes => last {DateTime.Now.TimeOfDay} {e.FullPath}";
+                        FSChangeProcessor.ReportActiveStage(e, e.ChangeType switch
+                        {
+                            WatcherChangeTypes.Created => "create-stat",
+                            WatcherChangeTypes.Changed => "metadata-stat",
+                            WatcherChangeTypes.Renamed => "rename-index",
+                            WatcherChangeTypes.Deleted => "delete-queue",
+                            _ => "event"
+                        });
                         switch (e.ChangeType)
                         {
                             case WatcherChangeTypes.Created:
@@ -1900,6 +1950,7 @@ namespace search.Models
                                     break;
                                 }
                                 pendingDeletes.Add(e.FullPath);
+                                pendingDeleteEvent ??= e;
                                 break;
                         }
                     }
@@ -1912,6 +1963,8 @@ namespace search.Models
                 try
                 {
                     FlushDeletes();
+                    if (events.Length > 0)
+                        FSChangeProcessor.ReportActiveStage(events[0], "grid-publish");
                     await UpdateSmall(structural.Concat(metadata), metadataSet.Cast<INode>());
                 }
                 catch (Exception ex) { await Log($"FS change batch failed: {ex}"); }
@@ -2220,6 +2273,12 @@ namespace search.Models
         readonly NonBlocking.ConcurrentDictionary<string, int[]> driveRequests = new(StringComparer.OrdinalIgnoreCase);
         // Per-drive load origin for the status tooltip - survives across scans
         readonly NonBlocking.ConcurrentDictionary<string, MftOrigin> origins = new(StringComparer.OrdinalIgnoreCase);
+        readonly ConcurrentDictionary<string, string> unavailableDrives = new(StringComparer.OrdinalIgnoreCase);
+        readonly ConcurrentDictionary<string, CancellationTokenSource> driveRetries = new(StringComparer.OrdinalIgnoreCase);
+        readonly ConcurrentDictionary<string, CancellationTokenSource> activeDriveScans = new(StringComparer.OrdinalIgnoreCase);
+        readonly ConcurrentDictionary<string, string> driveLogStates = new(StringComparer.OrdinalIgnoreCase);
+        internal const int DriveRetryDelayMs = 15000;
+        int modelDisposed;
         readonly object publishLock = new();     //Serializes finished-drive merges into files
         readonly object loadStatusLock = new();  //Guards the load burst bookkeeping below
         int scanningDrives;                      //Number of drives currently scanning
@@ -2245,28 +2304,76 @@ namespace search.Models
                 {
                     while (true)
                     {
+                        var scanWatch = Stopwatch.StartNew();
+                        var scanCts = new CancellationTokenSource();
+                        activeDriveScans[root] = scanCts;
+                        var scanToken = scanCts.Token;
                         await Task.Delay(500); //Batch the burst of watcher (re)starts
                         var requested = Volatile.Read(ref pending[0]);
                         $"drive {root} scan started (covering {requested} requests)".Debug();
                         var key = root.TrimEnd(Path.DirectorySeparatorChar);
                         var streamed = 0L;
+                        var drivePublished = false;
+                        Task deferredCancellationWork = null;
+                        MftOrigin? timingOrigin = null;
+                        MftLoadTiming? mftTiming = null;
+                        var timingNodes = 0;
+                        long sourceMs = 0, indexMs = 0, publishMs = 0, gridMs = 0;
                         try
                         {
+                            scanToken.ThrowIfCancellationRequested();
                             var fresh = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
                             IFrnNodeSource frnNodes = null;
                             IReadOnlyList<INode> denseNodes = null;
                             var drive = new DriveInfo(root);
-                            //IsReady of an unreachable network drive blocks in SMB timeouts for
-                            //tens of seconds - probe with a deadline so a dead mapping only costs
-                            //itself; the readiness probe must run before the selection check,
-                            //whose DriveFormat query would block on the same dead mappings
-                            var skip = !IsReadyFast(drive) ? "not ready"
-                                : !DriveSelectionStore.IsEnabled(root) ? "not selected for indexing"
-                                : null;
+                            var hasExplicitSelection = DriveSelectionStore.TryGetExplicit(root,
+                                out var explicitlyEnabled);
+                            var keepExisting = false;
+                            string skip;
+                            if (hasExplicitSelection && !explicitlyEnabled)
+                                skip = "not selected for indexing";
+                            else if (!hasExplicitSelection && drive.DriveType == DriveType.Network)
+                                //An unknown network drive is opt-in. Do not even probe/reconnect
+                                //the SMB mapping until the user explicitly selects it.
+                                skip = "not selected for indexing";
+                            else if (!DriveAvailability.IsReady(drive))
+                            {
+                                skip = "not ready";
+                                //A transiently disconnected selected mapping is not an empty
+                                //drive. Keep its last good index and retry source setup + scan;
+                                //publishing an empty replacement made P:/S: randomly disappear.
+                                keepExisting = hasExplicitSelection && explicitlyEnabled;
+                                if (keepExisting)
+                                {
+                                    unavailableDrives[key] = "network unavailable; retrying";
+                                    ScheduleDriveRetry(root);
+                                    ReportDriveState(root, "not ready; retry scheduled");
+                                }
+                            }
+                            else if (!DriveSelectionStore.IsEnabled(root))
+                                skip = "not selected for indexing";
+                            else
+                                skip = null;
                             if (skip == null)
                             {
-                                var entries = DriveEntries(drive, out var origin);
+                                CancelDriveRetry(root);
+                                unavailableDrives.TryRemove(key, out _);
+                                var phase = Stopwatch.StartNew();
+                                var sourceTask = Task.Run(() => DriveEntries(drive, scanToken));
+                                DriveEntryResult source;
+                                try { source = await sourceTask.WaitAsync(scanToken); }
+                                catch (OperationCanceledException)
+                                {
+                                    ObserveAbandoned(sourceTask);
+                                    deferredCancellationWork = sourceTask;
+                                    throw;
+                                }
+                                var entries = source.Entries;
+                                var origin = source.Origin;
+                                sourceMs = phase.ElapsedMilliseconds;
+                                timingOrigin = origin;
                                 frnNodes = entries as IFrnNodeSource;
+                                mftTiming = frnNodes?.LoadTiming;
                                 denseNodes = frnNodes?.DenseNodes;
                                 //MFT results know their exact live count. Allocate the final
                                 //shard at its target capacity once instead of walking every
@@ -2274,29 +2381,82 @@ namespace search.Models
                                 if (entries.TryGetNonEnumeratedCount(out var entryCount) && entryCount > 0)
                                     fresh = new NonBlocking.ConcurrentDictionary<object, INode>(
                                         Environment.ProcessorCount, entryCount, NodePath.KeyComparer);
-                                //The node itself is the key - no full path string is ever built or stored
-                                foreach (var n in entries)
-                                {
-                                    fresh[n] = n;
-                                    //Feed the loading status while the drive streams in
-                                    streamed++;
-                                    Interlocked.Increment(ref loadingNodes);
-                                }
+                                //The node itself is the key - no full path string is ever built or stored.
+                                //A dense MFT result is already fully materialized, so build its large
+                                //path hash table across every CPU instead of serializing 1.8M inserts.
+                                phase.Restart();
+                                streamed = PopulateDriveIndex(fresh, entries, denseNodes, scanToken);
+                                indexMs = phase.ElapsedMilliseconds;
                                 origins[key] = origin;
+                                scanToken.ThrowIfCancellationRequested();
+                                phase.Restart();
+                                drivePublished = PublishDrive(root, fresh, streamed, frnNodes, denseNodes);
+                                publishMs = phase.ElapsedMilliseconds;
+                                timingNodes = fresh.Count;
+                                ReportDriveState(root, $"loaded {fresh.Count} entries via {origin}");
+                                streamed = 0; //Deducted from the loading counter at the publish
                             }
                             else
                             {
-                                $"drive {root} {skip} => its entries are dropped".Debug();
-                                origins.TryRemove(key, out _);
+                                $"drive {root} {skip} => {(keepExisting ? "keeping the last index and retrying" : "entries are dropped")}".Debug();
+                                if (!keepExisting)
+                                {
+                                    CancelDriveRetry(root);
+                                    unavailableDrives.TryRemove(key, out _);
+                                    origins.TryRemove(key, out _);
+                                    drivePublished = PublishDrive(root, fresh); //Explicitly disabled => prune stale entries
+                                    ReportDriveState(root, skip);
+                                }
                             }
-                            PublishDrive(root, fresh, streamed, frnNodes, denseNodes); //Empty for a skipped drive => stale entries pruned
-                            streamed = 0; //Deducted from the loading counter at the publish
                         }
-                        catch { } //A failed scan keeps the drive's last good entries
+                        catch (OperationCanceledException)
+                        {
+                            ReportDriveState(root, "load canceled");
+                            $"drive {root} load canceled by selection change".Debug();
+                        }
+                        catch (Exception e)
+                        {
+                            //A failed selected network scan keeps the last good entries and
+                            //gets another bounded attempt instead of silently vanishing forever.
+                            if (DriveSelectionStore.TryGetExplicit(root, out var enabled) && enabled)
+                            {
+                                unavailableDrives[key] = "scan failed; retrying";
+                                ScheduleDriveRetry(root);
+                                ReportDriveState(root, $"scan failed; retry scheduled ({e.Message})");
+                            }
+                            $"drive {root} scan failed: {e.Message}".Debug();
+                        }
                         finally { Interlocked.Add(ref loadingNodes, -streamed); } //Not published => not counted by files
 
                         //Update filtered files
-                        await Update();
+                        if (drivePublished && !scanToken.IsCancellationRequested)
+                        {
+                            var phase = Stopwatch.StartNew();
+                            var updateTask = Update();
+                            try { await updateTask.WaitAsync(scanToken); }
+                            catch (OperationCanceledException)
+                            {
+                                ObserveAbandoned(updateTask);
+                                deferredCancellationWork = deferredCancellationWork == null
+                                    ? updateTask : Task.WhenAll(deferredCancellationWork, updateTask);
+                            }
+                            gridMs = phase.ElapsedMilliseconds;
+                        }
+                        if (timingOrigin.HasValue && !scanToken.IsCancellationRequested)
+                            ReportDriveTiming(root, timingOrigin.Value, timingNodes,
+                                sourceMs, indexMs, publishMs, gridMs, scanWatch.ElapsedMilliseconds,
+                                mftTiming);
+
+                        ((ICollection<KeyValuePair<string, CancellationTokenSource>>)activeDriveScans)
+                            .Remove(new KeyValuePair<string, CancellationTokenSource>(root, scanCts));
+                        if (deferredCancellationWork == null) scanCts.Dispose();
+                        else _ = deferredCancellationWork.ContinueWith(t =>
+                        {
+                            _ = t.Exception;
+                            scanCts.Dispose();
+                        },
+                            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
 
                         //Quit when no new request for this drive arrived during the scan
                         if (Interlocked.CompareExchange(ref pending[0], 0, requested) == requested) return;
@@ -2305,9 +2465,155 @@ namespace search.Models
                 }
                 finally
                 {
+                    if (activeDriveScans.TryRemove(root, out var active))
+                    {
+                        try { active.Cancel(); } catch { }
+                        active.Dispose();
+                    }
                     await EndDriveScan();
                 }
             });
+        }
+
+        void ScheduleDriveRetry(string root)
+        {
+            if (Volatile.Read(ref modelDisposed) != 0
+                || !DriveSelectionStore.TryGetExplicit(root, out var enabled) || !enabled) return;
+            var cts = new CancellationTokenSource();
+            if (!driveRetries.TryAdd(root, cts))
+            {
+                cts.Dispose();
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try { await Task.Delay(DriveRetryDelayMs, cts.Token); }
+                catch (OperationCanceledException) { return; }
+
+                var pair = new KeyValuePair<string, CancellationTokenSource>(root, cts);
+                if (!((ICollection<KeyValuePair<string, CancellationTokenSource>>)driveRetries).Remove(pair))
+                    return;
+                cts.Dispose();
+                if (Volatile.Read(ref modelDisposed) == 0
+                    && DriveSelectionStore.TryGetExplicit(root, out enabled) && enabled)
+                {
+                    //Probe while the app remains in its normal Loaded state. Only a mapping
+                    //that can now reconnect starts watcher setup and a visible drive scan;
+                    //an offline share therefore does not make the status bar pulse forever.
+                    var ready = false;
+                    try { ready = DriveAvailability.IsReady(new DriveInfo(root)); } catch { }
+                    if (ready) FSChangeProcessor.RefreshDrive(root);
+                    else ScheduleDriveRetry(root);
+                }
+            });
+        }
+
+        void DriveSelectionChanged(IReadOnlyList<string> changedRoots)
+        {
+            foreach (var root in changedRoots.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!DriveSelectionStore.TryGetExplicit(root, out var enabled) || enabled) continue;
+                if (activeDriveScans.TryGetValue(root, out var scan))
+                {
+                    try { scan.Cancel(); } catch (ObjectDisposedException) { }
+                    ReportDriveState(root, "load cancellation requested");
+                }
+                CancelDriveRetry(root);
+            }
+        }
+
+        void CancelDriveRetry(string root)
+        {
+            if (!driveRetries.TryRemove(root, out var cts)) return;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
+        }
+
+        void ReportDriveState(string root, string state)
+        {
+            if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(state)) return;
+            if (driveLogStates.TryGetValue(root, out var previous) && previous == state) return;
+            driveLogStates[root] = state;
+            _ = Log($"Drive {root} {state}");
+        }
+
+        void ReportDriveTiming(string root, MftOrigin origin, int nodes,
+            long sourceMs, long indexMs, long publishMs, long gridMs, long totalMs,
+            MftLoadTiming? mft)
+            => _ = Log($"Drive {root} timing: source={origin} {sourceMs}ms; "
+                + $"index={indexMs}ms; publish={publishMs}ms; grid={gridMs}ms; "
+                + $"total={totalMs}ms; nodes={nodes}"
+                + (mft.HasValue
+                    ? $"; MFT(read/parse={mft.Value.ReadParseMs}ms, link={mft.Value.LinkMs}ms, "
+                        + $"sizes/hash={mft.Value.AggregateHashMs}ms, dense={mft.Value.DenseMs}ms)"
+                    : ""));
+
+        static void ObserveAbandoned(Task task)
+            => _ = task.ContinueWith(t => _ = t.Exception,
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted
+                    | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+        long PopulateDriveIndex(NonBlocking.ConcurrentDictionary<object, INode> target,
+            IEnumerable<INode> nodes, IReadOnlyList<INode> denseNodes,
+            CancellationToken cancellationToken)
+        {
+            if (denseNodes != null)
+            {
+                var count = denseNodes.Count;
+                if (count == 0) return 0;
+                var workers = Math.Max(1, Environment.ProcessorCount);
+                var rangeSize = Math.Max(4096, (count + workers * 8 - 1) / (workers * 8));
+                long denseReported = 0;
+                try
+                {
+                    Parallel.ForEach(Partitioner.Create(0, count, rangeSize),
+                        new ParallelOptions { CancellationToken = cancellationToken }, range =>
+                    {
+                        for (var i = range.Item1; i < range.Item2; i++)
+                        {
+                            var node = denseNodes[i];
+                            target[node] = node;
+                        }
+                        //Progress is informational; publish once per range instead of one
+                        //contended atomic operation for every MFT record.
+                        var completed = range.Item2 - range.Item1;
+                        Interlocked.Add(ref denseReported, completed);
+                        Interlocked.Add(ref loadingNodes, completed);
+                    });
+                }
+                catch
+                {
+                    Interlocked.Add(ref loadingNodes, -Volatile.Read(ref denseReported));
+                    throw;
+                }
+                return count;
+            }
+
+            //Directory walks are lazy and cannot be partitioned without buffering. Keep
+            //streaming them, but update the progress counter in cache-friendly batches.
+            const int ProgressBatch = 4096;
+            long total = 0, reported = 0;
+            try
+            {
+                foreach (var node in nodes)
+                {
+                    if ((total & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    target[node] = node;
+                    total++;
+                    if (total - reported < ProgressBatch) continue;
+                    Interlocked.Add(ref loadingNodes, ProgressBatch);
+                    reported += ProgressBatch;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                Interlocked.Add(ref loadingNodes, total - reported);
+                return total;
+            }
+            catch
+            {
+                Interlocked.Add(ref loadingNodes, -reported);
+                throw;
+            }
         }
 
         /// <summary>
@@ -2315,7 +2621,7 @@ namespace search.Models
         /// replaced by the fresh scan while all other drives' entries stay untouched. A finished
         /// drive shows immediately - a fast MFT drive never waits on the slowest drive's walk.
         /// </summary>
-        void PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh,
+        bool PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh,
             long streamed = 0, IEnumerable<INode> frnNodes = null,
             IReadOnlyList<INode> denseNodes = null)
         {
@@ -2324,7 +2630,7 @@ namespace search.Models
             if (fresh.IsEmpty && !files.ContainsKey(root))
             {
                 Interlocked.Add(ref loadingNodes, -streamed);
-                return;
+                return false;
             }
             lock (publishLock)
             {
@@ -2361,6 +2667,7 @@ namespace search.Models
             //watcher so deleted/renamed files resolve to paths (journal records have no names)
             FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? fresh.Values);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
+            return true;
         }
 
         /// <summary>
@@ -2430,28 +2737,6 @@ namespace search.Models
             await StorageMaintenance.AppendLogAsync("log.txt", $"{DateTime.Now} {tid} {text}{Environment.NewLine}");
         }
 
-        /// <summary>
-        /// DriveInfo.IsReady with a deadline: an unreachable network drive blocks the query
-        /// in SMB timeouts for tens of seconds - abandon the probe and report not ready.
-        /// Local fixed drives are queried directly: they cannot hang, and they must never be
-        /// lost to a probe that started late - after a reboot the network mappings' probes
-        /// can occupy the whole thread pool long enough to time the deadline out for C: itself
-        /// </summary>
-        static bool IsReadyFast(DriveInfo d)
-        {
-            try
-            {
-                if (d.DriveType == DriveType.Fixed) return d.IsReady;
-                //A dedicated thread, not the pool: the deadline must measure the probe itself,
-                //not its queue time, and an abandoned probe must not hold a pool thread
-                var ready = false;
-                var probe = new Thread(() => { try { ready = d.IsReady; } catch { } }) { IsBackground = true };
-                probe.Start();
-                return probe.Join(TimeSpan.FromSeconds(5)) && ready;
-            }
-            catch { return false; }
-        }
-
         volatile bool ntfsWalked; //An NTFS drive had to fall back to the walk => hint how to get MFT indexing
 
         /// <summary>
@@ -2460,21 +2745,31 @@ namespace search.Models
         /// </summary>
         /// <param name="drive"></param>
         /// <returns></returns>
-        IEnumerable<INode> DriveEntries(DriveInfo drive, out MftOrigin origin)
-        {
-            origin = MftOrigin.Walk;
-            if (drive?.IsReady != true) return Enumerable.Empty<INode>();
+        readonly record struct DriveEntryResult(IEnumerable<INode> Entries, MftOrigin Origin);
 
-            if (string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
+        DriveEntryResult DriveEntries(DriveInfo drive, CancellationToken cancellationToken)
+        {
+            var origin = MftOrigin.Walk;
+            cancellationToken.ThrowIfCancellationRequested();
+            //The caller already performed a bounded readiness/reconnect probe. In particular,
+            //a persistent SMB mapping can have an accessible root while DriveInfo.IsReady
+            //still reports its old disconnected state; testing it again would discard the walk.
+            if (drive == null) return new DriveEntryResult(Enumerable.Empty<INode>(), origin);
+
+            if (CanUseMftSource(drive.DriveType, drive.DriveFormat))
             {
-                var nodes = MftSource.TryGetNodes(drive, out origin);
-                if (nodes != null) return nodes;
+                var nodes = MftSource.TryGetNodes(drive, out origin, cancellationToken);
+                if (nodes != null) return new DriveEntryResult(nodes, origin);
                 ntfsWalked = true;
             }
 
             origin = MftOrigin.Walk;
-            return DirectoryWalker.Walk(drive);
+            return new DriveEntryResult(DirectoryWalker.Walk(drive, cancellationToken), origin);
         }
+
+        internal static bool CanUseMftSource(DriveType driveType, string format)
+            => driveType != DriveType.Network
+            && string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// "(C: service, D: folder walk)" tooltip text for the load status, with a hint
@@ -2482,13 +2777,23 @@ namespace search.Models
         /// </summary>
         string OriginsInfo(NonBlocking.ConcurrentDictionary<string, MftOrigin> origins)
         {
-            if (origins.IsEmpty) return "";
-            var parts = string.Join(", ", origins.OrderBy(x => x.Key).Select(x => $"{x.Key} " + x.Value switch
+            var keys = origins.Keys.Union(unavailableDrives.Keys, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+            if (keys.Length == 0) return "";
+            var parts = string.Join(", ", keys.Select(key =>
             {
-                MftOrigin.Service => "service",
-                MftOrigin.Direct => "direct",
-                MftOrigin.Broker => "admin helper",
-                _ => "folder walk"
+                if (unavailableDrives.TryGetValue(key, out var unavailable))
+                    return $"{key} {unavailable}";
+                var origin = origins.TryGetValue(key, out var loadedOrigin)
+                    ? loadedOrigin : MftOrigin.Walk;
+                var originText = origin switch
+                {
+                    MftOrigin.Service => "service",
+                    MftOrigin.Direct => "direct",
+                    MftOrigin.Broker => "admin helper",
+                    _ => "folder walk"
+                };
+                return $"{key} {originText}";
             }));
             var hint = ntfsWalked
                 ? " - install the File Search Manager service or accept the admin prompt for instant NTFS indexing"
