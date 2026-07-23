@@ -212,6 +212,96 @@ namespace search.Models
             }
         }
 
+        /// <summary>
+        /// Validate the cheap external-list diff for a pure removal batch. Every surviving
+        /// row must remain the prefix of the new visible window; any remaining rows in
+        /// <paramref name="next"/> are reserve rows that fill holes at the end. This lets a
+        /// delete storm update only the affected ListView indices instead of raising Reset
+        /// for the complete 100k-row ItemsSource.
+        /// </summary>
+        internal static int PureRemovalDiffCount(IList<T> visible, IReadOnlyList<T> next,
+            ISet<T> removed)
+        {
+            if (visible == null || next == null || removed == null) return -1;
+            var nextIndex = 0;
+            var removalCount = 0;
+            for (var i = 0; i < visible.Count; i++)
+            {
+                var item = visible[i];
+                if (removed.Contains(item))
+                {
+                    removalCount++;
+                    continue;
+                }
+                if (nextIndex >= next.Count || !ReferenceEquals(item, next[nextIndex]))
+                    return -1;
+                nextIndex++;
+            }
+            return nextIndex <= next.Count ? removalCount : -1;
+        }
+
+        /// <summary>Apply a diff already validated by <see cref="PureRemovalDiffCount"/>.</summary>
+        internal static void ApplyPureRemovalDiff(IList<T> visible, IReadOnlyList<T> next,
+            ISet<T> removed)
+        {
+            for (var i = visible.Count - 1; i >= 0; i--)
+                if (removed.Contains(visible[i])) visible.RemoveAt(i);
+            while (visible.Count < next.Count) visible.Add(next[visible.Count]);
+        }
+
+        internal sealed class TargetedDiff
+        {
+            public readonly HashSet<T> Remove;
+            public readonly int OperationCount;
+
+            public TargetedDiff(HashSet<T> remove, int operationCount)
+            {
+                Remove = remove;
+                OperationCount = operationCount;
+            }
+        }
+
+        /// <summary>
+        /// Plan a bounded remove/insert transformation for a mixed batch. ApplyBatch keeps
+        /// every unchanged identity in relative order, so removing changed/moved rows and
+        /// rows evicted at the tail must leave a subsequence of the new window. Returning
+        /// null protects callers if that invariant does not hold for any future algorithm.
+        /// </summary>
+        internal static TargetedDiff PlanTargetedDiff(IList<T> visible, IReadOnlyList<T> next,
+            ISet<T> changed)
+        {
+            if (visible == null || next == null || changed == null) return null;
+            var nextSet = new HashSet<T>(next, ReferenceEqualityComparer.Instance);
+            var remove = new HashSet<T>(ReferenceEqualityComparer.Instance);
+            foreach (var item in visible)
+                if (changed.Contains(item) || !nextSet.Contains(item)) remove.Add(item);
+
+            //All remaining identities must occur in the target in the same relative order.
+            var nextIndex = 0;
+            var survivors = 0;
+            foreach (var item in visible)
+            {
+                if (remove.Contains(item)) continue;
+                while (nextIndex < next.Count && !ReferenceEquals(next[nextIndex], item))
+                    nextIndex++;
+                if (nextIndex >= next.Count) return null;
+                nextIndex++;
+                survivors++;
+            }
+            return new TargetedDiff(remove, remove.Count + next.Count - survivors);
+        }
+
+        /// <summary>Apply a plan returned by <see cref="PlanTargetedDiff"/>.</summary>
+        internal static void ApplyTargetedDiff(IList<T> visible, IReadOnlyList<T> next,
+            TargetedDiff plan)
+        {
+            for (var i = visible.Count - 1; i >= 0; i--)
+                if (plan.Remove.Contains(visible[i])) visible.RemoveAt(i);
+            for (var i = 0; i < next.Count; i++)
+                if (i >= visible.Count || !ReferenceEquals(visible[i], next[i]))
+                    visible.Insert(i, next[i]);
+        }
+
         internal static List<T> MergePrefix(IReadOnlyList<T> first, IReadOnlyList<T> second,
             Comparison<T> compare, int limit)
         {

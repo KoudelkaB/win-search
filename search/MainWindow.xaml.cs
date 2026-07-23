@@ -9,6 +9,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -2100,34 +2101,74 @@ namespace search
                     ? $"Permanently deleting {na.Length} item(s)"
                     : $"Moving {na.Length} item(s) to the Recycle Bin";
                 await Task.Yield();
-                var errors = new List<string>();
-                foreach (INode n in na)
-                    try
+                //Recursive and shell deletes can take seconds and can themselves produce a
+                //large watcher storm. Keep both the filesystem work and its COM dialogs on a
+                //dedicated STA thread instead of blocking the WPF dispatcher for the entire
+                //operation. The continuation returns to the UI context for the final status.
+                var errors = await RunDeleteSta(() =>
+                {
+                    var result = new List<string>();
+                    foreach (INode n in na)
                     {
-                        if (permanently || n is ZipNode)
-                            n.Delete();
-                        else if (n.IsDirectory)
-                            Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
-                                n.FullName,
-                                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
-                                Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
-                        else
-                            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
-                                n.FullName,
-                                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
-                                Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
-                        Models.Extensions.EchoDeleted(n);
+                        try
+                        {
+                            if (permanently || n is ZipNode)
+                                n.Delete();
+                            else if (n.IsDirectory)
+                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                                    n.FullName,
+                                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                                    Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+                            else
+                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                                    n.FullName,
+                                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                                    Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+                            Models.Extensions.EchoDeleted(n);
+                        }
+                        catch (Exception ex)
+                        {
+                            result.Add($"{n.FullName}: {ex.Message}");
+                            //A recursive delete is not transactional: it may remove many
+                            //children before one protected/locked path fails. Those watcher
+                            //events legitimately reduce directory sizes, but the root remains.
+                            //Persist the exact HRESULT and post-failure state so the next report
+                            //distinguishes ACL, read-only/locked files and a partial delete.
+                            var state = $"fileExists={File.Exists(n.FullName)} "
+                                + $"directoryExists={Directory.Exists(n.FullName)}";
+                            StorageMaintenance.AppendLog("log.txt",
+                                $"{DateTime.Now} {Thread.CurrentThread.ManagedThreadId} "
+                                + $"Delete failed permanently={permanently} path={n.FullName} "
+                                + $"type={ex.GetType().FullName} hresult=0x{ex.HResult:X8} "
+                                + $"{state}: {ex}{Environment.NewLine}");
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        errors.Add($"{n.FullName}: {ex.Message}");
-                    }
+                    return result;
+                });
                 Model.Status = errors.Count == 0
                     ? permanently ? $"Permanently deleted {na.Length} item(s)" : $"Recycled {na.Length} item(s)"
                     : $"Delete completed with {errors.Count} error(s): {string.Join(", ", errors)}";
             }
+        }
+
+        static Task<T> RunDeleteSta<T>(Func<T> action)
+        {
+            var completion = new TaskCompletionSource<T>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var thread = new Thread(() =>
+            {
+                try { completion.TrySetResult(action()); }
+                catch (Exception ex) { completion.TrySetException(ex); }
+            })
+            {
+                IsBackground = true,
+                Name = "File delete"
+            };
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            return completion.Task;
         }
 
         async Task OpenIn(IEnumerable<INode> nodes, IEnumerable<Key> arg, bool asAdmin = false)

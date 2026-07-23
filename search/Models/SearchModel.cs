@@ -243,10 +243,36 @@ namespace search.Models
         internal const int ResultReserveLowWatermark = 1024;
         internal const int MaterializedWindowLimit = MaxItems + ResultReserveItems;
         internal const int IncrementalBatchLimit = 64;
+        //A targeted remove/add only touches shifted virtualized indices. Above this number
+        //of actually visible removals, a single Reset is the safer upper bound for WPF event
+        //traffic. Most filesystem delete storms contain many off-screen descendants and
+        //therefore remain far below this limit even when the source batch has thousands.
+        internal const int TargetedBulkRemovalLimit = 512;
+        internal const int TargetedBulkMutationLimit = 768;
         internal const int TailReconciliationQuietMs = 2500;
         internal const int MaxDataRefreshVersionRetries = 2;
         readonly LiveResultWindow<INode> liveWindow = new(MaxItems,
             ResultReserveItems, ResultReserveLowWatermark);
+
+        sealed class MetadataRefreshSlot
+        {
+            public readonly string Path;
+            public readonly object Gate = new();
+            public long Version;
+            public INode ExpectedNode;
+            public bool QueuedOrRunning;
+
+            public MetadataRefreshSlot(string path) => Path = path;
+        }
+
+        //FileInfo.Exists/LastWriteTime can block for seconds even on a local NTFS path
+        //(the captured incident stalled on Windows\Prefetch). Keep those calls off the one
+        //ordered C: queue, while a small fixed worker count bounds handles and I/O pressure.
+        readonly ConcurrentDictionary<string, MetadataRefreshSlot> metadataRefreshSlots =
+            new(StringComparer.OrdinalIgnoreCase);
+        readonly BlockingCollection<MetadataRefreshSlot> metadataRefreshQueue = new();
+        internal const int SlowMetadataReadLogMs = 1000;
+        internal const int MaxMetadataRefreshWorkers = 4;
         //The window is sorted and filtered by the query that last published it. During a
         //user filter/sort query the public fields already contain the requested values while
         //the window still has the previous ordering, so live mutations must wait for replay.
@@ -695,6 +721,7 @@ namespace search.Models
         public void Dispose()
         {
             Interlocked.Exchange(ref modelDisposed, 1);
+            metadataRefreshQueue.CompleteAdding();
             DriveSelectionStore.SelectionChanged -= DriveSelectionChanged;
             //The scan owns/disposes its CTS after any abandoned pipe drain has finished.
             foreach (var active in activeDriveScans.Values)
@@ -706,6 +733,82 @@ namespace search.Models
                     cts.Dispose();
                 }
             health?.Dispose();
+        }
+
+        void StartMetadataRefreshWorkers()
+        {
+            var count = Math.Min(MaxMetadataRefreshWorkers,
+                Math.Max(2, Environment.ProcessorCount / 2));
+            for (var i = 0; i < count; i++)
+                new Thread(MetadataRefreshLoop)
+                {
+                    IsBackground = true,
+                    Name = $"metadata refresh {i + 1}"
+                }.Start();
+        }
+
+        void QueueMetadataRefresh(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || Volatile.Read(ref modelDisposed) != 0) return;
+            files.TryGetValue(path, out var expected);
+            while (Volatile.Read(ref modelDisposed) == 0)
+            {
+                var slot = metadataRefreshSlots.GetOrAdd(path,
+                    p => new MetadataRefreshSlot(p));
+                lock (slot.Gate)
+                {
+                    //The worker removes an idle slot while holding this same gate. A caller
+                    //that captured that old slot retries against the dictionary's new owner.
+                    if (!metadataRefreshSlots.TryGetValue(path, out var current)
+                        || !ReferenceEquals(current, slot)) continue;
+                    slot.ExpectedNode = expected;
+                    slot.Version++;
+                    if (slot.QueuedOrRunning) return;
+                    slot.QueuedOrRunning = true;
+                    try { metadataRefreshQueue.Add(slot); }
+                    catch (InvalidOperationException) { slot.QueuedOrRunning = false; }
+                    return;
+                }
+            }
+        }
+
+        void MetadataRefreshLoop()
+        {
+            foreach (var slot in metadataRefreshQueue.GetConsumingEnumerable())
+            {
+                while (Volatile.Read(ref modelDisposed) == 0)
+                {
+                    long version;
+                    INode expected;
+                    lock (slot.Gate)
+                    {
+                        version = slot.Version;
+                        expected = slot.ExpectedNode;
+                    }
+
+                    var watch = Stopwatch.StartNew();
+                    var found = INode.TryReadMetadata(slot.Path, out var snapshot);
+                    var elapsed = watch.ElapsedMilliseconds;
+                    if (elapsed >= SlowMetadataReadLogMs)
+                        _ = Log($"Slow metadata read {elapsed}ms found={found} path={slot.Path}");
+                    if (found && Volatile.Read(ref modelDisposed) == 0)
+                        //Do not wait and do not use the urgent app-action lane. Let all four
+                        //workers continue filling the normal 200-500ms window so one grid
+                        //diff covers the whole VS/build burst instead of a train of four-row
+                        //mutations, each scheduling another expensive WPF render.
+                        _ = FSChangeProcessor.PostDeferredMetadata(FsEvent.MetadataResult(
+                            slot.Path, expected, snapshot, elapsed));
+
+                    lock (slot.Gate)
+                    {
+                        if (slot.Version != version) continue; //Changed again while reading
+                        slot.QueuedOrRunning = false;
+                        ((ICollection<KeyValuePair<string, MetadataRefreshSlot>>)metadataRefreshSlots)
+                            .Remove(new KeyValuePair<string, MetadataRefreshSlot>(slot.Path, slot));
+                        break;
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -830,6 +933,20 @@ namespace search.Models
                     publishedRowCount = items.Count;
                     bool Include(INode node) => files.TryGetValue(node, out var current)
                         && ReferenceEquals(current, node) && nf.Matches(node);
+                    var changedSet = new HashSet<INode>(ReferenceEqualityComparer.Instance);
+                    var removed = new HashSet<INode>(ReferenceEqualityComparer.Instance);
+                    var pureRemovals = true;
+                    foreach (var node in changed)
+                    {
+                        if (node == null) continue;
+                        changedSet.Add(node);
+                        if (Include(node))
+                        {
+                            pureRemovals = false;
+                            continue;
+                        }
+                        removed.Add(node);
+                    }
                     var merged = liveWindow.ApplyBatch(changed, Include, compare);
                     itemsTruncated = liveWindow.IsTruncated;
                     Volatile.Write(ref reserveRefillNeeded, liveWindow.NeedsRefill ? 1 : 0);
@@ -845,6 +962,46 @@ namespace search.Models
                         //but leave the collection and selection completely untouched.
                         gridMode = "bulk-repaint";
                         RowsRefreshRequested?.Invoke(changed);
+                        return new BatchUpdateOutcome(true, liveWindow.NeedsRefill,
+                            liveWindow.IsVisibleIncomplete);
+                    }
+
+                    //A structural delete cannot reorder surviving rows. Remove only visible
+                    //victims and append promoted reserve rows; resetting the full 100k-row
+                    //ItemsSource made WPF rebuild its virtualized bookkeeping for every
+                    //large Explorer delete and was the direct source of red UI incidents.
+                    var removalCount = pureRemovals
+                        ? LiveResultWindow<INode>.PureRemovalDiffCount(items, merged, removed)
+                        : -1;
+                    if (removalCount >= 0 && removalCount <= TargetedBulkRemovalLimit)
+                    {
+                        gridMode = "bulk-remove";
+                        BeforeItemsExchange();
+                        LiveResultWindow<INode>.ApplyPureRemovalDiff(items, merged, removed);
+                        AfterItemsExchange();
+                        PropertyChanged?.Invoke(this,
+                            new PropertyChangedEventArgs(nameof(CountsInfo)));
+                        publishedRowCount = items.Count;
+                        return new BatchUpdateOutcome(true, liveWindow.NeedsRefill,
+                            liveWindow.IsVisibleIncomplete);
+                    }
+
+                    //Size/time sorts mix deleted rows with surviving ancestor metadata rows.
+                    //The survivors still keep their relative order; move only those changed
+                    //identities plus the small number of rows entering/leaving the 100k
+                    //boundary. This covers the same delete storm without a collection Reset.
+                    var targeted = LiveResultWindow<INode>.PlanTargetedDiff(
+                        items, merged, changedSet);
+                    if (targeted != null
+                        && targeted.OperationCount <= TargetedBulkMutationLimit)
+                    {
+                        gridMode = "bulk-diff";
+                        BeforeItemsExchange();
+                        LiveResultWindow<INode>.ApplyTargetedDiff(items, merged, targeted);
+                        AfterItemsExchange();
+                        PropertyChanged?.Invoke(this,
+                            new PropertyChangedEventArgs(nameof(CountsInfo)));
+                        publishedRowCount = items.Count;
                         return new BatchUpdateOutcome(true, liveWindow.NeedsRefill,
                             liveWindow.IsVisibleIncomplete);
                     }
@@ -1255,14 +1412,14 @@ namespace search.Models
         /// Remove node and subtract a removed file from its ancestor directory sizes
         /// </summary>
         /// <param name="path"></param>
-        INode Remove(string path)
+        INode Remove(string path, bool patchVersion = true)
         {
             //Apply the delta while this entry and its drive shard are still current. A
             //path-backed watcher node has no parent references and resolves directories
             //through the index; doing that after TryRemove allowed a concurrent MFT publish
             //to place the lookup and the visible rows in different shard generations.
             if (!files.TryRemove(path, SubtractFileSize, out var n)) return null;
-            PatchFileRemoved(n);
+            if (patchVersion) PatchFileRemoved(n);
             //Directories are routed through RemoveTrees by the batch handler. That method
             //subtracts their remaining aggregate once and removes every indexed descendant;
             //doing it here as well would double-count a recursive delete.
@@ -1480,14 +1637,16 @@ namespace search.Models
         /// <summary>
         /// Get the node or index a newly seen file, adding a new file to its ancestor directory sizes
         /// </summary>
-        INode GetOrAddNew(string path)
+        INode GetOrAddNew(string path, NodeMetadataSnapshot? snapshot = null)
         {
             //USN reason bits accumulate while a file handle is open, so installers and
             //OneDrive can report the same Create several times. The old code statted the
             //path before discovering that it was already indexed; under an update storm
             //those redundant disk round trips serialized the whole drive queue.
             if (files.TryGetValue(path, out var indexed)) return indexed;
-            var added = new FileNode(path);
+            var added = snapshot.HasValue
+                ? new FileNode(path, snapshot.Value)
+                : new FileNode(path);
             //A path that does not resolve on disk must never enter the index: it carries no
             //metadata (1601 times, empty size) and would shadow nothing real. It happens for
             //watcher events of already-vanished temp files and for the ghost paths built from
@@ -1807,6 +1966,7 @@ namespace search.Models
             FSChangeProcessor.ShouldIndex = DriveSelectionStore.IsEnabled;
             FSChangeProcessor.Lookup = FindByPath;
             FSChangeProcessor.ReconcileDirs = ReconcileDirectories;
+            StartMetadataRefreshWorkers();
             FSChangeProcessor.Run(async d => await InitFromNTFS(d)
             , async events =>
             {
@@ -1835,7 +1995,7 @@ namespace search.Models
                 //their tree removals share ONE index pass and ONE grid update, so deleting
                 //nine folders empties nine rows at once instead of one by one, each paced
                 //by its own full-index scan.
-                var pendingDeletes = new List<string>();
+                var pendingDeletes = new List<FsEvent>();
                 FsEvent pendingDeleteEvent = null;
                 void FlushDeletes()
                 {
@@ -1846,25 +2006,41 @@ namespace search.Models
                     //are covered by the directory's stored aggregate and must not each walk
                     //their parent chain as well.
                     var trees = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var path in pendingDeletes)
+                    foreach (var deleted in pendingDeletes)
                     {
+                        var path = deleted.FullPath;
                         var indexed = files.TryGetValue(path, out var i) ? i : null;
-                        if (indexed?.IsDirectory == true || HasArchiveChildren(indexed))
+                        //A USN delete is exact: every descendant has its own ordered record.
+                        //Fallback watchers and app echoes remain conservative and uproot the
+                        //whole directory because they may report only its root. Archive
+                        //members are virtual, so they always need the subtree path.
+                        if ((!deleted.DescendantDeletesReported && indexed?.IsDirectory == true)
+                            || HasArchiveChildren(indexed))
                             trees.Add(path.TrimEnd(Path.DirectorySeparatorChar,
                                 Path.AltDirectorySeparatorChar));
                     }
 
                     var removed = new List<INode>();
-                    foreach (var path in pendingDeletes)
+                    var directlyRemoved = new List<INode>();
+                    foreach (var deleted in pendingDeletes)
                     {
+                        var path = deleted.FullPath;
                         var normalized = path.TrimEnd(Path.DirectorySeparatorChar,
                             Path.AltDirectorySeparatorChar);
                         if (trees.Contains(normalized) || IsBelowPendingTree(normalized, trees))
                             continue;
-                        removed.Add(Remove(path));
+                        var direct = Remove(path, patchVersion: false);
+                        if (direct != null) directlyRemoved.Add(direct);
                     }
                     pendingDeletes.Clear();
                     pendingDeleteEvent = null;
+                    if (directlyRemoved.Count > 0)
+                    {
+                        //One immutable cache/version patch for the complete coalesced batch;
+                        //cloning its removal overlay once per USN record becomes quadratic.
+                        PatchFilesVersion(Array.Empty<INode>(), directlyRemoved);
+                        removed.AddRange(directlyRemoved);
+                    }
                     if (trees.Count > 0) removed.AddRange(RemoveTrees(trees.ToArray()));
                     RecordStructuralNodes(removed);
                 }
@@ -1876,7 +2052,8 @@ namespace search.Models
                 //ancestors/descendants needs the delete to be visible before it is handled.
                 void FlushConflictingDeletes(params string[] paths)
                 {
-                    if (!pendingDeletes.Any(deleted => paths.Any(path => PathsOverlap(deleted, path)))) return;
+                    if (!pendingDeletes.Any(deleted => paths.Any(path =>
+                        PathsOverlap(deleted.FullPath, path)))) return;
                     FlushDeletes();
                 }
 
@@ -1888,7 +2065,8 @@ namespace search.Models
                         FSChangeProcessor.ReportActiveStage(e, e.ChangeType switch
                         {
                             WatcherChangeTypes.Created => "create-stat",
-                            WatcherChangeTypes.Changed => "metadata-stat",
+                            WatcherChangeTypes.Changed => e.IsMetadataResult
+                                ? "metadata-apply" : "metadata-queue",
                             WatcherChangeTypes.Renamed => "rename-index",
                             WatcherChangeTypes.Deleted => "delete-queue",
                             _ => "event"
@@ -1910,9 +2088,30 @@ namespace search.Models
                             case WatcherChangeTypes.Changed:
                                 //Change attributes and size
                                 FlushConflictingDeletes(e.FullPath);
-                                var refreshed = Refresh(e.FullPath);
-                                if (refreshed != null) RecordMetadata(refreshed);
-                                else RecordStructuralNode(GetOrAddNew(e.FullPath));
+                                if (!e.IsMetadataResult)
+                                {
+                                    //The actual stat runs outside this ordered queue. A
+                                    //result returns here carrying the expected node identity,
+                                    //so a delete/rename/recreate that won the race cannot be
+                                    //overwritten by stale metadata.
+                                    QueueMetadataRefresh(e.FullPath);
+                                    break;
+                                }
+                                var snapshot = e.MetadataSnapshot.Value;
+                                if (e.MetadataNode != null)
+                                {
+                                    if (files.TryGetValue(e.FullPath, out var current)
+                                        && ReferenceEquals(current, e.MetadataNode))
+                                    {
+                                        var oldSize = current.IsDirectory ? 0L : (long)current.Size;
+                                        current.ApplyMetadata(snapshot);
+                                        PropagateSizeDelta(current,
+                                            (current.IsDirectory ? 0L : (long)current.Size) - oldSize);
+                                        RecordMetadata(current);
+                                    }
+                                }
+                                else if (!files.ContainsKey(e.FullPath))
+                                    RecordStructuralNode(GetOrAddNew(e.FullPath, snapshot));
                                 break;
                             case WatcherChangeTypes.Renamed:
                                 //Trace.WriteLine($"{e.OldFullPath}->{e.FullPath}");
@@ -1949,7 +2148,7 @@ namespace search.Models
                                     _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
                                     break;
                                 }
-                                pendingDeletes.Add(e.FullPath);
+                                pendingDeletes.Add(e);
                                 pendingDeleteEvent ??= e;
                                 break;
                         }

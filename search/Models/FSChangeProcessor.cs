@@ -392,6 +392,15 @@ namespace search.Models
             => Changed == null ? Task.CompletedTask : QueueFor(e.FullPath).Enqueue(e, priority: true);
 
         /// <summary>
+        /// Return metadata read off the ordered queue through its normal coalescing lane.
+        /// Unlike an app-owned delete this is not user-visible priority work: batching many
+        /// fast worker completions prevents a create/build storm from invalidating WPF once
+        /// per small worker group.
+        /// </summary>
+        internal static Task PostDeferredMetadata(FsEvent e)
+            => Changed == null ? Task.CompletedTask : QueueFor(e.FullPath).Enqueue(e);
+
+        /// <summary>
         /// Hand one drive's freshly published scan to its USN watcher - fills the file
         /// reference map that resolves the paths of deleted/renamed-away files (the
         /// unprivileged journal read carries no names).

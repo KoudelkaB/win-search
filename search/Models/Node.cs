@@ -189,6 +189,13 @@ namespace search.Models
             catch { }
         }
 
+        /// <summary>Build from metadata already read by the deferred refresh worker.</summary>
+        internal FileNode(string path, NodeMetadataSnapshot snapshot)
+        {
+            this.path = path;
+            ApplyMetadata(snapshot);
+        }
+
         /// <summary>
         /// From an already enumerated entry - no extra stat call (used by the directory walk)
         /// </summary>

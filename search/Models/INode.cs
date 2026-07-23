@@ -4,6 +4,9 @@ using System.IO;
 
 namespace search.Models
 {
+    internal readonly record struct NodeMetadataSnapshot(
+        bool IsDirectory, ulong Size, DateTime LastChangeTime);
+
     internal readonly record struct MftLoadTiming(
         long ReadParseMs, long LinkMs, long AggregateHashMs, long DenseMs);
 
@@ -70,25 +73,48 @@ namespace search.Models
         /// </summary>
         public void Refresh()
         {
+            if (TryReadMetadata(FullName, out var snapshot)) ApplyMetadata(snapshot);
+        }
+
+        /// <summary>
+        /// Read metadata without mutating an indexed node. Potentially blocking filesystem
+        /// calls can therefore run away from the serialized change queue and the snapshot
+        /// can later be applied only if the same node identity is still indexed.
+        /// </summary>
+        internal static bool TryReadMetadata(string path, out NodeMetadataSnapshot snapshot)
+        {
+            snapshot = default;
             try
             {
-                var fi = new FileInfo(FullName);
+                var fi = new FileInfo(path);
                 if (fi.Exists)
                 {
-                    LastChangeTime = fi.LastWriteTime;
-                    Size = (ulong)fi.Length;
-                    Attributes &= ~FileAttributes.Directory;
-                    return;
+                    snapshot = new NodeMetadataSnapshot(false, (ulong)fi.Length,
+                        fi.LastWriteTime);
+                    return true;
                 }
 
-                var di = new DirectoryInfo(FullName);
+                var di = new DirectoryInfo(path);
                 if (di.Exists)
                 {
-                    LastChangeTime = di.LastWriteTime;
-                    Attributes |= FileAttributes.Directory;
+                    snapshot = new NodeMetadataSnapshot(true, 0, di.LastWriteTime);
+                    return true;
                 }
             }
             catch { }
+            return false;
+        }
+
+        /// <summary>Apply a previously read snapshot on the serialized model queue.</summary>
+        internal void ApplyMetadata(NodeMetadataSnapshot snapshot)
+        {
+            LastChangeTime = snapshot.LastChangeTime;
+            if (snapshot.IsDirectory) Attributes |= FileAttributes.Directory;
+            else
+            {
+                Size = snapshot.Size;
+                Attributes &= ~FileAttributes.Directory;
+            }
         }
     }
 

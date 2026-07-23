@@ -186,7 +186,11 @@ namespace search.Models
                 if (path != null)
                 {
                     ghosts.Remove(r.Frn);
-                    Process(new FsEvent(WatcherChangeTypes.Deleted, path));
+                    //NTFS emits a FILE_DELETE record for every descendant removed by a
+                    //recursive delete. Mark that completeness guarantee so SearchModel does
+                    //not rescan the entire million-node index for each directory record.
+                    Process(new FsEvent(WatcherChangeTypes.Deleted, path,
+                        descendantDeletesReported: true));
                 }
                 //A ghost's create never resolved, so nothing was indexed - nothing to
                 //prune. Same when the index holds nothing under the last known path while

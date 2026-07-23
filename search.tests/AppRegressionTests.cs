@@ -169,6 +169,52 @@ namespace search.Tests
         }
 
         [Fact]
+        public void FilesystemEventsDefaultToConservativeDirectoryDeletion()
+        {
+            var watcherDelete = new FsEvent(WatcherChangeTypes.Deleted, @"C:\tree");
+            var usnDelete = new FsEvent(WatcherChangeTypes.Deleted, @"C:\tree", null,
+                descendantDeletesReported: true);
+
+            Assert.False(watcherDelete.DescendantDeletesReported);
+            Assert.True(usnDelete.DescendantDeletesReported);
+        }
+
+        [Fact]
+        public void DeferredMetadataResultCarriesSnapshotAndExpectedIdentity()
+        {
+            var node = (INode)new FileNode(@"C:\deferred-metadata.test",
+                new NodeMetadataSnapshot(false, 10, DateTime.MinValue));
+            var changed = new DateTime(2026, 7, 23, 10, 0, 0);
+            var snapshot = new NodeMetadataSnapshot(false, 25, changed);
+
+            var result = FsEvent.MetadataResult(node.FullName, node, snapshot, 1234);
+            node.ApplyMetadata(result.MetadataSnapshot.Value);
+
+            Assert.True(result.IsMetadataResult);
+            Assert.Same(node, result.MetadataNode);
+            Assert.Equal(1234, result.MetadataReadMs);
+            Assert.Equal((ulong)25, node.Size);
+            Assert.Equal(changed, node.LastChangeTime);
+        }
+
+        [Fact]
+        public void DeferredMetadataResultsCoalesceToTheNewestSnapshot()
+        {
+            var node = (INode)new FileNode(@"C:\deferred-metadata.test",
+                new NodeMetadataSnapshot(false, 10, DateTime.MinValue));
+            var first = FsEvent.MetadataResult(node.FullName, node,
+                new NodeMetadataSnapshot(false, 20, DateTime.MinValue), 5);
+            var newest = FsEvent.MetadataResult(node.FullName, node,
+                new NodeMetadataSnapshot(false, 30, DateTime.MinValue), 7);
+
+            var result = FSChangeProcessor.CoalesceChangedEvents(new[] { first, newest });
+
+            Assert.Single(result);
+            Assert.Same(newest, result[0]);
+            Assert.Equal((ulong)30, result[0].MetadataSnapshot.Value.Size);
+        }
+
+        [Fact]
         public void LiveUpdateWindowsStayBelowOneSecondAndIgnoreLastAccessNoise()
         {
             Assert.InRange(FSChangeProcessor.NormalCoalesceWindowMs, 1, 999);
@@ -203,6 +249,65 @@ namespace search.Tests
                 new[] { 1, 3, 5 }, new[] { 2, 4, 6 }, (a, b) => a.CompareTo(b), 5);
 
             Assert.Equal(new[] { 1, 2, 3, 4, 5 }, merged);
+        }
+
+        [Fact]
+        public void PureRemovalDiffTouchesOnlyDeletedRowsAndPromotesReserveTail()
+        {
+            var nodes = Enumerable.Range(1, 8)
+                .Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var visible = new RangeObservableCollection<INode>();
+            foreach (var node in nodes.Take(5)) visible.Add(node);
+            var next = new[] { nodes[0], nodes[2], nodes[4], nodes[5], nodes[6] };
+            ISet<INode> removed = new HashSet<INode>(new[] { nodes[1], nodes[3] },
+                ReferenceEqualityComparer.Instance);
+            var actions = new List<NotifyCollectionChangedAction>();
+            ((INotifyCollectionChanged)visible).CollectionChanged += (_, e) => actions.Add(e.Action);
+
+            var count = LiveResultWindow<INode>.PureRemovalDiffCount(visible, next, removed);
+            LiveResultWindow<INode>.ApplyPureRemovalDiff(visible, next, removed);
+
+            Assert.Equal(2, count);
+            Assert.Equal(next, visible);
+            Assert.DoesNotContain(NotifyCollectionChangedAction.Reset, actions);
+            Assert.Equal(2, actions.Count(x => x == NotifyCollectionChangedAction.Remove));
+            Assert.Equal(2, actions.Count(x => x == NotifyCollectionChangedAction.Add));
+        }
+
+        [Fact]
+        public void PureRemovalDiffRejectsAReorderedSurvivor()
+        {
+            var nodes = Enumerable.Range(1, 4)
+                .Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            IList<INode> visible = nodes.ToList();
+            var next = new[] { nodes[1], nodes[0], nodes[2] };
+            ISet<INode> removed = new HashSet<INode>(new[] { nodes[3] },
+                ReferenceEqualityComparer.Instance);
+
+            Assert.Equal(-1,
+                LiveResultWindow<INode>.PureRemovalDiffCount(visible, next, removed));
+        }
+
+        [Fact]
+        public void MixedTargetedDiffMovesChangedRowsWithoutResettingTheGrid()
+        {
+            var nodes = Enumerable.Range(0, 7)
+                .Select(i => (INode)new KeyNode((ulong)i)).ToArray();
+            var visible = new RangeObservableCollection<INode>();
+            foreach (var node in nodes.Skip(1).Take(5)) visible.Add(node); //1,2,3,4,5
+            var next = new[] { nodes[0], nodes[1], nodes[3], nodes[2], nodes[6] };
+            ISet<INode> changed = new HashSet<INode>(new[] { nodes[0], nodes[2] },
+                ReferenceEqualityComparer.Instance);
+            var actions = new List<NotifyCollectionChangedAction>();
+            visible.CollectionChanged += (_, e) => actions.Add(e.Action);
+
+            var plan = LiveResultWindow<INode>.PlanTargetedDiff(visible, next, changed);
+            LiveResultWindow<INode>.ApplyTargetedDiff(visible, next, plan);
+
+            Assert.NotNull(plan);
+            Assert.Equal(6, plan.OperationCount); //remove 2/4/5, insert 0/2/6
+            Assert.Equal(next, visible);
+            Assert.DoesNotContain(NotifyCollectionChangedAction.Reset, actions);
         }
 
         /// <summary>Path-less node with a controllable sort key - SelectTop only compares</summary>
