@@ -5,7 +5,17 @@ using System.IO;
 namespace search.Models
 {
     internal readonly record struct NodeMetadataSnapshot(
-        bool IsDirectory, ulong Size, DateTime LastChangeTime);
+        FileAttributes Attributes, ulong Size, DateTime LastChangeTime)
+    {
+        //Compatibility/convenience constructor for synthetic snapshots and tests.
+        public NodeMetadataSnapshot(bool isDirectory, ulong size, DateTime lastChangeTime)
+            : this(isDirectory ? FileAttributes.Directory : 0, size, lastChangeTime) { }
+
+        public bool IsDirectory => Attributes.HasFlag(FileAttributes.Directory);
+
+        public static NodeMetadataSnapshot From(INode node)
+            => new(node.Attributes, node.Size, node.LastChangeTime);
+    }
 
     internal readonly record struct MftLoadTiming(
         long ReadParseMs, long LinkMs, long AggregateHashMs, long DenseMs);
@@ -89,7 +99,7 @@ namespace search.Models
                 var fi = new FileInfo(path);
                 if (fi.Exists)
                 {
-                    snapshot = new NodeMetadataSnapshot(false, (ulong)fi.Length,
+                    snapshot = new NodeMetadataSnapshot(fi.Attributes, (ulong)fi.Length,
                         fi.LastWriteTime);
                     return true;
                 }
@@ -97,7 +107,7 @@ namespace search.Models
                 var di = new DirectoryInfo(path);
                 if (di.Exists)
                 {
-                    snapshot = new NodeMetadataSnapshot(true, 0, di.LastWriteTime);
+                    snapshot = new NodeMetadataSnapshot(di.Attributes, 0, di.LastWriteTime);
                     return true;
                 }
             }
@@ -109,12 +119,8 @@ namespace search.Models
         internal void ApplyMetadata(NodeMetadataSnapshot snapshot)
         {
             LastChangeTime = snapshot.LastChangeTime;
-            if (snapshot.IsDirectory) Attributes |= FileAttributes.Directory;
-            else
-            {
-                Size = snapshot.Size;
-                Attributes &= ~FileAttributes.Directory;
-            }
+            Attributes = snapshot.Attributes;
+            if (!snapshot.IsDirectory) Size = snapshot.Size;
         }
     }
 

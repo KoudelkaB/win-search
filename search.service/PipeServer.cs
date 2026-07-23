@@ -10,7 +10,8 @@ using search.Core;
 namespace search.Service
 {
     /// <summary>
-    /// Serves raw $MFT bytes over a named pipe to local authenticated users.
+    /// Serves raw $MFT bytes and batched file-reference metadata over a named pipe
+    /// to local authenticated users.
     /// One request per connection (parallel drive scans open parallel connections);
     /// the $MFT is streamed in 1 MB chunks and never buffered in this process.
     /// The service only ever opens volumes read-only and never parses anything.
@@ -90,13 +91,20 @@ namespace search.Service
             {
                 using (pipe)
                 {
-                    var volume = ReadRequest(pipe, ct);
-                    if (volume == null) return; // Bad version or silent client - just close
+                    var request = ReadRequest(pipe, ct);
+                    if (!request.HasValue) return; // Bad version or silent client - just close
+                    var (version, volume) = request.Value;
 
                     if (!ServicePipe.IsValidVolume(volume))
                     {
                         pipe.WriteByte(ServicePipe.StatusError);
                         ServicePipe.WriteString(pipe, $"'{volume}' is not a volume mount point.");
+                        return;
+                    }
+
+                    if (version == ServicePipe.MetadataProtocolVersion)
+                    {
+                        ServeMetadata(pipe, volume, ct);
                         return;
                     }
 
@@ -137,12 +145,16 @@ namespace search.Service
         /// Read the request (version byte + volume string) with a timeout so a
         /// connected-but-silent client cannot pin a worker forever
         /// </summary>
-        static string ReadRequest(NamedPipeServerStream pipe, CancellationToken ct)
+        static (byte Version, string Volume)? ReadRequest(
+            NamedPipeServerStream pipe, CancellationToken ct)
         {
             var read = Task.Run(() =>
             {
                 var version = pipe.ReadByte();
-                return version == ServicePipe.ProtocolVersion ? ServicePipe.ReadString(pipe) : null;
+                if (version != ServicePipe.ProtocolVersion
+                    && version != ServicePipe.MetadataProtocolVersion)
+                    return ((byte Version, string Volume)?)null;
+                return (Version: (byte)version, Volume: ServicePipe.ReadString(pipe));
             });
             try
             {
@@ -153,6 +165,42 @@ namespace search.Service
             {
                 return null;
             }
+        }
+
+        static void ServeMetadata(NamedPipeServerStream pipe, string volume,
+            CancellationToken ct)
+        {
+            var count = ServicePipe.ReadInt32(pipe);
+            if (count < 0 || count > ServicePipe.MaxMetadataBatch)
+            {
+                pipe.WriteByte(ServicePipe.StatusError);
+                ServicePipe.WriteString(pipe, $"Invalid metadata batch size {count}.");
+                return;
+            }
+
+            var frns = new ulong[count];
+            for (var i = 0; i < count; i++)
+                frns[i] = unchecked((ulong)ServicePipe.ReadInt64(pipe));
+
+            using var reader = NtfsFileMetadataReader.TryOpen(volume);
+            if (reader == null)
+            {
+                pipe.WriteByte(ServicePipe.StatusError);
+                ServicePipe.WriteString(pipe,
+                    $"Could not open '{volume}' for file-reference metadata.");
+                return;
+            }
+
+            pipe.WriteByte(ServicePipe.StatusOk);
+            ServicePipe.WriteInt32(pipe, count);
+            foreach (var frn in frns)
+            {
+                ct.ThrowIfCancellationRequested();
+                ServicePipe.WriteMetadata(pipe,
+                    reader.TryRead(frn, out var metadata) ? metadata : null);
+            }
+            pipe.Flush();
+            pipe.WaitForPipeDrain();
         }
     }
 }

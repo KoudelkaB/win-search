@@ -140,5 +140,47 @@ namespace search.Models
             return MftDriveReader.GetNodes(pipe, bytesPerRecord, length, volume,
                 cancellationToken: cancellationToken, drainOnCancellation: false);
         }
+
+        /// <summary>
+        /// Query a batch of exact NTFS references through the installed service.
+        /// Null means the service/protocol is unavailable; individual null entries
+        /// mean that the corresponding reference no longer resolves.
+        /// </summary>
+        internal static NtfsFileMetadata?[] TryReadMetadataFromService(
+            string volume, IReadOnlyList<ulong> frns)
+        {
+            if (frns == null || frns.Count > ServicePipe.MaxMetadataBatch)
+                throw new ArgumentOutOfRangeException(nameof(frns));
+            try
+            {
+                using var pipe = new NamedPipeClientStream(".", ServicePipe.PipeName,
+                    PipeDirection.InOut);
+                pipe.Connect(500);
+                pipe.WriteByte(ServicePipe.MetadataProtocolVersion);
+                ServicePipe.WriteString(pipe, volume);
+                ServicePipe.WriteInt32(pipe, frns.Count);
+                foreach (var frn in frns)
+                    ServicePipe.WriteInt64(pipe, unchecked((long)frn));
+                pipe.Flush();
+
+                var status = pipe.ReadByte();
+                if (status < 0) return null; // Older service: unsupported version
+                if (status != ServicePipe.StatusOk)
+                    throw new IOException(ServicePipe.ReadString(pipe));
+                var count = ServicePipe.ReadInt32(pipe);
+                if (count != frns.Count)
+                    throw new InvalidDataException(
+                        $"Invalid metadata response count {count}/{frns.Count}.");
+                var results = new NtfsFileMetadata?[count];
+                for (var i = 0; i < count; i++)
+                    results[i] = ServicePipe.ReadMetadata(pipe);
+                return results;
+            }
+            catch (Exception e) when (e is TimeoutException || e is IOException
+                || e is UnauthorizedAccessException || e is EndOfStreamException)
+            {
+                return null;
+            }
+        }
     }
 }

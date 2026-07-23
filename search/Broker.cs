@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,7 +29,11 @@ namespace search
     /// </summary>
     public static class Broker
     {
-        enum Command : byte { READY, FILES_TO_CLIPBOARD, GET_FILE, SAVE_FILE, DELETE_FILE, OPEN_FILE, READ_MFT, EXIT }
+        enum Command : byte
+        {
+            READY, FILES_TO_CLIPBOARD, GET_FILE, SAVE_FILE, DELETE_FILE,
+            OPEN_FILE, READ_MFT, READ_METADATA, EXIT
+        }
 
         // ------------------------------------------------------------------
         // Client side - runs in the unelevated UI process
@@ -226,6 +231,35 @@ namespace search
             return nodes;
         }
 
+        /// <summary>
+        /// Query current metadata for a batch of exact NTFS file references through
+        /// the already elevated broker. Results preserve request order; null means
+        /// that the reference was deleted, reused, or could not be opened.
+        /// </summary>
+        internal static NtfsFileMetadata?[] ReadNtfsMetadata(string volumeMountPoint,
+            IReadOnlyList<ulong> frns)
+        {
+            if (frns == null || frns.Count > ServicePipe.MaxMetadataBatch)
+                throw new ArgumentOutOfRangeException(nameof(frns));
+            var results = new NtfsFileMetadata?[frns.Count];
+            Run(Command.READ_METADATA, s =>
+            {
+                WriteLine(s, volumeMountPoint);
+                WriteLine(s, frns.Count.ToString(CultureInfo.InvariantCulture));
+                foreach (var frn in frns)
+                    WriteLine(s, frn.ToString(CultureInfo.InvariantCulture));
+            }, s =>
+            {
+                var header = ReadLine(s);
+                if (!int.TryParse(header, NumberStyles.None, CultureInfo.InvariantCulture,
+                    out var count) || count != frns.Count)
+                    throw new InvalidDataException(header ?? "Broker pipe closed.");
+                for (var i = 0; i < count; i++)
+                    results[i] = ParseMetadataLine(ReadLine(s));
+            });
+            return results;
+        }
+
         static void ReceivePayload(Stream s, string dest)
         {
             var line = ReadLine(s);
@@ -343,6 +377,10 @@ namespace search
                             SendMft(server, ReadLine(server));
                             break;
 
+                        case Command.READ_METADATA:
+                            SendMetadata(server, ReadLine(server));
+                            break;
+
                         case Command.EXIT:
                             return;
 
@@ -423,6 +461,60 @@ namespace search
             {
                 throw new MidStreamException(e);
             }
+        }
+
+        static void SendMetadata(Stream s, string volume)
+        {
+            if (!ServicePipe.IsValidVolume(volume))
+                throw new ArgumentException($"'{volume}' is not a volume mount point.");
+            var countLine = ReadLine(s);
+            if (!int.TryParse(countLine, NumberStyles.None, CultureInfo.InvariantCulture,
+                out var count) || count < 0 || count > ServicePipe.MaxMetadataBatch)
+                throw new InvalidDataException($"Invalid metadata batch size '{countLine}'.");
+
+            var frns = new ulong[count];
+            for (var i = 0; i < count; i++)
+            {
+                var line = ReadLine(s);
+                if (!ulong.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture,
+                    out frns[i]))
+                    throw new InvalidDataException($"Invalid file reference '{line}'.");
+            }
+
+            using var reader = NtfsFileMetadataReader.TryOpen(volume)
+                ?? throw new IOException(
+                    $"Could not open '{volume}' for file-reference metadata.");
+            WriteLine(s, count.ToString(CultureInfo.InvariantCulture));
+            foreach (var frn in frns)
+                WriteMetadataLine(s,
+                    reader.TryRead(frn, out var metadata) ? metadata : null);
+        }
+
+        static void WriteMetadataLine(Stream s, NtfsFileMetadata? metadata)
+        {
+            if (!metadata.HasValue)
+            {
+                WriteLine(s, "-");
+                return;
+            }
+            var value = metadata.Value;
+            WriteLine(s, string.Create(CultureInfo.InvariantCulture,
+                $"{value.Attributes} {value.Size} {value.LastWriteFileTimeUtc}"));
+        }
+
+        static NtfsFileMetadata? ParseMetadataLine(string line)
+        {
+            if (line == "-") return null;
+            var parts = line?.Split(' ');
+            if (parts?.Length != 3
+                || !uint.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture,
+                    out var attributes)
+                || !ulong.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture,
+                    out var size)
+                || !long.TryParse(parts[2], NumberStyles.AllowLeadingSign,
+                    CultureInfo.InvariantCulture, out var fileTime))
+                throw new InvalidDataException(line ?? "Broker pipe closed.");
+            return new NtfsFileMetadata(attributes, size, fileTime);
         }
 
         static IEnumerable<string> ReadLinesUntilEmpty(Stream s)

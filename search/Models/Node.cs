@@ -184,6 +184,7 @@ namespace search.Models
                     if (fi.Exists) Attributes |= FileAttributes.Directory;
                 }
                 Exists = fi.Exists;
+                if (Exists) Attributes = fi.Attributes;
                 LastChangeTime = fi.LastWriteTime;
             }
             catch { }
@@ -221,5 +222,20 @@ namespace search.Models
         override public string FullName => path;
 
         override public DateTime LastChangeTime { get; protected set; }
+    }
+
+    /// <summary>
+    /// Path-backed node that must retain an exact NTFS identity after a create or
+    /// rename. Kept separate so ordinary walked FileNodes and every ZipNode do not
+    /// pay eight bytes for an FRN they can never have.
+    /// </summary>
+    sealed class FrnFileNode : FileNode
+    {
+        readonly ulong frn;
+
+        internal FrnFileNode(string path, NodeMetadataSnapshot snapshot, ulong frn)
+            : base(path, snapshot) => this.frn = frn;
+
+        public override ulong Frn => frn;
     }
 }

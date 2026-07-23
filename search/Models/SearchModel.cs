@@ -260,19 +260,22 @@ namespace search.Models
             public readonly object Gate = new();
             public long Version;
             public INode ExpectedNode;
+            public ulong Frn;
             public bool QueuedOrRunning;
 
             public MetadataRefreshSlot(string path) => Path = path;
         }
 
-        //FileInfo.Exists/LastWriteTime can block for seconds even on a local NTFS path
-        //(the captured incident stalled on Windows\Prefetch). Keep those calls off the one
-        //ordered C: queue, while a small fixed worker count bounds handles and I/O pressure.
+        //Metadata I/O can block for seconds even on a local NTFS path (the captured incident
+        //stalled on Windows\Prefetch). Keep it off the ordered drive queue. Workers batch
+        //FRNs so the service/admin helper pays one IPC round trip for a whole change burst.
         readonly ConcurrentDictionary<string, MetadataRefreshSlot> metadataRefreshSlots =
             new(StringComparer.OrdinalIgnoreCase);
         readonly BlockingCollection<MetadataRefreshSlot> metadataRefreshQueue = new();
+        readonly NtfsMetadataSource metadataSource = new();
         internal const int SlowMetadataReadLogMs = 1000;
         internal const int MaxMetadataRefreshWorkers = 4;
+        internal const int MetadataRefreshBatchLimit = 256;
         //The window is sorted and filtered by the query that last published it. During a
         //user filter/sort query the public fields already contain the requested values while
         //the window still has the previous ordering, so live mutations must wait for replay.
@@ -722,6 +725,7 @@ namespace search.Models
         {
             Interlocked.Exchange(ref modelDisposed, 1);
             metadataRefreshQueue.CompleteAdding();
+            metadataSource.Dispose();
             DriveSelectionStore.SelectionChanged -= DriveSelectionChanged;
             //The scan owns/disposes its CTS after any abandoned pipe drain has finished.
             foreach (var active in activeDriveScans.Values)
@@ -747,10 +751,11 @@ namespace search.Models
                 }.Start();
         }
 
-        void QueueMetadataRefresh(string path)
+        void QueueMetadataRefresh(string path, ulong frn = 0)
         {
             if (string.IsNullOrWhiteSpace(path) || Volatile.Read(ref modelDisposed) != 0) return;
             files.TryGetValue(path, out var expected);
+            if (frn == 0) frn = expected?.Frn ?? 0;
             while (Volatile.Read(ref modelDisposed) == 0)
             {
                 var slot = metadataRefreshSlots.GetOrAdd(path,
@@ -762,6 +767,7 @@ namespace search.Models
                     if (!metadataRefreshSlots.TryGetValue(path, out var current)
                         || !ReferenceEquals(current, slot)) continue;
                     slot.ExpectedNode = expected;
+                    if (frn != 0) slot.Frn = frn;
                     slot.Version++;
                     if (slot.QueuedOrRunning) return;
                     slot.QueuedOrRunning = true;
@@ -774,41 +780,74 @@ namespace search.Models
 
         void MetadataRefreshLoop()
         {
-            foreach (var slot in metadataRefreshQueue.GetConsumingEnumerable())
+            foreach (var first in metadataRefreshQueue.GetConsumingEnumerable())
             {
-                while (Volatile.Read(ref modelDisposed) == 0)
+                var slots = new List<MetadataRefreshSlot> { first };
+                while (slots.Count < MetadataRefreshBatchLimit
+                    && metadataRefreshQueue.TryTake(out var additional))
+                    slots.Add(additional);
+
+                while (slots.Count > 0 && Volatile.Read(ref modelDisposed) == 0)
                 {
-                    long version;
-                    INode expected;
-                    lock (slot.Gate)
+                    var states = new (MetadataRefreshSlot Slot, long Version,
+                        INode Expected, ulong Frn)[slots.Count];
+                    var requests = new MetadataReadRequest[slots.Count];
+                    for (var i = 0; i < slots.Count; i++)
                     {
-                        version = slot.Version;
-                        expected = slot.ExpectedNode;
+                        var slot = slots[i];
+                        lock (slot.Gate)
+                        {
+                            states[i] = (slot, slot.Version, slot.ExpectedNode, slot.Frn);
+                            requests[i] = new MetadataReadRequest(slot.Path, slot.Frn);
+                        }
                     }
 
                     var watch = Stopwatch.StartNew();
-                    var found = INode.TryReadMetadata(slot.Path, out var snapshot);
+                    var snapshots = metadataSource.Read(requests, MetadataOrigin);
                     var elapsed = watch.ElapsedMilliseconds;
                     if (elapsed >= SlowMetadataReadLogMs)
-                        _ = Log($"Slow metadata read {elapsed}ms found={found} path={slot.Path}");
-                    if (found && Volatile.Read(ref modelDisposed) == 0)
-                        //Do not wait and do not use the urgent app-action lane. Let all four
-                        //workers continue filling the normal 200-500ms window so one grid
-                        //diff covers the whole VS/build burst instead of a train of four-row
-                        //mutations, each scheduling another expensive WPF render.
-                        _ = FSChangeProcessor.PostDeferredMetadata(FsEvent.MetadataResult(
-                            slot.Path, expected, snapshot, elapsed));
+                        _ = Log($"Slow metadata batch {elapsed}ms found="
+                            + $"{snapshots.Count(x => x.HasValue)}/{snapshots.Length}"
+                            + $" first={slots[0].Path}");
 
-                    lock (slot.Gate)
+                    var retry = new List<MetadataRefreshSlot>();
+                    for (var i = 0; i < states.Length; i++)
                     {
-                        if (slot.Version != version) continue; //Changed again while reading
-                        slot.QueuedOrRunning = false;
-                        ((ICollection<KeyValuePair<string, MetadataRefreshSlot>>)metadataRefreshSlots)
-                            .Remove(new KeyValuePair<string, MetadataRefreshSlot>(slot.Path, slot));
-                        break;
+                        var state = states[i];
+                        if (snapshots[i].HasValue
+                            && Volatile.Read(ref modelDisposed) == 0)
+                            //Do not wait and do not use the urgent app-action lane. Let all
+                            //workers fill the normal coalescing window so one grid diff
+                            //covers the complete build/change burst.
+                            _ = FSChangeProcessor.PostDeferredMetadata(FsEvent.MetadataResult(
+                                state.Slot.Path, state.Expected,
+                                snapshots[i].Value, elapsed));
+
+                        lock (state.Slot.Gate)
+                        {
+                            if (state.Slot.Version != state.Version)
+                            {
+                                retry.Add(state.Slot); //Changed again while reading
+                                continue;
+                            }
+                            state.Slot.QueuedOrRunning = false;
+                            ((ICollection<KeyValuePair<string, MetadataRefreshSlot>>)
+                                metadataRefreshSlots).Remove(
+                                new KeyValuePair<string, MetadataRefreshSlot>(
+                                    state.Slot.Path, state.Slot));
+                        }
                     }
+                    slots = retry;
                 }
             }
+        }
+
+        MftOrigin? MetadataOrigin(string root)
+        {
+            if (string.IsNullOrWhiteSpace(root)) return null;
+            var key = root.TrimEnd(Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            return origins.TryGetValue(key, out var origin) ? origin : null;
         }
 
         /// <summary>
@@ -1522,7 +1561,9 @@ namespace search.Models
         /// Re-index descendants after a directory rename. Windows reports the directory
         /// rename but does not report a rename for every child. Returns the added nodes.
         /// </summary>
-        List<INode> ReindexRenamedTree(string oldPath, string newPath, IEnumerable<INode> removed)
+        List<INode> ReindexRenamedTree(string oldPath, string newPath,
+            IEnumerable<INode> removed, NodeMetadataSnapshot? rootFallback = null,
+            ulong rootFrn = 0, bool preserveDescendantFrns = false)
         {
             var removedItems = removed.ToArray();
             var archivePaths = removedItems.OfType<ZipNode>()
@@ -1530,7 +1571,15 @@ namespace search.Models
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path.Length)
                 .ToArray();
-            var added = new List<INode> { GetOrAddNew(newPath) };
+            var oldRoot = removedItems.FirstOrDefault(n =>
+                string.Equals(n.FullName, oldPath, StringComparison.OrdinalIgnoreCase));
+            var rootSnapshot = oldRoot != null
+                ? NodeMetadataSnapshot.From(oldRoot) : rootFallback;
+            var added = new List<INode>
+            {
+                GetOrAddNew(newPath, rootSnapshot,
+                    rootFrn != 0 ? rootFrn : oldRoot?.Frn ?? 0)
+            };
             var oldPrefix = oldPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var newPrefix = newPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             foreach (var old in removedItems
@@ -1540,7 +1589,10 @@ namespace search.Models
                 .ThenBy(n => n.FullName.Length))
             {
                 if (!old.FullName.StartsWith(oldPrefix + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-                added.Add(GetOrAddNew(newPrefix + old.FullName.Substring(oldPrefix.Length)));
+                added.Add(GetOrAddNew(
+                    newPrefix + old.FullName.Substring(oldPrefix.Length),
+                    NodeMetadataSnapshot.From(old),
+                    preserveDescendantFrns ? old.Frn : 0));
             }
             // Re-open renamed archives so their entries remain real ZipNodes rather than
             // path-only FileNodes that do not exist on disk.
@@ -1637,7 +1689,8 @@ namespace search.Models
         /// <summary>
         /// Get the node or index a newly seen file, adding a new file to its ancestor directory sizes
         /// </summary>
-        INode GetOrAddNew(string path, NodeMetadataSnapshot? snapshot = null)
+        INode GetOrAddNew(string path, NodeMetadataSnapshot? snapshot = null,
+            ulong frn = 0)
         {
             //USN reason bits accumulate while a file handle is open, so installers and
             //OneDrive can report the same Create several times. The old code statted the
@@ -1645,7 +1698,9 @@ namespace search.Models
             //those redundant disk round trips serialized the whole drive queue.
             if (files.TryGetValue(path, out var indexed)) return indexed;
             var added = snapshot.HasValue
-                ? new FileNode(path, snapshot.Value)
+                ? frn != 0
+                    ? new FrnFileNode(path, snapshot.Value, frn)
+                    : new FileNode(path, snapshot.Value)
                 : new FileNode(path);
             //A path that does not resolve on disk must never enter the index: it carries no
             //metadata (1601 times, empty size) and would shadow nothing real. It happens for
@@ -2076,7 +2131,17 @@ namespace search.Models
                             case WatcherChangeTypes.Created:
                                 //Trace.WriteLine($"+{e.FullPath}");
                                 FlushConflictingDeletes(e.FullPath); //A delete of this path must apply first
-                                var node = GetOrAddNew(e.FullPath);
+                                //USN already proved that this exact FRN existed. Index an
+                                //identity-safe placeholder immediately (including protected
+                                //files), then fill size/time away from the ordered queue.
+                                var createHint = e.Frn != 0
+                                    ? new NodeMetadataSnapshot(
+                                        (FileAttributes)e.NtfsAttributes, 0,
+                                        DateTime.MinValue)
+                                    : (NodeMetadataSnapshot?)null;
+                                var node = GetOrAddNew(e.FullPath, createHint);
+                                if (e.Frn != 0)
+                                    QueueMetadataRefresh(e.FullPath, e.Frn);
                                 RecordStructuralNode(node);
                                 List<TaskCompletionSource<INode>> tcs = null;
                                 lock (OnFileCreated)
@@ -2094,7 +2159,7 @@ namespace search.Models
                                     //result returns here carrying the expected node identity,
                                     //so a delete/rename/recreate that won the race cannot be
                                     //overwritten by stale metadata.
-                                    QueueMetadataRefresh(e.FullPath);
+                                    QueueMetadataRefresh(e.FullPath, e.Frn);
                                     break;
                                 }
                                 var snapshot = e.MetadataSnapshot.Value;
@@ -2127,16 +2192,38 @@ namespace search.Models
                                     break;
                                 }
                                 var oldRoot = files.TryGetValue(e.OldFullPath, out var indexedOld) ? indexedOld : null;
+                                var renameFrn = e.Frn != 0 ? e.Frn : oldRoot?.Frn ?? 0;
+                                //USN keeps supplying the exact FRN on every later event.
+                                //Only a path-only FileSystemWatcher rename needs the new
+                                //path-backed nodes themselves to retain old MFT identities.
+                                var storedRenameFrn = e.Frn == 0 ? renameFrn : 0;
+                                var renameHint = oldRoot != null
+                                    ? NodeMetadataSnapshot.From(oldRoot)
+                                    : e.Frn != 0
+                                        ? new NodeMetadataSnapshot(
+                                            (FileAttributes)e.NtfsAttributes, 0,
+                                            DateTime.MinValue)
+                                        : (NodeMetadataSnapshot?)null;
                                 if (oldRoot?.IsDirectory == true || HasArchiveChildren(oldRoot))
                                 {
                                     var removedTree = RemoveTree(e.OldFullPath);
-                                    var added = ReindexRenamedTree(e.OldFullPath, e.FullPath, removedTree);
+                                    var added = ReindexRenamedTree(e.OldFullPath,
+                                        e.FullPath, removedTree, renameHint,
+                                        storedRenameFrn,
+                                        preserveDescendantFrns: e.Frn == 0);
+                                    if (renameFrn != 0)
+                                        QueueMetadataRefresh(e.FullPath, renameFrn);
                                     RecordStructuralNodes(removedTree.Concat(added));
                                 }
                                 else
                                 {
                                     //Remove first so a same-directory rename nets to zero on the shared ancestors
-                                    RecordStructuralNodes(new[] { Remove(e.OldFullPath), GetOrAddNew(e.FullPath) });
+                                    var removed = Remove(e.OldFullPath);
+                                    var added = GetOrAddNew(e.FullPath, renameHint,
+                                        storedRenameFrn);
+                                    if (renameFrn != 0)
+                                        QueueMetadataRefresh(e.FullPath, renameFrn);
+                                    RecordStructuralNodes(new[] { removed, added });
                                 }
                                 break;
                             case WatcherChangeTypes.Deleted:

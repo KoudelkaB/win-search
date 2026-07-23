@@ -169,6 +169,20 @@ namespace search.Tests
         }
 
         [Fact]
+        public void ExactUsnEchoReplacesAPathOnlyDuplicate()
+        {
+            var appEcho = new FsEvent(WatcherChangeTypes.Created, @"C:\asset.png");
+            var usn = new FsEvent(WatcherChangeTypes.Created, @"c:\ASSET.png",
+                frn: 0x0007_00000000002A, ntfsAttributes: 0x20);
+
+            var result = FSChangeProcessor.CoalesceChangedEvents(new[] { appEcho, usn });
+
+            Assert.Same(usn, Assert.Single(result));
+            Assert.Equal(0x0007_00000000002AUL, result[0].Frn);
+            Assert.Equal(0x20u, result[0].NtfsAttributes);
+        }
+
+        [Fact]
         public void FilesystemEventsDefaultToConservativeDirectoryDeletion()
         {
             var watcherDelete = new FsEvent(WatcherChangeTypes.Deleted, @"C:\tree");
@@ -212,6 +226,24 @@ namespace search.Tests
             Assert.Single(result);
             Assert.Same(newest, result[0]);
             Assert.Equal((ulong)30, result[0].MetadataSnapshot.Value.Size);
+        }
+
+        [Fact]
+        public void RawChangesDoNotCoalesceAcrossDeferredMetadataResults()
+        {
+            var node = (INode)new FileNode(@"C:\metadata-race.test",
+                new NodeMetadataSnapshot(false, 10, DateTime.MinValue));
+            var rawBefore = new FsEvent(WatcherChangeTypes.Changed, node.FullName,
+                frn: 0x0007_00000000002A);
+            var snapshot = FsEvent.MetadataResult(node.FullName, node,
+                new NodeMetadataSnapshot(false, 20, DateTime.MinValue), 2);
+            var rawAfter = new FsEvent(WatcherChangeTypes.Changed, node.FullName,
+                frn: 0x0007_00000000002A);
+
+            var result = FSChangeProcessor.CoalesceChangedEvents(
+                new[] { rawBefore, snapshot, rawAfter });
+
+            Assert.Equal(new[] { rawBefore, snapshot, rawAfter }, result);
         }
 
         [Fact]

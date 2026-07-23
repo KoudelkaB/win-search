@@ -215,6 +215,15 @@ namespace search.Models
             {
                 if (e?.ChangeType == WatcherChangeTypes.Changed && e.FullPath != null)
                 {
+                    if (pending.TryGetValue(e.FullPath, out var priorChange)
+                        && priorChange.IsMetadataResult != e.IsMetadataResult)
+                    {
+                        //A disk invalidation and the snapshot produced for an earlier
+                        //invalidation are not interchangeable. Preserve their order:
+                        //otherwise a late snapshot can swallow a newer USN change, or a
+                        //new change can discard a snapshot already needed by the model.
+                        Flush();
+                    }
                     if (!pending.ContainsKey(e.FullPath)) order.Add(e.FullPath);
                     pending[e.FullPath] = e; //last notification carries the final on-disk state
                     continue;
@@ -234,6 +243,13 @@ namespace search.Models
                         || !string.Equals(prior.FullPath, e.FullPath,
                             StringComparison.OrdinalIgnoreCase))
                         result.Add(e);
+                    else if ((prior.Frn == 0 && e.Frn != 0)
+                        || (!prior.DescendantDeletesReported
+                            && e.DescendantDeletesReported))
+                        //An app echo can arrive immediately before the journal's exact
+                        //version of the same operation. Preserve the richer identity and
+                        //recursive-delete completeness without duplicating the mutation.
+                        result[result.Count - 1] = e;
                 }
             }
             Flush();

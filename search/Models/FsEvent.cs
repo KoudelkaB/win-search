@@ -22,28 +22,32 @@ namespace search.Models
         /// delete/rename may be the only event for the whole subtree.
         /// </summary>
         public bool DescendantDeletesReported { get; }
-        internal NodeMetadataSnapshot? MetadataSnapshot { get; private set; }
-        internal INode MetadataNode { get; private set; }
-        internal long MetadataReadMs { get; private set; }
-        internal bool IsMetadataResult => MetadataSnapshot.HasValue;
+        /// <summary>
+        /// Exact NTFS file reference (sequence + MFT entry) when the event came from
+        /// the USN journal. Zero for FileSystemWatcher and app-echo events.
+        /// </summary>
+        public ulong Frn { get; }
+        /// <summary>FILE_ATTRIBUTE_* bits carried by an NTFS USN record.</summary>
+        public uint NtfsAttributes { get; }
+        internal virtual NodeMetadataSnapshot? MetadataSnapshot => null;
+        internal virtual INode MetadataNode => null;
+        internal virtual long MetadataReadMs => 0;
+        internal bool IsMetadataResult => this is MetadataFsEvent;
 
         public FsEvent(WatcherChangeTypes changeType, string fullPath, string oldFullPath = null,
-            bool descendantDeletesReported = false)
+            bool descendantDeletesReported = false, ulong frn = 0, uint ntfsAttributes = 0)
         {
             ChangeType = changeType;
             FullPath = fullPath;
             OldFullPath = oldFullPath;
             DescendantDeletesReported = descendantDeletesReported;
+            Frn = frn;
+            NtfsAttributes = ntfsAttributes;
         }
 
         internal static FsEvent MetadataResult(string path, INode expectedNode,
             NodeMetadataSnapshot snapshot, long readMs)
-            => new FsEvent(WatcherChangeTypes.Changed, path)
-            {
-                MetadataNode = expectedNode,
-                MetadataSnapshot = snapshot,
-                MetadataReadMs = readMs
-            };
+            => new MetadataFsEvent(path, expectedNode, snapshot, readMs);
 
         public static FsEvent From(FileSystemEventArgs e) => e is RenamedEventArgs r
             ? new FsEvent(e.ChangeType, e.FullPath, r.OldFullPath)
@@ -52,5 +56,29 @@ namespace search.Models
         public override string ToString() => OldFullPath == null
             ? $"{ChangeType} {FullPath}"
             : $"{ChangeType} {OldFullPath} -> {FullPath}";
+
+        /// <summary>
+        /// Only deferred refresh results pay for the 24-byte snapshot, node identity
+        /// and timing. Raw watcher/USN events dominate bursts and remain compact.
+        /// </summary>
+        sealed class MetadataFsEvent : FsEvent
+        {
+            readonly NodeMetadataSnapshot snapshot;
+            readonly INode node;
+            readonly long readMs;
+
+            public MetadataFsEvent(string path, INode node,
+                NodeMetadataSnapshot snapshot, long readMs)
+                : base(WatcherChangeTypes.Changed, path)
+            {
+                this.node = node;
+                this.snapshot = snapshot;
+                this.readMs = readMs;
+            }
+
+            internal override NodeMetadataSnapshot? MetadataSnapshot => snapshot;
+            internal override INode MetadataNode => node;
+            internal override long MetadataReadMs => readMs;
+        }
     }
 }

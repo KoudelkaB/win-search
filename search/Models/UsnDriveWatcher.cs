@@ -190,7 +190,8 @@ namespace search.Models
                     //recursive delete. Mark that completeness guarantee so SearchModel does
                     //not rescan the entire million-node index for each directory record.
                     Process(new FsEvent(WatcherChangeTypes.Deleted, path,
-                        descendantDeletesReported: true));
+                        descendantDeletesReported: true, frn: r.Frn,
+                        ntfsAttributes: r.Attributes));
                 }
                 //A ghost's create never resolved, so nothing was indexed - nothing to
                 //prune. Same when the index holds nothing under the last known path while
@@ -215,9 +216,11 @@ namespace search.Models
                     return;
                 }
                 ghosts.Remove(r.Frn);
-                if (oldPath == null) Process(new FsEvent(WatcherChangeTypes.Created, newPath)); //Moved in from an unindexed place
+                if (oldPath == null) Process(new FsEvent(WatcherChangeTypes.Created,
+                    newPath, frn: r.Frn, ntfsAttributes: r.Attributes)); //Moved in from an unindexed place
                 else if (!string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
-                    Process(new FsEvent(WatcherChangeTypes.Renamed, newPath, oldPath));
+                    Process(new FsEvent(WatcherChangeTypes.Renamed, newPath, oldPath,
+                        frn: r.Frn, ntfsAttributes: r.Attributes));
                 Remap(r.Frn, newPath);
                 return;
             }
@@ -245,7 +248,8 @@ namespace search.Models
                 //event observes the final on-disk metadata when the serialized handler runs.
                 if (!createdSeen.Add(r.Frn)) return;
                 ghosts.Remove(r.Frn);
-                Process(new FsEvent(WatcherChangeTypes.Created, path));
+                Process(new FsEvent(WatcherChangeTypes.Created, path,
+                    frn: r.Frn, ntfsAttributes: r.Attributes));
                 Remap(r.Frn, path);
                 return;
             }
@@ -261,7 +265,8 @@ namespace search.Models
                 changed = live;
             }
             changed ??= PathFromRecord(r);
-            if (changed != null) Process(new FsEvent(WatcherChangeTypes.Changed, changed));
+            if (changed != null) Process(new FsEvent(WatcherChangeTypes.Changed, changed,
+                frn: r.Frn, ntfsAttributes: r.Attributes));
         }
 
         /// <summary>
