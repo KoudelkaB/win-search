@@ -180,5 +180,8 @@ while leaving any key pressed</value></data>
   <data name="Unzip archive" xml:space="preserve"><value>Unzip archive</value></data>
   <data name="Zip selected" xml:space="preserve"><value>Zip selected</value></data>
   <data name="Call 7z.exe" xml:space="preserve"><value>Use 7z.exe</value></data>
+  <data name="Show next selected item" xml:space="preserve"><value>Show next selected item</value></data>
+  <data name="Show previous selected item" xml:space="preserve"><value>Show previous selected item</value></data>
+  <data name="ShowSelectedTooltip" xml:space="preserve"><value>Show next selected item (Ctrl+J); hold Shift for the previous item</value></data>
   <data name="Selected" xml:space="preserve"><value>Selected</value></data>
 </root>

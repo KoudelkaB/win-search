@@ -771,6 +771,35 @@ namespace search.Tests
             int firstSelectedIndex, int remainingCount, int expected)
             => Assert.Equal(expected, MainWindow.SelectionContinuationIndex(firstSelectedIndex, remainingCount));
 
+        [Theory]
+        [InlineData(0, -1, -1, false, -1)]
+        [InlineData(3, 1, -1, false, 1)] //First jump reveals the active selected row
+        [InlineData(3, 1, -1, true, 1)]
+        [InlineData(3, -1, -1, false, 0)] //Without an active row use the visual boundary
+        [InlineData(3, -1, -1, true, 2)]
+        [InlineData(3, -1, 1, false, 2)]
+        [InlineData(3, -1, 2, false, 0)]  //Forward wrap
+        [InlineData(3, -1, 0, true, 2)]   //Backward wrap
+        public void SelectedItemJumpCyclesInCurrentVisualOrder(
+            int selectedCount, int activeIndex, int lastJumpIndex, bool reverse, int expected)
+            => Assert.Equal(expected, MainWindow.SelectionCycleTargetIndex(
+                selectedCount, activeIndex, lastJumpIndex, reverse));
+
+        [Fact]
+        public void SelectedItemCycleRecoversItsCursorAfterGridPublication()
+        {
+            var first = new object();
+            var lastVisited = new object();
+            var third = new object();
+
+            //The cached index 1 now contains a different row. Identity lookup must recover
+            //the last visited row at its new index so the next jump continues from there.
+            Assert.Equal(2, MainWindow.SelectionCycleItemIndex(
+                new[] { third, first, lastVisited }, lastVisited, cachedIndex: 1));
+            Assert.Equal(-1, MainWindow.SelectionCycleItemIndex(
+                new[] { third, first }, lastVisited, cachedIndex: 1));
+        }
+
         [Fact]
         public void NodeOfAVanishedPathReportsNotExisting()
         {

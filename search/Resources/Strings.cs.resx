@@ -40,4 +40,7 @@ a ponechte libovolnou klávesu stisknutou</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Dohánění živých výsledků...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→grid {0:0} ms  |  UI {1:0} ms  |  Propsání FS {2:0} ms  |  Fronta {3} (nejstarší {4:0} ms)  |  Obnovení {5:0} ms  |  CPU {6:0.0} jader  |  RAM {7:0} MB</value></data>
   <data name="Selected" xml:space="preserve"><value>Vybráno</value></data>
+  <data name="Show next selected item" xml:space="preserve"><value>Zobrazit dal&#353;&#237; vybranou polo&#382;ku</value></data>
+  <data name="Show previous selected item" xml:space="preserve"><value>Zobrazit p&#345;edchoz&#237; vybranou polo&#382;ku</value></data>
+  <data name="ShowSelectedTooltip" xml:space="preserve"><value>Zobrazit dal&#353;&#237; vybranou polo&#382;ku (Ctrl+J); se Shiftem p&#345;edchoz&#237;</value></data>
 </root>

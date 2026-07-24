@@ -43,6 +43,16 @@ namespace search
             private set => SetValue(SelectedCountProperty, value);
         }
 
+        public static readonly DependencyProperty SelectedCycleInfoProperty =
+            DependencyProperty.Register(nameof(SelectedCycleInfo), typeof(string), typeof(MainWindow),
+                new PropertyMetadata(""));
+
+        public string SelectedCycleInfo
+        {
+            get => (string)GetValue(SelectedCycleInfoProperty);
+            private set => SetValue(SelectedCycleInfoProperty, value);
+        }
+
         Filters filters = new Filters();
         SearchTerms searchTerms = new SearchTerms();
         public ObservableCollection<PinnedFilter> PinnedFilters { get; } = new();
@@ -64,6 +74,12 @@ namespace search
         TextBlock inlineRenameDisplay;
         bool finishingInlineRename;
         bool elevationForegroundRestored;
+        bool restoringSelection;
+        bool preserveSelectionCycleOnFocus;
+        INode activeSelectedNode;
+        INode lastSelectionJumpTarget;
+        INode[] selectedCycleOrder;
+        int selectedCycleIndex = -1;
         INode[] newFolderTargets;
         bool newFolderOverwrite;
         string contextTargetColumn;
@@ -228,6 +244,10 @@ namespace search
                     (Key.C, "Copy", (n,a) => Copy(n,a)),
                     (Key.D, "Filter Directores of selected", async (n,a) => await FilterFolders(n.Select(x => Model.GetParent(x)).ToArray())),
                     (Key.F, "Filter selected Folders", async (n,a) => await FilterFolders(n.Where(n => n.IsDirectory).ToArray())),
+                    (Key.J, "Show next selected item", n => n.AtLeast(1), (n,a) => JumpToSelected(reverse: false)),
+                    (Key.LeftShift, "SHIFT", new CommandTree[] {
+                        (Key.J, "Show previous selected item", n => n.AtLeast(1), (n,a) => JumpToSelected(reverse: true))
+                    }),
                     (Key.N, "Create new folders in selected", (n,a) => NewFolders(n,a),Enter("folder name")),
                     (Key.V, "Paste (choose action)", async (n,a) => await PasteWithDialog(n)),
                     (Key.X, "Cut", (n,a) => Copy(n,a,true))
@@ -246,6 +266,7 @@ namespace search
             filesView.SelectionChanged += (o, e) =>
             {
                 SelectedCount = filesView.SelectedItems.Count;
+                if (!restoringSelection) SelectionChanged(e);
                 filesViewCmd.OnChange();
             };
 
@@ -270,46 +291,63 @@ namespace search
             var restoreKeyboardFocus = false;
             Model.BeforeItemsExchange = () =>
             {
+                restoringSelection = true;
                 selected = filesView.SelectedItems.Cast<INode>().ToArray();
-                selectedStart = selected.Select(filesView.Items.IndexOf)
-                    .Where(i => i >= 0).DefaultIfEmpty(-1).Min();
-                restoreKeyboardFocus = filesView.IsKeyboardFocusWithin;
-                focused = restoreKeyboardFocus
-                    ? (ItemsControl.ContainerFromElement(filesView, Keyboard.FocusedElement as DependencyObject)
-                        as ListViewItem)?.DataContext as INode
-                    : null;
+                selectedStart = FirstSelectedItemIndex(selected);
+                focused = (ItemsControl.ContainerFromElement(filesView, Keyboard.FocusedElement as DependencyObject)
+                    as ListViewItem)?.DataContext as INode;
+                restoreKeyboardFocus = focused != null;
             };
             Model.AfterItemsExchange = () =>
             {
-                var survivors = selected?.Where(filesView.Items.Contains).ToArray() ?? Array.Empty<INode>();
-                if (survivors.Length > 0) filesView.Select(survivors);
-
-                if (restoreKeyboardFocus)
+                var survivors = Array.Empty<INode>();
+                try
                 {
-                    var focusTarget = focused != null && filesView.Items.Contains(focused)
-                        ? focused
-                        : survivors.OrderBy(filesView.Items.IndexOf).FirstOrDefault();
+                    survivors = SelectionSurvivors(selected);
+                    if (survivors.Length > 0) filesView.Select(survivors);
 
-                    //All selected rows disappeared (typically a completed delete). Keep the
-                    //keyboard caret at the block's old first index, which now contains the
-                    //next row; at the end of the list fall back to the preceding row.
-                    if (focusTarget == null && selected?.Length > 0)
+                    if (restoreKeyboardFocus)
                     {
-                        var continuation = SelectionContinuationIndex(selectedStart, filesView.Items.Count);
-                        if (continuation >= 0)
+                        var focusedSurvivor = focused != null && filesView.Items.Contains(focused)
+                            ? focused
+                            : null;
+
+                        if (focusedSurvivor != null)
                         {
-                            focusTarget = filesView.Items[continuation] as INode;
-                            filesView.SelectedItem = focusTarget;
+                            activeSelectedNode = focusedSurvivor;
+                            //Collection publication must never move the viewport. Restore the
+                            //keyboard action item only when its row is already realized there.
+                            FocusFileRow(
+                                focusedSurvivor,
+                                scroll: false,
+                                preserveSelectionCycle: true);
+                        }
+                        //All selected rows disappeared (typically a completed delete). Keep the
+                        //keyboard caret at the block's old first index, which now contains the
+                        //next row; at the end of the list fall back to the preceding row.
+                        else if (survivors.Length == 0 && selected?.Length > 0)
+                        {
+                            var continuation = SelectionContinuationIndex(selectedStart, filesView.Items.Count);
+                            if (continuation >= 0)
+                            {
+                                var focusTarget = filesView.Items[continuation] as INode;
+                                filesView.SelectedItem = focusTarget;
+                                activeSelectedNode = focusTarget;
+                                if (focusTarget != null) FocusFileRow(focusTarget);
+                            }
                         }
                     }
-                    if (focusTarget != null) FocusFileRow(focusTarget);
                 }
-
-                selected = null;
-                focused = null;
-                selectedStart = -1;
-                restoreKeyboardFocus = false;
-                UpdateFolderColumnWidth();
+                finally
+                {
+                    selected = null;
+                    focused = null;
+                    selectedStart = -1;
+                    restoreKeyboardFocus = false;
+                    restoringSelection = false;
+                    ReconcileSelectionCycleAfterPublication(survivors);
+                    UpdateFolderColumnWidth();
+                }
             };
             Model.UIRefreshRequested += () => Dispatcher.Invoke(() =>
             {
@@ -346,14 +384,190 @@ namespace search
                 ? -1
                 : Math.Min(firstSelectedIndex, remainingCount - 1);
 
-        void FocusFileRow(INode node)
+        int FirstSelectedItemIndex(INode[] selected)
+        {
+            if (selected == null || selected.Length == 0) return -1;
+            if (selected.Length <= 4)
+                return selected.Select(filesView.Items.IndexOf)
+                    .Where(index => index >= 0)
+                    .DefaultIfEmpty(-1)
+                    .Min();
+
+            var selectedSet = new HashSet<object>(selected, ReferenceEqualityComparer.Instance);
+            for (var index = 0; index < filesView.Items.Count; index++)
+                if (selectedSet.Contains(filesView.Items[index])) return index;
+            return -1;
+        }
+
+        INode[] SelectionSurvivors(INode[] selected)
+        {
+            if (selected == null || selected.Length == 0) return Array.Empty<INode>();
+            if (selected.Length <= 4)
+                return selected.Where(filesView.Items.Contains).ToArray();
+
+            //For a large multi-selection avoid Selected × Items IndexOf/Contains work.
+            //The published grid is capped at 100k, so this stays linear and the temporary
+            //set is proportional to the selection rather than to the multi-million index.
+            var selectedSet = new HashSet<object>(selected, ReferenceEqualityComparer.Instance);
+            return filesView.Items.Cast<INode>().Where(selectedSet.Contains).ToArray();
+        }
+
+        internal static int SelectionCycleTargetIndex(
+            int selectedCount, int activeIndex, int lastJumpIndex, bool reverse)
+        {
+            if (selectedCount <= 0) return -1;
+            if (lastJumpIndex >= 0 && lastJumpIndex < selectedCount)
+                return (lastJumpIndex + (reverse ? -1 : 1) + selectedCount) % selectedCount;
+            if (activeIndex >= 0 && activeIndex < selectedCount) return activeIndex;
+            return reverse ? selectedCount - 1 : 0;
+        }
+
+        internal static int SelectionCycleItemIndex<T>(
+            IReadOnlyList<T> items, T target, int cachedIndex) where T : class
+        {
+            if (target == null || items == null) return -1;
+            if (cachedIndex >= 0 && cachedIndex < items.Count &&
+                ReferenceEquals(items[cachedIndex], target))
+            {
+                return cachedIndex;
+            }
+            for (var index = 0; index < items.Count; index++)
+                if (ReferenceEquals(items[index], target)) return index;
+            return -1;
+        }
+
+        void SelectionChanged(SelectionChangedEventArgs e)
+        {
+            if (filesView.SelectedItems.Count == 0)
+            {
+                activeSelectedNode = null;
+            }
+            else
+            {
+                var added = e.AddedItems.OfType<INode>().LastOrDefault();
+                if (added != null)
+                    activeSelectedNode = added;
+                else if (activeSelectedNode != null && !filesView.SelectedItems.Contains(activeSelectedNode))
+                    activeSelectedNode = null;
+            }
+            ResetSelectionCycle();
+        }
+
+        void ResetSelectionCycle()
+        {
+            lastSelectionJumpTarget = null;
+            InvalidateSelectionCycleOrder();
+        }
+
+        void InvalidateSelectionCycleOrder()
+        {
+            selectedCycleOrder = null;
+            selectedCycleIndex = -1;
+            SelectedCycleInfo = "";
+        }
+
+        void ReconcileSelectionCycleAfterPublication(INode[] survivors)
+        {
+            if (lastSelectionJumpTarget == null)
+            {
+                InvalidateSelectionCycleOrder();
+                return;
+            }
+
+            //SelectionSurvivors already returns visual order for larger selections. For the
+            //common small selection, sorting at most four references avoids allocating/scanning
+            //a 100k-row cycle array merely to retain the cursor across a live update.
+            selectedCycleOrder = survivors.Length <= 4
+                ? survivors.OrderBy(filesView.Items.IndexOf).ToArray()
+                : survivors;
+            selectedCycleIndex = SelectionCycleItemIndex(
+                selectedCycleOrder, lastSelectionJumpTarget, cachedIndex: -1);
+            if (selectedCycleIndex < 0)
+            {
+                ResetSelectionCycle();
+                return;
+            }
+            SelectedCycleInfo =
+                $" · {selectedCycleIndex + 1:N0}/{selectedCycleOrder.Length:N0}";
+        }
+
+        void ListViewItem_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is not ListViewItem { DataContext: INode node } ||
+                !filesView.SelectedItems.Contains(node))
+            {
+                return;
+            }
+
+            var activeChanged = !ReferenceEquals(activeSelectedNode, node);
+            activeSelectedNode = node;
+            if (activeChanged && !preserveSelectionCycleOnFocus && !restoringSelection)
+                ResetSelectionCycle();
+        }
+
+        void SelectedItems_Click(object sender, RoutedEventArgs e)
+            => JumpToSelected(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+
+        void JumpToSelected(bool reverse)
+        {
+            if (filesView.SelectedItems.Count == 0)
+            {
+                ResetSelectionCycle();
+                return;
+            }
+
+            if (selectedCycleOrder == null)
+            {
+                var selected = new HashSet<object>(
+                    filesView.SelectedItems.Cast<object>(), ReferenceEqualityComparer.Instance);
+                selectedCycleOrder = filesView.Items.Cast<INode>()
+                    .Where(selected.Contains)
+                    .ToArray();
+            }
+            if (selectedCycleOrder.Length == 0)
+            {
+                ResetSelectionCycle();
+                return;
+            }
+
+            var lastIndex = SelectionCycleItemIndex(
+                selectedCycleOrder, lastSelectionJumpTarget, selectedCycleIndex);
+            var activeIndex = lastIndex >= 0 || activeSelectedNode == null
+                ? -1
+                : Array.FindIndex(selectedCycleOrder, node => ReferenceEquals(node, activeSelectedNode));
+            var targetIndex = SelectionCycleTargetIndex(
+                selectedCycleOrder.Length, activeIndex, lastIndex, reverse);
+            if (targetIndex < 0) return;
+
+            var target = selectedCycleOrder[targetIndex];
+            selectedCycleIndex = targetIndex;
+            lastSelectionJumpTarget = target;
+            activeSelectedNode = target;
+            SelectedCycleInfo = $" · {targetIndex + 1:N0}/{selectedCycleOrder.Length:N0}";
+            FocusFileRow(target, preserveSelectionCycle: true);
+        }
+
+        void FocusFileRow(INode node, bool scroll = true, bool preserveSelectionCycle = false)
         {
             bool TryFocus()
             {
                 if (!filesView.Items.Contains(node)) return true;
-                filesView.ScrollIntoView(node);
+                if (scroll) filesView.ScrollIntoView(node);
                 if (filesView.ItemContainerGenerator.ContainerFromItem(node) is not ListViewItem row) return false;
-                row.Focus(); //Updates WPF's keyboard action item used as the next SHIFT anchor
+                RequestBringIntoViewEventHandler suppressBringIntoView = (_, args) => args.Handled = true;
+                preserveSelectionCycleOnFocus = preserveSelectionCycle;
+                if (!scroll)
+                    row.AddHandler(FrameworkElement.RequestBringIntoViewEvent, suppressBringIntoView, true);
+                try
+                {
+                    row.Focus(); //Updates WPF's keyboard action item used as the next SHIFT anchor
+                }
+                finally
+                {
+                    if (!scroll)
+                        row.RemoveHandler(FrameworkElement.RequestBringIntoViewEvent, suppressBringIntoView);
+                    preserveSelectionCycleOnFocus = false;
+                }
                 return true;
             }
 
@@ -1992,6 +2206,17 @@ namespace search
                 ReferenceEquals(e.OriginalSource, inlineActionTextBox) ||
                 e.OriginalSource is TextBox { DataContext: PinnedFilter { IsEditing: true } })
                 return;
+
+            var modifiers = Keyboard.Modifiers;
+            if (filesView.IsKeyboardFocusWithin && e.Key == Key.J &&
+                (modifiers == ModifierKeys.Control ||
+                 modifiers == (ModifierKeys.Control | ModifierKeys.Shift)))
+            {
+                if (!e.IsRepeat) JumpToSelected(modifiers.HasFlag(ModifierKeys.Shift));
+                e.Handled = true;
+                return;
+            }
+
             //ALT command chords work window-wide through the global commander - the same tree,
             //hints and behavior as in the result list (which feeds its own commander instead)
             if (!filesView.IsKeyboardFocusWithin)
@@ -2026,20 +2251,25 @@ namespace search
                     if (filesView.IsKeyboardFocusWithin && filesViewCmd.IsReceivingCommandKeys) return;
                     //Let the suggestion popup close itself first
                     if (filterTextBox.IsListOpen || findTextBox.IsListOpen) return;
+                    if (filesView.IsKeyboardFocusWithin && filesView.SelectedItems.Count > 0)
+                    {
+                        filesView.UnselectAll();
+                        e.Handled = true;
+                        return;
+                    }
                     //Escape from current directory level up
                     filterTextBox.Text = new NodeFilter(filterTextBox.Text).Up().ToString();
                     break;
                 case Key.Home:
-                    //Do not break caret navigation/selection in text boxes
                     if (!filesView.IsKeyboardFocusWithin) return;
-                    filterTextBox.Home();
-                    filterTextBox.Focus();
-                    break;
+                    ScrollResultsToBoundary(end: false);
+                    e.Handled = true;
+                    return;
                 case Key.End:
                     if (!filesView.IsKeyboardFocusWithin) return;
-                    filterTextBox.End();
-                    filterTextBox.Focus();
-                    break;
+                    ScrollResultsToBoundary(end: true);
+                    e.Handled = true;
+                    return;
                 case Key.Left:
                     if (Keyboard.Modifiers != ModifierKeys.Control) return;
                     filters.Add2History(filterTextBox.Text);
@@ -2706,6 +2936,35 @@ namespace search
             return null;
         }
 
+        static T FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        {
+            if (parent == null) return null;
+            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, index);
+                if (child is T match) return match;
+                var nested = FindVisualChild<T>(child);
+                if (nested != null) return nested;
+            }
+            return null;
+        }
+
+        void ScrollResultsToBoundary(bool end)
+        {
+            bool TryScroll()
+            {
+                filesView.ApplyTemplate();
+                var viewer = FindVisualChild<ScrollViewer>(filesView);
+                if (viewer == null) return false;
+                if (end) viewer.ScrollToBottom();
+                else viewer.ScrollToTop();
+                return true;
+            }
+
+            //The ScrollViewer may not exist before the first layout pass.
+            if (!TryScroll()) Dispatcher.BeginInvoke(() => TryScroll(), DispatcherPriority.Loaded);
+        }
+
         /// <summary>
         /// Make one realized row re-read every value it displays. INode raises no change
         /// notifications, and the row's DataContext alone does not reach the cells: a GridView
@@ -3351,13 +3610,16 @@ namespace search
                         await Model.Update(newSort: newSort);
                         var updateMs = watch.ElapsedMilliseconds;
                         ShowSortIndicator(newSort);
+                        ResetSelectionCycle();
 
                         // ListView updates are rendered after this handler yields to the
                         // dispatcher. Keep the wait cursor until that render has completed.
                         // Loaded runs right after the pending layout/render pass; ContextIdle
                         // sits BELOW Background, so it starved behind queued background
                         // publishes during FS activity and held the cursor for seconds.
-                        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
+                        await Dispatcher.InvokeAsync(
+                            () => ScrollResultsToBoundary(end: false),
+                            DispatcherPriority.Loaded);
                         $"column sort {newSort}: update {updateMs} ms, render {watch.ElapsedMilliseconds - updateMs} ms".Debug();
                     }
                 }
