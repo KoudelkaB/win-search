@@ -28,4 +28,10 @@ Escriba texto y pulse `Enter`. `UTF-8` y `UTF-16` buscan texto; `HEX` busca byte
 - `Ctrl+C`, `Ctrl+X`, `Ctrl+V` copian, cortan y pegan; `F2`, `F3`, `F4` renombran, muestran y editan.
 - `O` / `A` abre / abre como administrador; `U` / `Z` extrae / crea un archivo.
 
+## Eliminación y restauración
+
+`Delete` intenta primero mover cada carpeta seleccionada completa a la Papelera. Si un elemento bloqueado o inaccesible lo impide, la aplicación continúa con las subcarpetas más grandes posibles y finalmente con archivos individuales. Los elementos que no se puedan eliminar y las carpetas superiores necesarias permanecen en su sitio.
+
+Los elementos de la Papelera conservan sus atributos y ubicación original. Use **Restaurar** en vez de copiarlos manualmente; después de una operación parcial, el árbol puede aparecer como varias entradas. `Shift+Delete` aplica el mismo método de forma permanente y elimina el atributo `Solo lectura` cuando sea necesario.
+
 `›` indica un submenú; `Backspace` retrocede y `Esc` cancela la secuencia.

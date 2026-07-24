@@ -2114,18 +2114,8 @@ namespace search
                         {
                             if (permanently || n is ZipNode)
                                 n.Delete();
-                            else if (n.IsDirectory)
-                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
-                                    n.FullName,
-                                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
-                                    Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
                             else
-                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
-                                    n.FullName,
-                                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
-                                    Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+                                n.Recycle();
                             Models.Extensions.EchoDeleted(n);
                         }
                         catch (Exception ex)

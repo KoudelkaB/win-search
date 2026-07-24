@@ -28,4 +28,10 @@ Wpisz tekst i naciśnij `Enter`. `UTF-8` i `UTF-16` szukają tekstu; `HEX` szuka
 - `Ctrl+C`, `Ctrl+X`, `Ctrl+V` kopiują, wycinają i wklejają; `F2`, `F3`, `F4` zmieniają nazwę, wyświetlają i edytują.
 - `O` / `A` otwiera / otwiera jako administrator; `U` / `Z` rozpakowuje / tworzy archiwum.
 
+## Usuwanie i przywracanie
+
+`Delete` najpierw próbuje przenieść każdy wybrany folder do Kosza jako całość. Jeśli uniemożliwia to zablokowany lub niedostępny element, aplikacja przechodzi do możliwie największych podfolderów, a na końcu do pojedynczych plików. Elementy, których nie można usunąć, oraz niezbędne foldery nadrzędne pozostają na miejscu.
+
+Elementy w Koszu zachowują atrybuty i pierwotne położenie. Użyj **Przywróć** zamiast ręcznego kopiowania; po częściowej operacji drzewo może być widoczne jako kilka wpisów. `Shift+Delete` działa tak samo, ale usuwa trwale i w razie potrzeby zdejmuje atrybut `Tylko do odczytu`.
+
 `›` oznacza podmenu, `Backspace` wraca, a `Esc` anuluje sekwencję.

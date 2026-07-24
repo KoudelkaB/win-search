@@ -56,6 +56,12 @@ Do pole **Hledat** napište text a stiskněte `Enter`. `UTF-8` a `UTF-16` hledaj
 
 Zelená znamená nalezený obsah, červená nenalezený obsah, černá neprohledanou položku a modrá složku.
 
+## Mazání a obnovení
+
+`Delete` nejprve zkusí přesunout každou vybranou složku do Koše jako jeden celek. Pokud operaci blokuje zamčená nebo nepřístupná položka, aplikace pokračuje po největších možných podsložkách a nakonec jednotlivých souborech. Neodstranitelné položky a nutné nadřazené složky zůstanou na místě; chyby se oznámí až po zpracování dostupných sourozenců.
+
+Položky v Koši si zachovávají atributy a původní umístění. Pro návrat použijte v Koši příkaz **Obnovit**, nikoli ruční kopírování. Po částečné operaci může být původní strom v Koši rozdělen do několika položek, ale **Obnovit** je vrátí do původních cest. `Shift+Delete` používá stejný postup trvale a v případě potřeby odstraní atribut `Jen pro čtení`; zamčené a nepřístupné položky zůstanou.
+
 ## Nejdůležitější klávesy
 
 - `Enter` – filtrovat do vybraných složek.

@@ -28,4 +28,10 @@ Saisissez un texte puis `Enter`. `UTF-8` et `UTF-16` cherchent du texte ; `HEX` 
 - `Ctrl+C`, `Ctrl+X`, `Ctrl+V` copient, coupent et collent ; `F2`, `F3`, `F4` renommnent, affichent et modifient.
 - `O` / `A` ouvre / ouvre en administrateur ; `U` / `Z` extrait / crée une archive.
 
+## Suppression et restauration
+
+`Delete` tente d’abord de placer chaque dossier sélectionné entier dans la Corbeille. Si un élément verrouillé ou inaccessible l’empêche, l’application continue avec les plus grands sous-dossiers possibles, puis avec les fichiers individuels. Les éléments impossibles à supprimer et les dossiers parents nécessaires restent en place.
+
+Les éléments de la Corbeille conservent leurs attributs et leur emplacement d’origine. Utilisez **Restaurer** plutôt qu’une copie manuelle ; après une opération partielle, l’arborescence peut apparaître sous forme de plusieurs entrées. `Shift+Delete` suit la même méthode définitivement et retire l’attribut `Lecture seule` si nécessaire.
+
 `›` indique un sous-menu, `Backspace` revient en arrière et `Esc` annule une séquence.

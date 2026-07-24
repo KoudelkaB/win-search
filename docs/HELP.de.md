@@ -28,4 +28,10 @@ Text eingeben und `Enter` drücken. `UTF-8` und `UTF-16` suchen Text, `HEX` such
 - `Ctrl+C`, `Ctrl+X`, `Ctrl+V`: Kopieren, Ausschneiden, Einfügen; `F2`, `F3`, `F4`: Umbenennen, anzeigen, bearbeiten.
 - `O` / `A`: öffnen / als Administrator; `U` / `Z`: entpacken / Archiv erzeugen.
 
+## Löschen und Wiederherstellen
+
+`Delete` versucht zunächst, jeden ausgewählten Ordner als Ganzes in den Papierkorb zu verschieben. Wird dies durch ein gesperrtes oder unzugängliches Element verhindert, fährt die Anwendung mit den größtmöglichen Unterordnern und schließlich einzelnen Dateien fort. Nicht löschbare Elemente und ihre benötigten übergeordneten Ordner bleiben erhalten.
+
+Elemente im Papierkorb behalten ihre Attribute und ihren ursprünglichen Speicherort. Verwenden Sie **Wiederherstellen** statt manuellem Kopieren; nach einem Teilvorgang kann der Baum aus mehreren Papierkorbeinträgen bestehen. `Shift+Delete` arbeitet ebenso, löscht jedoch endgültig und entfernt bei Bedarf das Attribut `Schreibgeschützt`.
+
 `›` bedeutet Untermenü; `Backspace` geht zurück und `Esc` bricht eine Tastensequenz ab.

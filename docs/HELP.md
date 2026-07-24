@@ -113,6 +113,14 @@ The context menu adapts to the current selection:
 - **Unzip** is shown for supported archive selections.
 - **Move to Recycle Bin** performs recoverable deletion.
 
+### Deletion and recovery
+
+Deletion first attempts each selected file or folder as one fast operation. If a locked, inaccessible, or otherwise undeletable item prevents a whole folder operation, File Search Manager continues with the largest removable subtrees and then individual files. Items that still cannot be removed—and the parent folders required to contain them—remain in place. Errors are reported after all reachable siblings have been attempted.
+
+`Delete` sends every successfully processed item to the Recycle Bin and preserves its attributes and original location. A partial operation can appear as several Recycle Bin entries because intact subfolders are kept together whenever possible and only blocked parts are split further. Use the Recycle Bin's **Restore** command, rather than manually copying its entries, to return every item to its original path.
+
+`Shift+Delete` uses the same best-effort traversal but deletes permanently. It clears the `ReadOnly` attribute wherever necessary; this behavior is general and is not limited to Git repositories. Files locked against deletion and paths denied by filesystem permissions remain and are included in the final error report.
+
 Directory drops and `Ctrl+V` show an action chooser. Existing-name conflicts offer overwrite, skip, automatic rename, and apply-to-all behavior. Transfers show item progress and can be cancelled between top-level operations.
 
 ## Target Basket

@@ -19,7 +19,7 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 - Export and import pinned filters and the complete target basket as one JSON settings file.
 - Standard `Ctrl+C`, `Ctrl+X`, and `Ctrl+V` shell-compatible clipboard operations.
 - Collision handling with overwrite, skip, rename, and apply-to-all choices.
-- Transfer progress, cancellation, and normal deletion through the Recycle Bin.
+- Transfer progress and cancellation, plus restore-friendly best-effort deletion through the Recycle Bin.
 - Dynamic **Open with** menu for installed compatible applications, including diff tools, 7-Zip, browsers, editors, and Ghostscript-family viewers.
 - ZIP and 7z creation, archive extraction, and browsing of supported archive contents.
 - Persistent filter/search history and window layout under `%LOCALAPPDATA%\win-search`.
@@ -46,6 +46,8 @@ winget install BohdanKoudelka.FileSearchManager
 6. Use the right-click menu, drag-and-drop, standard clipboard shortcuts, or commands shown in the **Hints** panel.
 
 Press `F1` anywhere to open the complete keyboard help. Press `F12` to refresh the NTFS index; both shortcuts are always shown in **Hints**, including while the result grid has focus.
+
+Deletion first attempts each selected folder as one fast operation. If a locked or inaccessible item prevents that, File Search Manager continues with the largest removable subtrees and leaves only the blocked items and their required parent folders. Recycle Bin items retain their attributes and original locations; use **Restore** to put a partially recycled tree back. `Shift+Delete` uses the same best-effort behavior permanently and clears the `ReadOnly` attribute when necessary.
 
 The user interface follows the Windows display language. English is used as a fallback; Czech, German, French, Spanish, and Polish are also included.
 

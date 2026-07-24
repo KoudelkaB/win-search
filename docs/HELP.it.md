@@ -21,3 +21,9 @@ Usare le virgolette per percorsi con spazi. `Ctrl+Left` e `Ctrl+Right` percorron
 ## Ricerca e tasti
 
 Inserire testo e premere `Enter`. `UTF-8` e `UTF-16` cercano testo; `HEX` cerca byte come `48 65 6C 6C 6F`. `Delete` elimina, `F2` rinomina, `O` apre, `U` estrae e `Z` crea un archivio. `›` apre un sottomenu, `Backspace` torna indietro e `Esc` annulla.
+
+## Eliminazione e ripristino
+
+`Delete` tenta prima di spostare ogni cartella selezionata interamente nel Cestino. Se un elemento bloccato o inaccessibile lo impedisce, l’applicazione continua con le sottocartelle più grandi possibili e infine con i singoli file. Gli elementi non eliminabili e le cartelle superiori necessarie rimangono al loro posto.
+
+Gli elementi nel Cestino conservano attributi e posizione originale. Usa **Ripristina** invece della copia manuale; dopo un’operazione parziale l’albero può comparire come più elementi. `Shift+Delete` usa lo stesso metodo in modo permanente e rimuove l’attributo `Sola lettura` quando necessario.

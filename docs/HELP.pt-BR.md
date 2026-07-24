@@ -21,3 +21,9 @@ Use aspas para caminhos com espaços. `Ctrl+Left` e `Ctrl+Right` percorrem o his
 ## Pesquisa e teclas
 
 Digite o texto e pressione `Enter`. `UTF-8` e `UTF-16` procuram texto; `HEX` procura bytes como `48 65 6C 6C 6F`. `Delete` exclui, `F2` renomeia, `O` abre, `U` extrai e `Z` cria arquivo. `›` abre submenu, `Backspace` volta e `Esc` cancela.
+
+## Exclusão e restauração
+
+`Delete` primeiro tenta mover cada pasta selecionada inteira para a Lixeira. Se um item bloqueado ou inacessível impedir a operação, o aplicativo continua com as maiores subpastas possíveis e, por fim, com arquivos individuais. Os itens que não puderem ser excluídos e as pastas superiores necessárias permanecem no lugar.
+
+Os itens na Lixeira mantêm seus atributos e local original. Use **Restaurar** em vez de copiar manualmente; após uma operação parcial, a árvore pode aparecer como várias entradas. `Shift+Delete` usa o mesmo método permanentemente e remove o atributo `Somente leitura` quando necessário.
