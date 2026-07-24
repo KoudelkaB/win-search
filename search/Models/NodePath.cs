@@ -239,26 +239,30 @@ namespace search.Models
             return hash;
         }
 
+        internal static bool KeyEquals(object a, object b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a is string sa)
+                return b is string sb
+                    ? string.Equals(sa, sb, StringComparison.OrdinalIgnoreCase)
+                    : b is INode nb && PathEquals(nb, sa);
+            if (a is INode na)
+                return b is string s ? PathEquals(na, s) : b is INode n && PathEquals(na, n);
+            return false;
+        }
+
+        internal static int KeyHashCode(object key) => key switch
+        {
+            string s => (int)HashChars(FnvSeed, s),
+            INode n => HashPath(n),
+            _ => 0
+        };
+
         sealed class PathKeyComparer : IEqualityComparer<object>
         {
-            public new bool Equals(object a, object b)
-            {
-                if (ReferenceEquals(a, b)) return true;
-                if (a is string sa)
-                    return b is string sb
-                        ? string.Equals(sa, sb, StringComparison.OrdinalIgnoreCase)
-                        : b is INode nb && PathEquals(nb, sa);
-                if (a is INode na)
-                    return b is string s ? PathEquals(na, s) : b is INode n && PathEquals(na, n);
-                return false;
-            }
+            public new bool Equals(object a, object b) => KeyEquals(a, b);
 
-            public int GetHashCode(object key) => key switch
-            {
-                string s => (int)HashChars(FnvSeed, s),
-                INode n => HashPath(n),
-                _ => 0
-            };
+            public int GetHashCode(object key) => KeyHashCode(key);
         }
 
         // ------------------------------------------------------------------

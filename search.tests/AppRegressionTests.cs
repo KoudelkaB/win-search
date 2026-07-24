@@ -45,6 +45,32 @@ namespace search.Tests
             => Assert.Equal(deferred, SearchModel.DefersLoadingBatch(loading, changes));
 
         [Fact]
+        public void DriveScanRequestsCoalesceReasonsWithoutLosingRequestsDuringAScan()
+        {
+            var requests = new DriveScanRequestAccumulator();
+            Assert.True(requests.Add(DriveScanReason.Startup));
+            Assert.False(requests.Add(DriveScanReason.UsnHardLinkChange));
+            Assert.False(requests.Add(DriveScanReason.UsnHardLinkChange));
+
+            var first = requests.Snapshot();
+            Assert.Equal(3, first.Total);
+            Assert.Equal(1, first.Reasons[DriveScanReason.Startup]);
+            Assert.Equal(2, first.Reasons[DriveScanReason.UsnHardLinkChange]);
+
+            //A request arriving after the snapshot is not consumed by that scan.
+            Assert.False(requests.Add(DriveScanReason.UsnHistoryLost));
+            Assert.False(requests.Complete(first));
+
+            var rerun = requests.Snapshot();
+            Assert.Equal(1, rerun.Total);
+            Assert.Equal(1, rerun.Reasons[DriveScanReason.UsnHistoryLost]);
+            Assert.True(requests.Complete(rerun));
+
+            //The next independent request must start a fresh per-drive worker.
+            Assert.True(requests.Add(DriveScanReason.Retry));
+        }
+
+        [Fact]
         public void OlderSizeBatchCannotConsumeANewerChangeOfTheSameDirectory()
         {
             var directory = (INode)new KeyNode(1);

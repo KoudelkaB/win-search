@@ -15,6 +15,63 @@ using System.Buffers;
 
 namespace search.Models
 {
+    internal readonly record struct DriveScanRequestBatch(
+        int Total,
+        IReadOnlyDictionary<DriveScanReason, int> Reasons)
+    {
+        public string Summary => string.Join(", ", Reasons
+            .OrderBy(pair => pair.Key)
+            .Select(pair => $"{pair.Key}={pair.Value}"));
+    }
+
+    /// <summary>
+    /// Coalesces scan requests arriving before or during one full-drive snapshot. Completing
+    /// a captured batch consumes only those requests; anything arriving while the scan runs
+    /// remains pending and causes exactly one authoritative rerun with all reasons preserved.
+    /// </summary>
+    internal sealed class DriveScanRequestAccumulator
+    {
+        readonly object gate = new();
+        readonly Dictionary<DriveScanReason, int> reasons = new();
+        int total;
+
+        /// <returns>True only for the request that must start the per-drive worker.</returns>
+        public bool Add(DriveScanReason reason)
+        {
+            lock (gate)
+            {
+                var start = total == 0;
+                total++;
+                reasons[reason] = reasons.TryGetValue(reason, out var count) ? count + 1 : 1;
+                return start;
+            }
+        }
+
+        public DriveScanRequestBatch Snapshot()
+        {
+            lock (gate)
+                return new DriveScanRequestBatch(total,
+                    new Dictionary<DriveScanReason, int>(reasons));
+        }
+
+        /// <returns>True when no request arrived after the supplied snapshot.</returns>
+        public bool Complete(DriveScanRequestBatch batch)
+        {
+            lock (gate)
+            {
+                total -= batch.Total;
+                foreach (var pair in batch.Reasons)
+                {
+                    if (!reasons.TryGetValue(pair.Key, out var count)) continue;
+                    count -= pair.Value;
+                    if (count <= 0) reasons.Remove(pair.Key);
+                    else reasons[pair.Key] = count;
+                }
+                return total == 0;
+            }
+        }
+    }
+
     class SearchModel : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler PropertyChanged;
@@ -1155,18 +1212,9 @@ namespace search.Models
             //A freshly published MFT shard already owns a dense immutable node array.
             //Reuse it directly: no 2M-entry dictionary walk, list allocation or reference copy.
             if (files.TryGetDenseSnapshot(out var dense)) return dense;
-            //NonBlocking.ConcurrentDictionary.Values eagerly copies the entire dictionary
-            //inside one non-cancellable call. Its live enumerator lets a superseding user
-            //sort stop this copy every few thousand nodes. Ordinary membership changes are
-            //replayed from the query delta journal; only an MFT shard replacement retries.
-            var result = new List<INode>(files.Count);
-            var seen = 0;
-            foreach (var pair in files)
-            {
-                if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
-                result.Add(pair.Value);
-            }
-            return result;
+            //A watcher mutation shadows the immutable base with a tiny delta. Merge it over
+            //the retained dense arrays rather than walking/copying a million-entry hash map.
+            return files.CopySnapshot(isCanceled);
         }
 
         /// <summary>
@@ -2050,8 +2098,9 @@ namespace search.Models
             FSChangeProcessor.Lookup = FindByPath;
             FSChangeProcessor.ReconcileDirs = ReconcileDirectories;
             StartMetadataRefreshWorkers();
-            FSChangeProcessor.Run(async d => await InitFromNTFS(d)
-            , async events =>
+            FSChangeProcessor.Run(
+                (drive, reason) => { _ = InitFromNTFS(drive, reason); },
+                async events =>
             {
                 //Mutate the index in event order, but publish the complete watcher batch once.
                 //Reference sets collapse a hot file's repeated notifications to one grid row.
@@ -2216,7 +2265,8 @@ namespace search.Models
                                 //paths (1601 times, empty sizes) - rescan the drive instead.
                                 if (IsDriveRoot(e.OldFullPath) || IsDriveRoot(e.FullPath))
                                 {
-                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
+                                        DriveScanReason.MalformedRootRename);
                                     break;
                                 }
                                 var oldRoot = files.TryGetValue(e.OldFullPath, out var indexedOld) ? indexedOld : null;
@@ -2260,7 +2310,8 @@ namespace search.Models
                                 //really vanished drive is handled by its own scan, never from here
                                 if (IsDriveRoot(e.FullPath))
                                 {
-                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath));
+                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
+                                        DriveScanReason.MalformedRootDelete);
                                     break;
                                 }
                                 pendingDeletes.Add(e);
@@ -2584,7 +2635,8 @@ namespace search.Models
 
         // Per-drive pending scan requests - each drive loads and publishes independently, so a
         // hung network walk can never gate an NTFS drive's results or block its refresh
-        readonly NonBlocking.ConcurrentDictionary<string, int[]> driveRequests = new(StringComparer.OrdinalIgnoreCase);
+        readonly NonBlocking.ConcurrentDictionary<string, DriveScanRequestAccumulator> driveRequests =
+            new(StringComparer.OrdinalIgnoreCase);
         // Per-drive load origin for the status tooltip - survives across scans
         readonly NonBlocking.ConcurrentDictionary<string, MftOrigin> origins = new(StringComparer.OrdinalIgnoreCase);
         readonly ConcurrentDictionary<string, string> unavailableDrives = new(StringComparer.OrdinalIgnoreCase);
@@ -2606,11 +2658,11 @@ namespace search.Models
         /// drive are coalesced into a single scan; different drives scan independently, so a
         /// slow or hung drive (dead network mapping, SSHFS walk) only ever costs itself.
         /// </summary>
-        Task InitFromNTFS(string root)
+        Task InitFromNTFS(string root, DriveScanReason reason)
         {
-            var pending = driveRequests.GetOrAdd(root, _ => new int[1]);
+            var pending = driveRequests.GetOrAdd(root, _ => new DriveScanRequestAccumulator());
             //The already queued/running scan of this drive covers this request too
-            if (Interlocked.Increment(ref pending[0]) > 1) return Task.CompletedTask;
+            if (!pending.Add(reason)) return Task.CompletedTask;
             return Task.Run(async () =>
             {
                 BeginDriveScan();
@@ -2623,8 +2675,10 @@ namespace search.Models
                         activeDriveScans[root] = scanCts;
                         var scanToken = scanCts.Token;
                         await Task.Delay(500); //Batch the burst of watcher (re)starts
-                        var requested = Volatile.Read(ref pending[0]);
-                        $"drive {root} scan started (covering {requested} requests)".Debug();
+                        var requested = pending.Snapshot();
+                        var requestSummary = requested.Summary;
+                        $"drive {root} scan started (covering {requested.Total} requests: {requestSummary})".Debug();
+                        await Log($"Drive {root} scan started: requests={requested.Total}; reasons={requestSummary}");
                         var key = root.TrimEnd(Path.DirectorySeparatorChar);
                         var streamed = 0L;
                         var drivePublished = false;
@@ -2636,7 +2690,7 @@ namespace search.Models
                         try
                         {
                             scanToken.ThrowIfCancellationRequested();
-                            var fresh = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
+                            var prepared = DriveNodeIndex.Empty;
                             IFrnNodeSource frnNodes = null;
                             IReadOnlyList<INode> denseNodes = null;
                             var drive = new DriveInfo(root);
@@ -2689,25 +2743,18 @@ namespace search.Models
                                 frnNodes = entries as IFrnNodeSource;
                                 mftTiming = frnNodes?.LoadTiming;
                                 denseNodes = frnNodes?.DenseNodes;
-                                //MFT results know their exact live count. Allocate the final
-                                //shard at its target capacity once instead of walking every
-                                //power-of-two LOH resize on the way there.
-                                if (entries.TryGetNonEnumeratedCount(out var entryCount) && entryCount > 0)
-                                    fresh = new NonBlocking.ConcurrentDictionary<object, INode>(
-                                        Environment.ProcessorCount, entryCount, NodePath.KeyComparer);
-                                //The node itself is the key - no full path string is ever built or stored.
-                                //A dense MFT result is already fully materialized, so build its large
-                                //path hash table across every CPU instead of serializing 1.8M inserts.
+                                //The scan is almost entirely immutable. Build one compact table
+                                //containing only dense-array indexes; live mutations use a small overlay.
                                 phase.Restart();
-                                streamed = PopulateDriveIndex(fresh, entries, denseNodes, scanToken);
+                                (prepared, streamed) = PrepareDriveIndex(entries, denseNodes, scanToken);
                                 indexMs = phase.ElapsedMilliseconds;
                                 origins[key] = origin;
                                 scanToken.ThrowIfCancellationRequested();
                                 phase.Restart();
-                                drivePublished = PublishDrive(root, fresh, streamed, frnNodes, denseNodes);
+                                drivePublished = PublishDrive(root, prepared, streamed, frnNodes);
                                 publishMs = phase.ElapsedMilliseconds;
-                                timingNodes = fresh.Count;
-                                ReportDriveState(root, $"loaded {fresh.Count} entries via {origin}");
+                                timingNodes = prepared.Count;
+                                ReportDriveState(root, $"loaded {prepared.Count} entries via {origin}");
                                 streamed = 0; //Deducted from the loading counter at the publish
                             }
                             else
@@ -2718,7 +2765,7 @@ namespace search.Models
                                     CancelDriveRetry(root);
                                     unavailableDrives.TryRemove(key, out _);
                                     origins.TryRemove(key, out _);
-                                    drivePublished = PublishDrive(root, fresh); //Explicitly disabled => prune stale entries
+                                    drivePublished = PublishDrive(root, prepared); //Explicitly disabled => prune stale entries
                                     ReportDriveState(root, skip);
                                 }
                             }
@@ -2773,8 +2820,10 @@ namespace search.Models
                             TaskScheduler.Default);
 
                         //Quit when no new request for this drive arrived during the scan
-                        if (Interlocked.CompareExchange(ref pending[0], 0, requested) == requested) return;
-                        $"drive {root} scan rerun: {Volatile.Read(ref pending[0]) - requested} new requests arrived during the scan".Debug();
+                        if (pending.Complete(requested)) return;
+                        var rerun = pending.Snapshot();
+                        $"drive {root} scan rerun: {rerun.Total} requests arrived during the scan ({rerun.Summary})".Debug();
+                        await Log($"Drive {root} scan rerun queued: requests={rerun.Total}; reasons={rerun.Summary}");
                     }
                 }
                 finally
@@ -2817,7 +2866,7 @@ namespace search.Models
                     //an offline share therefore does not make the status bar pulse forever.
                     var ready = false;
                     try { ready = DriveAvailability.IsReady(new DriveInfo(root)); } catch { }
-                    if (ready) FSChangeProcessor.RefreshDrive(root);
+                    if (ready) FSChangeProcessor.RefreshDrive(root, DriveScanReason.Retry);
                     else ScheduleDriveRetry(root);
                 }
             });
@@ -2868,64 +2917,36 @@ namespace search.Models
                 CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted
                     | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
-        long PopulateDriveIndex(NonBlocking.ConcurrentDictionary<object, INode> target,
+        (DriveNodeIndex.PreparedDrive Index, long Streamed) PrepareDriveIndex(
             IEnumerable<INode> nodes, IReadOnlyList<INode> denseNodes,
             CancellationToken cancellationToken)
         {
-            if (denseNodes != null)
+            IEnumerable<INode> source = denseNodes ?? nodes;
+            if (!source.TryGetNonEnumeratedCount(out var count))
             {
-                var count = denseNodes.Count;
-                if (count == 0) return 0;
-                var workers = Math.Max(1, Environment.ProcessorCount);
-                var rangeSize = Math.Max(4096, (count + workers * 8 - 1) / (workers * 8));
-                long denseReported = 0;
-                try
+                var materialized = new List<INode>();
+                var seen = 0;
+                foreach (var node in source)
                 {
-                    Parallel.ForEach(Partitioner.Create(0, count, rangeSize),
-                        new ParallelOptions { CancellationToken = cancellationToken }, range =>
-                    {
-                        for (var i = range.Item1; i < range.Item2; i++)
-                        {
-                            var node = denseNodes[i];
-                            target[node] = node;
-                        }
-                        //Progress is informational; publish once per range instead of one
-                        //contended atomic operation for every MFT record.
-                        var completed = range.Item2 - range.Item1;
-                        Interlocked.Add(ref denseReported, completed);
-                        Interlocked.Add(ref loadingNodes, completed);
-                    });
+                    if ((seen++ & 0x0FFF) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    materialized.Add(node);
                 }
-                catch
-                {
-                    Interlocked.Add(ref loadingNodes, -Volatile.Read(ref denseReported));
-                    throw;
-                }
-                return count;
+                source = materialized;
+                denseNodes ??= materialized;
+                count = materialized.Count;
             }
 
-            //Directory walks are lazy and cannot be partitioned without buffering. Keep
-            //streaming them, but update the progress counter in cache-friendly batches.
-            const int ProgressBatch = 4096;
-            long total = 0, reported = 0;
+            if (count == 0) return (DriveNodeIndex.Empty, 0);
+            Interlocked.Add(ref loadingNodes, count);
             try
             {
-                foreach (var node in nodes)
-                {
-                    if ((total & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
-                    target[node] = node;
-                    total++;
-                    if (total - reported < ProgressBatch) continue;
-                    Interlocked.Add(ref loadingNodes, ProgressBatch);
-                    reported += ProgressBatch;
-                }
-                cancellationToken.ThrowIfCancellationRequested();
-                Interlocked.Add(ref loadingNodes, total - reported);
-                return total;
+                var index = DriveNodeIndex.PrepareDrive(source, denseNodes, cancellationToken);
+                return (index, count);
             }
             catch
             {
-                Interlocked.Add(ref loadingNodes, -reported);
+                Interlocked.Add(ref loadingNodes, -count);
                 throw;
             }
         }
@@ -2935,13 +2956,12 @@ namespace search.Models
         /// replaced by the fresh scan while all other drives' entries stay untouched. A finished
         /// drive shows immediately - a fast MFT drive never waits on the slowest drive's walk.
         /// </summary>
-        bool PublishDrive(string root, NonBlocking.ConcurrentDictionary<object, INode> fresh,
-            long streamed = 0, IEnumerable<INode> frnNodes = null,
-            IReadOnlyList<INode> denseNodes = null)
+        bool PublishDrive(string root, DriveNodeIndex.PreparedDrive prepared,
+            long streamed = 0, IEnumerable<INode> frnNodes = null)
         {
             //Nothing new and nothing indexed under the drive => skip the subtree swap
             //(the common case for skipped/deselected drives on every refresh)
-            if (fresh.IsEmpty && !files.ContainsKey(root))
+            if (prepared.IsEmpty && !files.ContainsKey(root))
             {
                 Interlocked.Add(ref loadingNodes, -streamed);
                 return false;
@@ -2951,9 +2971,9 @@ namespace search.Models
                 BeginBulkFilesMutation();
                 try
                 {
-                    //The completed scan already is the final per-drive hash table. Publish it
-                    //by replacing one shard instead of copying every node to a second map.
-                    files.ReplaceDrive(root, fresh, denseNodes);
+                    //The completed immutable set was prepared outside the publication lock.
+                    //Publish it by replacing one shard; live changes start in a fresh overlay.
+                    files.ReplaceDrive(root, prepared);
                     //files counts the streamed nodes from this very moment => deduct them from the
                     //streaming counter in the same breath, or the loading status double-counts them
                     //for as long as the archive re-add and exe recompute below take
@@ -2979,7 +2999,7 @@ namespace search.Models
                 .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
             //MFT nodes carry their file reference numbers - hand them to the drive's USN
             //watcher so deleted/renamed files resolve to paths (journal records have no names)
-            FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? fresh.Values);
+            FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? prepared.Values);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
             return true;
         }
@@ -3042,7 +3062,9 @@ namespace search.Models
             // Clean freed memory
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             if (health?.SuspendAutomaticGridUpdates == true) refreshPending = true;
-            else UIRefreshRequested?.Invoke();
+            //dataRefreshPublished already emitted the collection Reset (or proved the
+            //published identities unchanged). A second full Items.Refresh here only repeats
+            //WPF layout/virtualization after every drive scan; bound status values use INPC.
         }
 
         async Task Log(string text)

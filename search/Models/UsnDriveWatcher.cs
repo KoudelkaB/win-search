@@ -25,7 +25,7 @@ namespace search.Models
     {
         readonly UsnJournal journal;
         readonly Func<FsEvent, Task> process; //Enqueue into the drive's serialized queue
-        readonly Action rescan;                 //Journal history lost => rescan this drive
+        readonly Action<DriveScanReason> rescan; //Journal ambiguity => rescan this drive
         readonly Action<UsnDriveWatcher> dead;  //Journal unreadable for good => switch the drive to a watcher
         readonly FrnMap frnMap = new();
         readonly object exactRescanLock = new();
@@ -53,7 +53,8 @@ namespace search.Models
         /// </summary>
         public bool ReportsCompleteDirectoryDeletes => !IsDead && hasBaselineMap;
 
-        UsnDriveWatcher(UsnJournal journal, Func<FsEvent, Task> process, Action rescan, Action<UsnDriveWatcher> dead)
+        UsnDriveWatcher(UsnJournal journal, Func<FsEvent, Task> process,
+            Action<DriveScanReason> rescan, Action<UsnDriveWatcher> dead)
         {
             this.journal = journal;
             this.process = process;
@@ -74,7 +75,8 @@ namespace search.Models
         /// system (e.g. no unprivileged-read FSCTL on older Windows 10) - the caller must
         /// then swap this watcher for a FileSystemWatcher.
         /// </summary>
-        public static UsnDriveWatcher TryStart(string root, Func<FsEvent, Task> process, Action rescan, Action<UsnDriveWatcher> dead)
+        public static UsnDriveWatcher TryStart(string root, Func<FsEvent, Task> process,
+            Action<DriveScanReason> rescan, Action<UsnDriveWatcher> dead)
         {
             try
             {
@@ -134,7 +136,7 @@ namespace search.Models
                     $"USN journal on {journal.Root} lost history => rescan".Debug();
                     hasBaselineMap = false;
                     frnMap.Clear(); //Stale beyond repair - the rescan repopulates it
-                    try { rescan(); } catch { }
+                    try { rescan(DriveScanReason.UsnHistoryLost); } catch { }
                     continue;
                 }
                 if (batch.Count == 0)
@@ -313,7 +315,7 @@ namespace search.Models
                     if (!stop) try
                     {
                         $"USN hard-link changes on {journal.Root} => exact MFT size rebuild".Debug();
-                        rescan();
+                        rescan(DriveScanReason.UsnHardLinkChange);
                     }
                     catch { }
                 }, null, Timeout.Infinite, Timeout.Infinite);

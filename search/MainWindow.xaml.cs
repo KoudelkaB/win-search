@@ -395,7 +395,8 @@ namespace search
             //Refresh only roots whose effective selection changed. Refreshing every drive
             //made a quick S: toggle start two unrelated 25-second C: MFT scans.
             if (dialog.ShowDialog() == true)
-                foreach (var root in dialog.ChangedRoots) FSChangeProcessor.RefreshDrive(root);
+                foreach (var root in dialog.ChangedRoots)
+                    FSChangeProcessor.RefreshDrive(root, DriveScanReason.DriveSelection);
         }
 
         void PinFilter_Click(object sender, RoutedEventArgs e)

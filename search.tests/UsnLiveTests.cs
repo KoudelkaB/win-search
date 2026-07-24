@@ -43,7 +43,8 @@ namespace search.Tests
             var reconcile = FSChangeProcessor.ReconcileDirs;
             FSChangeProcessor.Lookup = _ => null; //Empty index - deletes cannot resolve through the map
             FSChangeProcessor.ReconcileDirs = dirs => { foreach (var d in dirs) reconciled.Enqueue(d); return Task.CompletedTask; };
-            var watcher = UsnDriveWatcher.TryStart(root, e => { events.Enqueue(e); return Task.CompletedTask; }, () => { }, _ => { });
+            var watcher = UsnDriveWatcher.TryStart(root,
+                e => { events.Enqueue(e); return Task.CompletedTask; }, _ => { }, _ => { });
             if (watcher == null)
             {
                 //An NTFS system volume always has a journal - failing to open it there is a bug
@@ -115,7 +116,7 @@ namespace search.Tests
                         && string.Equals(e.FullPath, target, StringComparison.OrdinalIgnoreCase))
                         indexed[e.FullPath] = new FileNode(e.FullPath);
                     return Task.CompletedTask;
-                }, () => { }, _ => { });
+                }, _ => { }, _ => { });
                 if (watcher == null)
                 {
                     Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
@@ -146,9 +147,10 @@ namespace search.Tests
         public async Task HardLinkJournalChangeSchedulesAnExactMftRescan()
         {
             var root = Path.GetPathRoot(Path.GetTempPath());
-            var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var requested = new TaskCompletionSource<DriveScanReason>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             var watcher = UsnDriveWatcher.TryStart(root, _ => Task.CompletedTask,
-                () => requested.TrySetResult(), _ => { });
+                reason => requested.TrySetResult(reason), _ => { });
             if (watcher == null)
             {
                 Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
@@ -168,6 +170,7 @@ namespace search.Tests
 
                 var completed = await Task.WhenAny(requested.Task, Task.Delay(15_000));
                 Assert.Same(requested.Task, completed);
+                Assert.Equal(DriveScanReason.UsnHardLinkChange, await requested.Task);
             }
             finally
             {

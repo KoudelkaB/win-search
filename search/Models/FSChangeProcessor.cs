@@ -9,6 +9,24 @@ using System.Linq;
 namespace search.Models
 {
     /// <summary>
+    /// Why a full drive snapshot was requested. The value is carried through source setup
+    /// into SearchModel so repeated automatic scans can be coalesced and diagnosed.
+    /// </summary>
+    internal enum DriveScanReason
+    {
+        Startup,
+        ManualRefresh,
+        DriveSelection,
+        Retry,
+        UsnHistoryLost,
+        UsnHardLinkChange,
+        UsnFallback,
+        WatcherOverflow,
+        MalformedRootRename,
+        MalformedRootDelete
+    }
+
+    /// <summary>
     /// Watches every drive for file-system changes and feeds them, serialized per drive,
     /// into the model's change handler. NTFS drives are watched through the USN change
     /// journal (kernel-persisted, never drops a change); everything else falls back to
@@ -271,7 +289,7 @@ namespace search.Models
         static long lastReflectionLatencyMs;
         static long lastBatchDurationMs;
         static int lastBatchEventCount;
-        static Action<string> Started;
+        static Action<string, DriveScanReason> Started;
         static Func<FsEvent[], Task> Changed;
         static int started = 0;
 
@@ -294,7 +312,7 @@ namespace search.Models
         /// </summary>
         public static Func<string[], Task> ReconcileDirs = _ => Task.CompletedTask;
 
-        public static bool Run(Action<string> Started, Func<FsEvent[], Task> Changed)
+        public static bool Run(Action<string, DriveScanReason> Started, Func<FsEvent[], Task> Changed)
         {
             // Ensure the following code is run only once
             if (Interlocked.CompareExchange(ref started, 1, 0) != 0) return false;
@@ -305,7 +323,7 @@ namespace search.Models
             //Watch all drives - each on its own task: creating a watcher on a dead network
             //mapping blocks in SMB timeouts and must not delay the local drives behind it
             foreach (var d in DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName).Distinct())
-                Task.Run(() => AddFolder(d));
+                Task.Run(() => AddFolder(d, DriveScanReason.Startup));
             return true;
         }
 
@@ -461,16 +479,16 @@ namespace search.Models
         /// </summary>
         public static void RefreshFromNFT() => DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName)
             .Union(sources.Keys, StringComparer.OrdinalIgnoreCase).ToList()
-            .ForEach(RefreshDrive);
+            .ForEach(root => RefreshDrive(root, DriveScanReason.ManualRefresh));
 
         /// <summary>
         /// Retry one selected drive from the source setup onward. A network mapping that was
         /// temporarily unavailable needs both a new watcher and a new directory scan; retrying
         /// only the scan would load a snapshot that immediately becomes stale.
         /// </summary>
-        public static void RefreshDrive(string root)
+        public static void RefreshDrive(string root, DriveScanReason reason)
         {
-            if (!string.IsNullOrWhiteSpace(root)) Task.Run(() => AddFolder(root));
+            if (!string.IsNullOrWhiteSpace(root)) Task.Run(() => AddFolder(root, reason));
         }
 
         static void DisposeSource(this string path)
@@ -481,7 +499,7 @@ namespace search.Models
             }
         }
 
-        static void AddFolder(string path)
+        static void AddFolder(string path, DriveScanReason reason)
         {
             try
             {
@@ -497,7 +515,7 @@ namespace search.Models
                 //watcher too - USN is an upgrade where available, never a requirement.
                 var source = UsnDriveWatcher.TryStart(path,
                     e => queue.Enqueue(e),
-                    () => { try { Started(path); } catch { } },
+                    rescanReason => { try { Started(path, rescanReason); } catch { } },
                     w => FallBackToWatcher(path, w, queue))
                     ?? CreateWatcher(path, queue);
                 if (source == null) return;
@@ -511,7 +529,7 @@ namespace search.Models
             catch (Exception) { }
             //Request the (re)scan even when watching failed (missing or dead drive) - the
             //scan prunes its stale entries and a later refresh can revive the watcher
-            finally { try { Started(path); } catch { } }
+            finally { try { Started(path, reason); } catch { } }
         }
 
         /// <summary>
@@ -530,7 +548,10 @@ namespace search.Models
                 else watcher.Dispose();
             }
             catch (Exception e) { $"watcher fallback on {path} failed: {e.Message}".Debug(); }
-            finally { try { Started(path); } catch { } } //Rescan bridges the watch gap
+            finally
+            {
+                try { Started(path, DriveScanReason.UsnFallback); } catch { }
+            } //Rescan bridges the watch gap
         }
 
         static IDisposable CreateWatcher(string path, DriveQueue queue)
@@ -552,7 +573,7 @@ namespace search.Models
                 {
                     //Too many changes at once => need to restart watching on the drive given by exception message
                     $"watcher buffer overflow on {path} => restart watcher + rescan".Debug();
-                    AddFolder(path);
+                    AddFolder(path, DriveScanReason.WatcherOverflow);
                 }
                 else $"watcher error on {path}: {ex.Message}".Debug();
             };
