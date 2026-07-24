@@ -31,6 +31,7 @@ namespace search.Models
         readonly object exactRescanLock = new();
         Timer exactRescanTimer;
         volatile bool stop;
+        volatile bool hasBaselineMap;
 
         //A hard-link storm can emit thousands of records. One exact rebuild after a quiet
         //window is both cheaper and more accurate than trying to rescan for every record.
@@ -42,6 +43,15 @@ namespace search.Models
         /// after registering so the fallback can never slip through the gap.
         /// </summary>
         public bool IsDead { get; private set; }
+
+        /// <summary>
+        /// True when the journal is live and its FRN map has been seeded by a complete MFT
+        /// scan. In that state a recursive delete supplies an exact, ordered record for
+        /// every indexed descendant. An app-owned directory delete may therefore remove
+        /// its visible root immediately without conservatively scanning the whole index;
+        /// the journal records remove the descendants that follow.
+        /// </summary>
+        public bool ReportsCompleteDirectoryDeletes => !IsDead && hasBaselineMap;
 
         UsnDriveWatcher(UsnJournal journal, Func<FsEvent, Task> process, Action rescan, Action<UsnDriveWatcher> dead)
         {
@@ -80,7 +90,14 @@ namespace search.Models
         /// FRN; walked FileNodes do not (map stays empty and every record degrades to the
         /// resolve-or-reconcile path, still correct).
         /// </summary>
-        public void Populate(IEnumerable<INode> nodes) => frnMap.Populate(nodes);
+        public void Populate(IEnumerable<INode> nodes)
+        {
+            frnMap.Populate(nodes);
+            //Only the MFT reader supplies a complete FRN-addressable baseline. A walked
+            //fallback collection contains path nodes without file references, so deleted
+            //records may still need conservative parent reconciliation.
+            hasBaselineMap = nodes is IFrnNodeSource;
+        }
 
         void Loop()
         {
@@ -115,6 +132,7 @@ namespace search.Models
                 if (invalid)
                 {
                     $"USN journal on {journal.Root} lost history => rescan".Debug();
+                    hasBaselineMap = false;
                     frnMap.Clear(); //Stale beyond repair - the rescan repopulates it
                     try { rescan(); } catch { }
                     continue;

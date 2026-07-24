@@ -77,6 +77,7 @@ Release all keys</value></data>
   <data name="Error" xml:space="preserve"><value>Error</value></data>
   <data name="CommandFailed" xml:space="preserve"><value>Command failed</value></data>
   <data name="ItemsToFolders" xml:space="preserve"><value>{0} item(s) to {1} folder(s):</value></data>
+  <data name="ItemToFolders" xml:space="preserve"><value>{0} to {1} folder(s):</value></data>
   <data name="LiveUpdatesDelayed" xml:space="preserve"><value>Live result updates delayed ({0:0} ms)</value></data>
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>Live result updates suspended - indexing continues</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Catching up live results...</value></data>

@@ -133,9 +133,14 @@ namespace search.Models
                 }
             }
 
-            public Task Enqueue(FsEvent e, bool priority = false)
+            public Task Enqueue(
+                FsEvent e,
+                bool priority = false,
+                bool trackCompletion = true)
             {
-                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var done = trackCompletion
+                    ? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+                    : null;
                 var queued = new QueuedChange(e, done, Environment.TickCount64);
                 RecordRecent(e, queued.QueuedAt);
                 if (priority)
@@ -153,7 +158,7 @@ namespace search.Models
                     //checking the same deadline. Urgent events always signal above.
                     if (Interlocked.Increment(ref normalCount) == 1) signal.Set();
                 }
-                return done.Task;
+                return done?.Task ?? Task.CompletedTask;
             }
 
             public void SetActiveStage(string stage, string path)
@@ -324,6 +329,19 @@ namespace search.Models
             catch { return path; }
         }
 
+        /// <summary>
+        /// Whether this path is backed by a live NTFS journal with a complete FRN map.
+        /// Such a source reports every descendant of a recursive delete in order, so an
+        /// app echo for the completed directory can be exact instead of triggering the
+        /// FileSystemWatcher-compatible full-index subtree fallback.
+        /// </summary>
+        internal static bool ReportsCompleteDirectoryDeletes(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            return sources.TryGetValue(RootOf(path), out var source)
+                && source is UsnDriveWatcher { ReportsCompleteDirectoryDeletes: true };
+        }
+
         static void RecordCompletedBatch(long reflectionLatencyMs, long durationMs, int eventCount)
         {
             Interlocked.Exchange(ref lastReflectionLatencyMs, reflectionLatencyMs);
@@ -408,13 +426,24 @@ namespace search.Models
             => Changed == null ? Task.CompletedTask : QueueFor(e.FullPath).Enqueue(e, priority: true);
 
         /// <summary>
+        /// Queue app-owned work through the normal coalescing lane without making the
+        /// producer wait for index or grid delivery. Recursive copy uses this for its
+        /// children: the final root echo remains urgent, while thousands of leaf creates
+        /// join the raw watcher/USN burst in a few bulk mutations instead of starving it.
+        /// </summary>
+        internal static Task PostBatched(FsEvent e)
+            => Changed == null
+                ? Task.CompletedTask
+                : QueueFor(e.FullPath).Enqueue(e, trackCompletion: false);
+
+        /// <summary>
         /// Return metadata read off the ordered queue through its normal coalescing lane.
         /// Unlike an app-owned delete this is not user-visible priority work: batching many
         /// fast worker completions prevents a create/build storm from invalidating WPF once
         /// per small worker group.
         /// </summary>
         internal static Task PostDeferredMetadata(FsEvent e)
-            => Changed == null ? Task.CompletedTask : QueueFor(e.FullPath).Enqueue(e);
+            => PostBatched(e);
 
         /// <summary>
         /// Hand one drive's freshly published scan to its USN watcher - fills the file

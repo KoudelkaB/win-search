@@ -57,6 +57,7 @@ namespace search
         INode[] newFolderTargets;
         bool newFolderOverwrite;
         string contextTargetColumn;
+        bool fileOperationInProgress;
         static readonly HashSet<string> ExecutableExtensions = new(
             new[] { ".exe", ".com", ".bat", ".cmd", ".msi", ".ps1", ".vbs", ".vbe",
                     ".js", ".jse", ".wsf", ".wsh", ".msc", ".lnk" }
@@ -80,6 +81,7 @@ namespace search
             TextExtensions.Concat(new[] { ".vb", ".cpp", ".c", ".h", ".hpp", ".js", ".ts",
                                           ".css", ".scss", ".py", ".java", ".vcxproj", ".vbproj" }),
             StringComparer.OrdinalIgnoreCase);
+        static readonly TimeSpan ProgressDialogDelay = TimeSpan.FromSeconds(1);
 
         public MainWindow()
         {
@@ -818,14 +820,21 @@ namespace search
 
         async void BasketTarget_Drop(object sender, DragEventArgs e)
         {
-            if (sender is not FrameworkElement { Tag: BasketTarget target }) return;
+            // Mark the routed drop handled before the first await. Otherwise the async
+            // handler yields and the event bubbles to BasketItemsZone, whose drop action
+            // adds the source directory as a new target.
+            e.Handled = true;
+            if (sender is not FrameworkElement { Tag: BasketTarget target })
+            {
+                e.Effects = DragDropEffects.None;
+                return;
+            }
             ((UIElement)sender).Opacity = 1;
             HideBasketDropOverlay();
             var sources = GetDropSources(e);
             var defaultAction = SuggestedBasketTransferAction(e, sources, new[] { target });
             e.Effects = DropEffectFor(defaultAction);
             await UseBasketTargets(sources, new[] { target }, defaultAction);
-            e.Handled = true;
         }
 
         async void PasteToBasket_Click(object sender, RoutedEventArgs e) => await PasteToBasket();
@@ -935,7 +944,8 @@ namespace search
             var archives = targets.Where(x => x.Kind == BasketTargetKind.Archive).ToArray();
             var executables = targets.Where(x => x.Kind == BasketTargetKind.Executable).ToArray();
             var unsupported = targets.Where(x => x.Kind == BasketTargetKind.File).ToArray();
-            var summary = $"Use {sources.Length} item(s) with {targets.Length} target(s)?\n\n" +
+            var sourceDescription = FileOperationText.DescribeItems(sources);
+            var summary = $"Use {sourceDescription} with {targets.Length} target(s)?\n\n" +
                 (folders.Length > 0 ? $"Folders: {folders.Length}\n" : "") +
                 (archives.Length > 0 ? $"Archives to update: {archives.Length}\n" : "") +
                 (executables.Length > 0 ? $"Programs to start: {executables.Length}\n" : "") +
@@ -952,7 +962,7 @@ namespace search
                 //the chooser dialog belongs to the mouse paths (toolbar button, drop)
                 if (!chooseFolderAction)
                     folderAction = defaultFolderAction;
-                else if (TryChooseTransferAction(sources.Length, folders.Length, defaultFolderAction, out var selectedAction))
+                else if (TryChooseTransferAction(sources, folders.Length, defaultFolderAction, out var selectedAction))
                     folderAction = selectedAction;
                 else
                     return;
@@ -985,7 +995,7 @@ namespace search
                     errors.Add("One or more folder transfers did not complete.");
             }
             Model.Status = errors.Count == 0
-                ? $"Used {sources.Length} item(s) with {targets.Length} target(s)"
+                ? $"Used {sourceDescription} with {targets.Length} target(s)"
                 : $"Target operations completed with {errors.Count} error(s): {string.Join(", ", errors)}";
         }
 
@@ -1583,7 +1593,7 @@ namespace search
             }
             var defaultAction = SuggestedTransferAction(DragModifiers(e), sources, targets);
             e.Effects = CoerceDropEffect(e.AllowedEffects, DropEffectFor(defaultAction));
-            if (!TryChooseTransferAction(sources.Length, targets.Length, defaultAction, out var action))
+            if (!TryChooseTransferAction(sources, targets.Length, defaultAction, out var action))
             {
                 e.Effects = DragDropEffects.None;
                 return;
@@ -1651,12 +1661,12 @@ namespace search
         }
 
         bool TryChooseTransferAction(
-            int sourceCount,
+            string[] sources,
             int destinationCount,
             FileTransferAction defaultAction,
             out FileTransferAction action)
         {
-            var dialog = new FileTransferDialog(sourceCount, destinationCount, defaultAction) { Owner = this };
+            var dialog = new FileTransferDialog(sources, destinationCount, defaultAction) { Owner = this };
             if (dialog.ShowDialog() != true)
             {
                 action = default;
@@ -2088,58 +2098,195 @@ namespace search
             var na = nodes.ToArray();
             if (na.Length == 0)
                 return;
+            if (fileOperationInProgress)
+            {
+                Model.Status = "Another file operation is already running";
+                return;
+            }
+            var itemDescription = FileOperationText.DescribeItems(
+                na.Select(n => n.FullName).ToArray());
             if (!confirm ||
                 MessageBox.Show(
                     permanently
-                        ? $"Permanently delete {na.Length} selected item(s)?"
-                        : $"Move {na.Length} selected item(s) to the Recycle Bin?",
+                        ? $"Permanently delete {itemDescription}?"
+                        : $"Move {itemDescription} to the Recycle Bin?",
                     permanently ? "Permanently delete" : "Recycle",
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
             {
                 ClipBoardCut = false;
                 Model.Status = permanently
-                    ? $"Permanently deleting {na.Length} item(s)"
-                    : $"Moving {na.Length} item(s) to the Recycle Bin";
-                await Task.Yield();
+                    ? $"Permanently deleting {itemDescription}"
+                    : $"Moving {itemDescription} to the Recycle Bin";
+                var verb = permanently ? "Permanently deleting" : "Recycling";
+                var itemWork = na.Select(n => SizeAsWork(n.Size)).ToArray();
+                var totalWork = itemWork.Aggregate(0L, SaturatingAdd);
+                var observation = new DeleteProgressObservation($"{verb} {itemDescription}");
+                var progress = new TransferProgressWindow(
+                    permanently ? "Permanent delete operation" : "Recycle operation")
+                {
+                    Owner = this
+                };
+                progress.SetCancellationAvailable(
+                    na.Length > 1,
+                    "A single recursive delete cannot be interrupted safely.");
+                progress.Begin(totalWork);
+                progress.Observe(
+                    observation.Sample,
+                    completedWork: 0,
+                    maximumWork: totalWork,
+                    currentItem: observation.CurrentItem,
+                    sampleItem: () => observation.CurrentItem);
+                progress.ShowAfter(ProgressDialogDelay);
+                fileOperationInProgress = true;
+
                 //Recursive and shell deletes can take seconds and can themselves produce a
                 //large watcher storm. Keep both the filesystem work and its COM dialogs on a
                 //dedicated STA thread instead of blocking the WPF dispatcher for the entire
                 //operation. The continuation returns to the UI context for the final status.
-                var errors = await RunDeleteSta(() =>
+                (List<string> Errors, int Completed, bool Cancelled) outcome;
+                try
                 {
-                    var result = new List<string>();
-                    foreach (INode n in na)
+                    outcome = await RunDeleteSta(() =>
                     {
-                        try
+                        var result = new List<string>();
+                        var completed = 0;
+                        long completedWork = 0;
+                        var cancelled = false;
+                        for (var index = 0; index < na.Length; index++)
                         {
-                            if (permanently || n is ZipNode)
-                                n.Delete();
-                            else
-                                n.Recycle();
-                            Models.Extensions.EchoDeleted(n);
+                            if (progress.Token.IsCancellationRequested)
+                            {
+                                cancelled = true;
+                                break;
+                            }
+
+                            var n = na[index];
+                            observation.Begin(n, completedWork, itemWork[index], verb);
+                            try
+                            {
+                                if (permanently || n is ZipNode)
+                                    n.Delete();
+                                else
+                                    n.Recycle();
+                                Models.Extensions.EchoDeleted(n);
+                            }
+                            catch (Exception ex)
+                            {
+                                result.Add($"{n.FullName}: {ex.Message}");
+                                //A recursive delete is not transactional: it may remove many
+                                //children before one protected/locked path fails. Those watcher
+                                //events legitimately reduce directory sizes, but the root remains.
+                                //Persist the exact HRESULT and post-failure state so the next report
+                                //distinguishes ACL, read-only/locked files and a partial delete.
+                                var state = $"fileExists={File.Exists(n.FullName)} "
+                                    + $"directoryExists={Directory.Exists(n.FullName)}";
+                                StorageMaintenance.AppendLog("log.txt",
+                                    $"{DateTime.Now} {Thread.CurrentThread.ManagedThreadId} "
+                                    + $"Delete failed permanently={permanently} path={n.FullName} "
+                                    + $"type={ex.GetType().FullName} hresult=0x{ex.HResult:X8} "
+                                    + $"{state}: {ex}{Environment.NewLine}");
+                            }
+                            completed++;
+                            completedWork = SaturatingAdd(completedWork, itemWork[index]);
+                            observation.Complete(completedWork);
                         }
-                        catch (Exception ex)
-                        {
-                            result.Add($"{n.FullName}: {ex.Message}");
-                            //A recursive delete is not transactional: it may remove many
-                            //children before one protected/locked path fails. Those watcher
-                            //events legitimately reduce directory sizes, but the root remains.
-                            //Persist the exact HRESULT and post-failure state so the next report
-                            //distinguishes ACL, read-only/locked files and a partial delete.
-                            var state = $"fileExists={File.Exists(n.FullName)} "
-                                + $"directoryExists={Directory.Exists(n.FullName)}";
-                            StorageMaintenance.AppendLog("log.txt",
-                                $"{DateTime.Now} {Thread.CurrentThread.ManagedThreadId} "
-                                + $"Delete failed permanently={permanently} path={n.FullName} "
-                                + $"type={ex.GetType().FullName} hresult=0x{ex.HResult:X8} "
-                                + $"{state}: {ex}{Environment.NewLine}");
-                        }
-                    }
-                    return result;
-                });
-                Model.Status = errors.Count == 0
-                    ? permanently ? $"Permanently deleted {na.Length} item(s)" : $"Recycled {na.Length} item(s)"
-                    : $"Delete completed with {errors.Count} error(s): {string.Join(", ", errors)}";
+                        return (result, completed, cancelled);
+                    });
+                }
+                finally
+                {
+                    progress.Complete();
+                    fileOperationInProgress = false;
+                }
+
+                Model.Status = outcome.Cancelled
+                    ? $"{(permanently ? "Permanent delete" : "Recycle")} cancelled after "
+                        + $"{outcome.Completed} of {na.Length} item(s)"
+                    : outcome.Errors.Count == 0
+                        ? permanently
+                            ? $"Permanently deleted {itemDescription}"
+                            : $"Recycled {itemDescription}"
+                        : $"Delete completed with {outcome.Errors.Count} error(s): "
+                            + string.Join(", ", outcome.Errors);
+            }
+        }
+
+        sealed class DeleteProgressObservation
+        {
+            readonly object gate = new();
+            long completedWork;
+            long operationWork;
+            string path;
+            string parentPath;
+            ulong pathStartSize;
+            ulong parentStartSize;
+            string currentItem;
+
+            public DeleteProgressObservation(string initialItem) => currentItem = initialItem;
+
+            public string CurrentItem
+            {
+                get
+                {
+                    lock (gate)
+                        return currentItem;
+                }
+            }
+
+            public void Begin(INode node, long completed, long work, string verb)
+            {
+                var itemPath = node.FullName;
+                var itemParent = IOPath.GetDirectoryName(itemPath);
+                var itemParentSize = SearchModel.FindByPath(itemParent)?.Size ?? 0;
+                lock (gate)
+                {
+                    completedWork = completed;
+                    operationWork = work;
+                    path = itemPath;
+                    parentPath = itemParent;
+                    pathStartSize = node.Size;
+                    parentStartSize = itemParentSize;
+                    currentItem = $"{verb}: {itemPath}";
+                }
+            }
+
+            public void Complete(long completed)
+            {
+                lock (gate)
+                {
+                    completedWork = completed;
+                    operationWork = 0;
+                    path = null;
+                    parentPath = null;
+                }
+            }
+
+            public long Sample()
+            {
+                long completed;
+                long maximum;
+                string itemPath;
+                string itemParent;
+                ulong itemStartSize;
+                ulong itemParentStartSize;
+                lock (gate)
+                {
+                    completed = completedWork;
+                    maximum = operationWork;
+                    itemPath = path;
+                    itemParent = parentPath;
+                    itemStartSize = pathStartSize;
+                    itemParentStartSize = parentStartSize;
+                }
+
+                if (itemPath == null || maximum == 0)
+                    return completed;
+                var itemSize = SearchModel.FindByPath(itemPath)?.Size ?? 0;
+                var parentSize = SearchModel.FindByPath(itemParent)?.Size ?? itemParentStartSize;
+                var observed = Math.Max(
+                    PositiveSizeDecrease(itemStartSize, itemSize),
+                    PositiveSizeDecrease(itemParentStartSize, parentSize));
+                return SaturatingAdd(completed, Math.Min(maximum, observed));
             }
         }
 
@@ -2799,7 +2946,7 @@ namespace search
             var defaultAction = clipboardMove
                 ? FileTransferAction.Move
                 : FileTransferAction.Copy;
-            if (!TryChooseTransferAction(paths.Length, destinations.Length, defaultAction, out var action))
+            if (!TryChooseTransferAction(paths, destinations.Length, defaultAction, out var action))
                 return;
             var completed = await TransferPaths(paths, destinations, action);
             if (completed && action == FileTransferAction.Move)
@@ -2838,21 +2985,37 @@ namespace search
                 Model.Status = "Nothing to transfer";
                 return false;
             }
+            if (fileOperationInProgress)
+            {
+                Model.Status = "Another file operation is already running";
+                return false;
+            }
 
-            Model.Status = $"{action}: {paths.Length} item(s) to {destinations.Length} folder(s)";
+            var itemDescription = FileOperationText.DescribeItems(paths);
+            Model.Status = $"{action}: {itemDescription} to {destinations.Length} folder(s)";
             var total = paths.Length * destinations.Length;
-            var progress = new TransferProgressWindow($"{action} file operation", total) { Owner = this };
+            var sourceNodes = paths.Select(SearchModel.FindByPath).ToArray();
+            var sourceWork = paths.Select((path, index) =>
+                CachedTransferWork(path, sourceNodes[index])).ToArray();
+            var workPerDestination = sourceWork.Aggregate(0L, SaturatingAdd);
+            var progress = new TransferProgressWindow($"{action} file operation") { Owner = this };
             var errors = new List<string>();
             var completedCount = 0;
+            long completedWork = 0;
             var skipped = 0;
             var cancelled = false;
-            filesView.IsEnabled = false;
-            progress.Show();
+            progress.Begin(SaturatingMultiply(workPerDestination, destinations.Length));
+            progress.ShowAfter(ProgressDialogDelay);
+            fileOperationInProgress = true;
             try
             {
                 for (var targetIndex = 0; targetIndex < destinations.Length; targetIndex++)
-                foreach (var file in paths)
+                for (var sourceIndex = 0; sourceIndex < paths.Length; sourceIndex++)
                 {
+                    var file = paths[sourceIndex];
+                    var operationWork = sourceWork[sourceIndex];
+                    var sourceIsDirectory = sourceNodes[sourceIndex]?.IsDirectory
+                        ?? Directory.Exists(file);
                     if (cancelled || progress.Token.IsCancellationRequested)
                     {
                         cancelled = true;
@@ -2860,22 +3023,34 @@ namespace search
                     }
                     var destination = IOPath.Combine(destinations[targetIndex],
                         IOPath.GetFileName(file.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)));
-                    if (Directory.Exists(file) && IsDescendant(destination, file))
+                    if (sourceIsDirectory && IsDescendant(destination, file))
                     {
                         errors.Add($"Cannot transfer '{file}' into itself.");
                         completedCount++;
-                        progress.Report(completedCount, file);
+                        completedWork = SaturatingAdd(completedWork, operationWork);
+                        progress.Report(completedWork, file);
                         continue;
                     }
 
                     var overwrite = false;
-                    if (File.Exists(destination) || Directory.Exists(destination))
+                    var destinationExisted = File.Exists(destination) || Directory.Exists(destination);
+                    if (destinationExisted)
                     {
                         var collision = collisionForAll;
                         if (collision == null)
                         {
                             var dialog = new FileCollisionDialog(destination) { Owner = progress };
-                            if (dialog.ShowDialog() != true || dialog.Action == FileCollisionAction.Cancel)
+                            bool? dialogResult;
+                            progress.PauseTiming();
+                            try
+                            {
+                                dialogResult = dialog.ShowDialog();
+                            }
+                            finally
+                            {
+                                progress.ResumeTiming();
+                            }
+                            if (dialogResult != true || dialog.Action == FileCollisionAction.Cancel)
                             {
                                 cancelled = true;
                                 break;
@@ -2888,11 +3063,15 @@ namespace search
                         {
                             skipped++;
                             completedCount++;
-                            progress.Report(completedCount, $"Skipped {destination}");
+                            completedWork = SaturatingAdd(completedWork, operationWork);
+                            progress.Report(completedWork, $"Skipped {destination}");
                             continue;
                         }
                         if (collision == FileCollisionAction.Rename)
-                            destination = UniqueDestination(destination, Directory.Exists(file));
+                        {
+                            destination = UniqueDestination(destination, sourceIsDirectory);
+                            destinationExisted = false;
+                        }
                         else
                             overwrite = collision == FileCollisionAction.Overwrite;
                     }
@@ -2902,26 +3081,45 @@ namespace search
                     var targetAction = action == FileTransferAction.Move && targetIndex < destinations.Length - 1
                         ? FileTransferAction.Copy
                         : action;
-                    progress.Report(completedCount, $"{targetAction}: {file} -> {destination}");
+                    var progressItem = $"{targetAction}: {file} -> {destination}";
+                    var parentPath = destinations[targetIndex];
+                    var parentStartSize = SearchModel.FindByPath(parentPath)?.Size ?? 0;
+                    var destinationStartSize = SearchModel.FindByPath(destination)?.Size ?? 0;
+                    progress.Observe(
+                        () => SampleIndexedTransferWork(
+                            parentPath,
+                            parentStartSize,
+                            destination,
+                            destinationStartSize,
+                            destinationExisted),
+                        completedWork,
+                        operationWork,
+                        progressItem);
                     var operationErrors = await Task.Run(() =>
                     {
+                        progress.Token.ThrowIfCancellationRequested();
                         if (targetAction == FileTransferAction.SymbolicLink)
                             return file.Softlink(destination, overwrite);
                         if (targetAction == FileTransferAction.HardLink)
                             return file.Hardlink(destination, overwrite);
                         return file.UniversalCopyOrMove(destination, overwrite,
-                            move: targetAction == FileTransferAction.Move);
+                            move: targetAction == FileTransferAction.Move,
+                            cancellationToken: progress.Token);
                     });
                     errors.AddRange(operationErrors);
                     completedCount++;
-                    progress.Report(completedCount, file);
+                    completedWork = SaturatingAdd(completedWork, operationWork);
+                    progress.Report(completedWork, file);
                 }
+            }
+            catch (OperationCanceledException) when (progress.Token.IsCancellationRequested)
+            {
+                cancelled = true;
             }
             finally
             {
                 progress.Complete();
-                filesView.IsEnabled = true;
-                filesView.Focus();
+                fileOperationInProgress = false;
             }
 
             Model.Status = cancelled
@@ -2930,9 +3128,61 @@ namespace search
                     ? $"{action} completed with {errors.Count} error(s): {string.Join(", ", errors)}"
                     : skipped > 0
                         ? $"{action} completed; skipped {skipped} conflict(s)"
-                        : $"{action} completed for {paths.Length} item(s) and {destinations.Length} folder(s)";
+                        : $"{action} completed for {itemDescription} and {destinations.Length} folder(s)";
             return !cancelled && errors.Count == 0 && skipped == 0;
         }
+
+        static long CachedTransferWork(string path, INode indexed)
+        {
+            if (indexed != null)
+                return SizeAsWork(indexed.Size);
+            try
+            {
+                var file = new FileInfo(path);
+                if (file.Exists)
+                    return SizeAsWork((ulong)Math.Max(0, file.Length));
+            }
+            catch
+            {
+                // A missing/stale index entry must not trigger a recursive fallback scan.
+            }
+            return 1;
+        }
+
+        static long SampleIndexedTransferWork(
+            string parentPath,
+            ulong parentStartSize,
+            string destination,
+            ulong destinationStartSize,
+            bool destinationExisted)
+        {
+            var parentSize = SearchModel.FindByPath(parentPath)?.Size ?? parentStartSize;
+            var destinationSize = SearchModel.FindByPath(destination)?.Size ?? 0;
+            var parentGrowth = PositiveSizeGrowth(parentSize, parentStartSize);
+            var destinationGrowth = destinationExisted
+                ? PositiveSizeGrowth(destinationSize, destinationStartSize)
+                : SizeAsWork(destinationSize, emptyIsOne: false);
+            return Math.Max(parentGrowth, destinationGrowth);
+        }
+
+        internal static long PositiveSizeGrowth(ulong current, ulong initial) =>
+            current <= initial ? 0 : SizeAsWork(current - initial, emptyIsOne: false);
+
+        internal static long PositiveSizeDecrease(ulong initial, ulong current) =>
+            current >= initial ? 0 : SizeAsWork(initial - current, emptyIsOne: false);
+
+        internal static long SizeAsWork(ulong size, bool emptyIsOne = true) =>
+            size == 0
+                ? emptyIsOne ? 1 : 0
+                : size > long.MaxValue ? long.MaxValue : (long)size;
+
+        static long SaturatingAdd(long left, long right) =>
+            left > long.MaxValue - right ? long.MaxValue : left + right;
+
+        static long SaturatingMultiply(long value, int multiplier) =>
+            multiplier > 0 && value > long.MaxValue / multiplier
+                ? long.MaxValue
+                : value * multiplier;
 
         static string UniqueDestination(string destination, bool directory)
         {
@@ -2969,7 +3219,8 @@ namespace search
             var e = arg.GetEnumerator();
             bool call7zip = e.MoveNext() && e.Current == Key.NumPad7;
 
-            Model.Status = $"Zipping {selected.Length} item(s)";
+            Model.Status = $"Zipping {FileOperationText.DescribeItems(
+                selected.Select(n => n.FullName).ToArray())}";
             INode zip;
             try
             {

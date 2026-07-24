@@ -12,10 +12,15 @@ namespace search
 
     public partial class FileTransferDialog : Window
     {
-        public FileTransferDialog(int sourceCount, int destinationCount, FileTransferAction defaultAction = FileTransferAction.Copy)
+        public FileTransferDialog(
+            string[] sources,
+            int destinationCount,
+            FileTransferAction defaultAction = FileTransferAction.Copy)
         {
             InitializeComponent();
-            Prompt.Text = L.Format("ItemsToFolders", sourceCount, destinationCount);
+            Prompt.Text = sources.Length == 1
+                ? L.Format("ItemToFolders", FileOperationText.DescribeItems(sources), destinationCount)
+                : L.Format("ItemsToFolders", sources.Length, destinationCount);
             CopyAction.IsChecked = defaultAction == FileTransferAction.Copy;
             MoveAction.IsChecked = defaultAction == FileTransferAction.Move;
             SymbolicLinkAction.IsChecked = defaultAction == FileTransferAction.SymbolicLink;

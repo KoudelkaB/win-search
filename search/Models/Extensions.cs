@@ -7,6 +7,8 @@ using System.DirectoryServices.ActiveDirectory;
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
+using System.ComponentModel;
+using System.Threading;
 
 namespace search.Models
 {
@@ -144,9 +146,37 @@ namespace search.Models
         /// <param name="overwrite"></param>
         /// <param name="move"></param>
         /// <returns>error message or null if OK</returns>
-        public static List<string> UniversalCopyOrMove(this string file, string dest, bool overwrite, bool move = false)
+        public static List<string> UniversalCopyOrMove(
+            this string file,
+            string dest,
+            bool overwrite,
+            bool move = false,
+            CancellationToken cancellationToken = default)
+        {
+            using var nativeCancellation = cancellationToken.CanBeCanceled
+                ? new NativeCopyCancellation(cancellationToken)
+                : null;
+            return UniversalCopyOrMove(
+                file,
+                dest,
+                overwrite,
+                move,
+                cancellationToken,
+                nativeCancellation,
+                batchEcho: false);
+        }
+
+        static List<string> UniversalCopyOrMove(
+            string file,
+            string dest,
+            bool overwrite,
+            bool move,
+            CancellationToken cancellationToken,
+            NativeCopyCancellation nativeCancellation,
+            bool batchEcho)
         {
             var errors = new List<string>();
+            cancellationToken.ThrowIfCancellationRequested();
             if (!move && PathsReferToSameLocation(file, dest))
             {
                 // Create a copy if the same
@@ -182,7 +212,7 @@ namespace search.Models
                     if (!Broker.Available)
                         throw new UnauthorizedAccessException($"Access denied to '{file}' - the elevated helper is not running (it was declined at startup).");
                     Broker.CopyFromElevated(file, dest, overwrite, move);
-                    EchoTransferred(file, dest, move);
+                    EchoTransferred(file, dest, move, batchEcho);
                 }
                 catch (Exception ex)
                 {
@@ -199,6 +229,7 @@ namespace search.Models
             }
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 // If the source is directory
                 if (a.HasFlag(FileAttributes.Directory))
                 {
@@ -208,14 +239,28 @@ namespace search.Models
                         if (overwrite) dest.DeletePathIfExists();
                         System.IO.Directory.Move(file, dest);
                     }
-                    else errors.AddRange(new DirectoryInfo(file).CopyFolder(new DirectoryInfo(dest), overwrite));
+                    else if (a.HasFlag(FileAttributes.ReparsePoint))
+                        errors.AddRange(CopyDirectoryLink(
+                            new DirectoryInfo(file), dest, overwrite));
+                    else errors.AddRange(new DirectoryInfo(file).CopyFolder(
+                        new DirectoryInfo(dest),
+                        overwrite,
+                        cancellationToken,
+                        nativeCancellation));
                 }
                 else
                 {
                     if (move) File.Move(file, dest, overwrite);
-                    else File.Copy(file, dest, overwrite);
+                    else if (nativeCancellation != null)
+                        CopyFileCancellable(file, dest, overwrite, nativeCancellation);
+                    else
+                        File.Copy(file, dest, overwrite);
                 }
-                EchoTransferred(file, dest, move);
+                EchoTransferred(file, dest, move, batchEcho);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception e)
             {
@@ -224,6 +269,107 @@ namespace search.Models
             }
             return errors;
         }
+
+        static List<string> CopyDirectoryLink(
+            DirectoryInfo source,
+            string destination,
+            bool overwrite)
+        {
+            var errors = new List<string>();
+            try
+            {
+                if (overwrite)
+                    destination.DeletePathIfExists();
+                var rawTarget = source.LinkTarget;
+                if (string.IsNullOrEmpty(rawTarget))
+                    throw new IOException($"Cannot read the target of directory link '{source.FullName}'.");
+                try
+                {
+                    System.IO.Directory.CreateSymbolicLink(destination, rawTarget);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Creating a symbolic link may require Developer Mode or elevation.
+                    // A junction needs neither, and preserves directory-link behavior.
+                    var resolved = source.ResolveLinkTarget(returnFinalTarget: false)
+                        ?? throw new IOException(
+                            $"Cannot resolve the target of directory link '{source.FullName}'.");
+                    errors.AddRange(resolved.FullName.Hardlink(destination, overwrite: false));
+                }
+            }
+            catch (Exception e)
+            {
+                errors.Add(e.Message);
+            }
+            return errors;
+        }
+
+        static void CopyFileCancellable(
+            string source,
+            string destination,
+            bool overwrite,
+            NativeCopyCancellation cancellation)
+        {
+            var flags = overwrite ? CopyFileFlags.None : CopyFileFlags.FailIfExists;
+            if (CopyFileEx(
+                source,
+                destination,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                cancellation.Pointer,
+                flags))
+                return;
+
+            var error = Marshal.GetLastWin32Error();
+            if (cancellation.Token.IsCancellationRequested || error == ErrorRequestAborted)
+                throw new OperationCanceledException(cancellation.Token);
+            throw new IOException(
+                $"Cannot copy '{source}' to '{destination}': {new Win32Exception(error).Message}",
+                new Win32Exception(error));
+        }
+
+        sealed class NativeCopyCancellation : IDisposable
+        {
+            readonly CancellationTokenRegistration registration;
+
+            public NativeCopyCancellation(CancellationToken token)
+            {
+                Token = token;
+                Pointer = Marshal.AllocHGlobal(sizeof(int));
+                Marshal.WriteInt32(Pointer, 0);
+                registration = token.Register(
+                    static state => Marshal.WriteInt32((IntPtr)state, 1),
+                    Pointer);
+            }
+
+            public CancellationToken Token { get; }
+            public IntPtr Pointer { get; }
+
+            public void Dispose()
+            {
+                registration.Dispose();
+                Marshal.FreeHGlobal(Pointer);
+            }
+        }
+
+        const int ErrorRequestAborted = 1235;
+
+        [Flags]
+        enum CopyFileFlags : uint
+        {
+            None = 0,
+            FailIfExists = 0x00000001
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool CopyFileEx(
+            string existingFileName,
+            string newFileName,
+            IntPtr progressRoutine,
+            IntPtr data,
+            IntPtr cancel,
+            CopyFileFlags copyFlags);
 
         /// <summary>
         /// Report the app's own successful delete to the index so the row leaves the grid
@@ -235,7 +381,18 @@ namespace search.Models
             if (n is ZipNode) return; //Archive entries are not file-system items
             var path = n.FullName;
             if (!File.Exists(path) && !System.IO.Directory.Exists(path))
-                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Deleted, path));
+            {
+                //On a fully mapped NTFS volume, USN supplies an ordered delete for every
+                //descendant. Mark this app echo as exact: the just-finished top-level
+                //folder disappears from the grid immediately, while its already queued
+                //journal records remove children without a full-index RemoveTrees pass.
+                //If the journal is unavailable (or its baseline is not ready), retain the
+                //conservative FileSystemWatcher behavior for correctness.
+                var descendantsReported = n.IsDirectory
+                    && FSChangeProcessor.ReportsCompleteDirectoryDeletes(path);
+                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Deleted, path,
+                    descendantDeletesReported: descendantsReported));
+            }
         }
 
         /// <summary>
@@ -243,12 +400,21 @@ namespace search.Models
         /// <see cref="EchoDeleted"/>. A move echoes as a rename, so a moved directory's
         /// descendants are re-indexed under the new path at once.
         /// </summary>
-        internal static void EchoTransferred(string source, string dest, bool move)
+        internal static void EchoTransferred(
+            string source,
+            string dest,
+            bool move,
+            bool batched = false)
         {
+            FsEvent change = null;
             if (move && !File.Exists(source) && !System.IO.Directory.Exists(source))
-                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Renamed, dest, source));
+                change = new FsEvent(WatcherChangeTypes.Renamed, dest, source);
             else if (!move && (File.Exists(dest) || System.IO.Directory.Exists(dest)))
-                _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Created, dest));
+                change = new FsEvent(WatcherChangeTypes.Created, dest);
+            if (change != null)
+                _ = batched
+                    ? FSChangeProcessor.PostBatched(change)
+                    : FSChangeProcessor.Echo(change);
         }
 
         /// <summary>
@@ -278,16 +444,47 @@ namespace search.Models
         /// <param name="source"></param>
         /// <param name="target"></param>
         /// <param name="overwrite"></param>
-        /// <param name="move"></param>
         /// <returns>error messages or null</returns>
-        static List<string> CopyFolder(this DirectoryInfo source, DirectoryInfo target, bool overwrite, bool move = false)
+        static List<string> CopyFolder(
+            this DirectoryInfo source,
+            DirectoryInfo target,
+            bool overwrite,
+            CancellationToken cancellationToken,
+            NativeCopyCancellation nativeCancellation)
         {
             var errors = new List<string>();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!target.Exists)
+                target.Create();
             foreach (DirectoryInfo dir in source.GetDirectories())
-                errors.AddRange(CopyFolder(dir, target.CreateSubdirectory(dir.Name), overwrite, move));
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                    errors.AddRange(CopyDirectoryLink(
+                        dir,
+                        Path.Combine(target.FullName, dir.Name),
+                        overwrite));
+                else
+                    errors.AddRange(CopyFolder(
+                        dir,
+                        target.CreateSubdirectory(dir.Name),
+                        overwrite,
+                        cancellationToken,
+                        nativeCancellation));
+            }
 
             foreach (FileInfo file in source.GetFiles())
-                errors.AddRange(file.FullName.UniversalCopyOrMove(Path.Combine(target.FullName, file.Name), overwrite, move));
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                errors.AddRange(UniversalCopyOrMove(
+                    file.FullName,
+                    Path.Combine(target.FullName, file.Name),
+                    overwrite,
+                    move: false,
+                    cancellationToken: cancellationToken,
+                    nativeCancellation: nativeCancellation,
+                    batchEcho: true));
+            }
 
             return errors;
         }
