@@ -1,7 +1,11 @@
+using System.Collections.Generic;
 using System.IO;
 
 namespace search.Models
 {
+    internal readonly record struct HardLinkParentDelta(
+        string ParentPath, long SizeDelta, long CountDelta);
+
     /// <summary>
     /// One file-system change flowing through the processing pipeline. Carrier-agnostic:
     /// produced from FileSystemWatcher events, from USN journal records and from the app's
@@ -32,7 +36,9 @@ namespace search.Models
         internal virtual NodeMetadataSnapshot? MetadataSnapshot => null;
         internal virtual INode MetadataNode => null;
         internal virtual long MetadataReadMs => 0;
-        internal bool IsMetadataResult => this is MetadataFsEvent;
+        internal virtual IReadOnlyList<HardLinkParentDelta> HardLinkParentDeltas => null;
+        internal bool IsMetadataResult => MetadataSnapshot.HasValue;
+        internal bool IsHardLinkUpdate => HardLinkParentDeltas != null;
 
         public FsEvent(WatcherChangeTypes changeType, string fullPath, string oldFullPath = null,
             bool descendantDeletesReported = false, ulong frn = 0, uint ntfsAttributes = 0)
@@ -48,6 +54,10 @@ namespace search.Models
         internal static FsEvent MetadataResult(string path, INode expectedNode,
             NodeMetadataSnapshot snapshot, long readMs)
             => new MetadataFsEvent(path, expectedNode, snapshot, readMs);
+
+        internal static FsEvent HardLinkUpdate(string path, ulong frn, INode expectedNode,
+            NodeMetadataSnapshot snapshot, IReadOnlyList<HardLinkParentDelta> parentDeltas)
+            => new HardLinkFsEvent(path, frn, expectedNode, snapshot, parentDeltas);
 
         public static FsEvent From(FileSystemEventArgs e) => e is RenamedEventArgs r
             ? new FsEvent(e.ChangeType, e.FullPath, r.OldFullPath)
@@ -79,6 +89,32 @@ namespace search.Models
             internal override NodeMetadataSnapshot? MetadataSnapshot => snapshot;
             internal override INode MetadataNode => node;
             internal override long MetadataReadMs => readMs;
+        }
+
+        /// <summary>
+        /// One targeted refresh of a multi-linked file. The snapshot updates its canonical
+        /// indexed row while the explicit parent deltas replace the ordinary single-parent
+        /// size propagation.
+        /// </summary>
+        sealed class HardLinkFsEvent : FsEvent
+        {
+            readonly NodeMetadataSnapshot snapshot;
+            readonly INode node;
+            readonly IReadOnlyList<HardLinkParentDelta> parentDeltas;
+
+            public HardLinkFsEvent(string path, ulong frn, INode node,
+                NodeMetadataSnapshot snapshot, IReadOnlyList<HardLinkParentDelta> parentDeltas)
+                : base(WatcherChangeTypes.Changed, path, frn: frn)
+            {
+                this.node = node;
+                this.snapshot = snapshot;
+                this.parentDeltas = parentDeltas;
+            }
+
+            internal override NodeMetadataSnapshot? MetadataSnapshot => snapshot;
+            internal override INode MetadataNode => node;
+            internal override IReadOnlyList<HardLinkParentDelta> HardLinkParentDeltas
+                => parentDeltas;
         }
     }
 }

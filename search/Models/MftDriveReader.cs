@@ -187,16 +187,38 @@ namespace search.Models
             var aggregateHashMs = phase.ElapsedMilliseconds;
             phase.Restart();
             var dense = BuildDenseAndFinalizeFilePathHashes(parsed, cancellationToken);
-            //Only genuinely multi-linked live records need to survive as sparse metadata.
-            //The USN journal reports a hard-link mutation but an unprivileged record cannot
-            //name the removed link, so the watcher uses this bit to request an exact MFT
-            //folder-size rebuild after the change storm goes quiet.
-            var hardLinkedEntries = new List<uint>();
+            //Retain only the sparse parent topology of genuinely multi-linked live files.
+            //It lets the USN watcher diff one file's current links and adjust the affected
+            //directory aggregates instead of rebuilding the complete MFT. A flat layout
+            //avoids one dictionary/object allocation per multi-linked record.
+            var hardLinkSets = new List<(uint Entry, ulong[] Parents)>();
             foreach (var (entry, links) in baseHardLinks)
-                if (links.Length > 1 && entry < (uint)parsed.Length && parsed[entry] != null)
-                    hardLinkedEntries.Add(entry);
-            hardLinkedEntries.Sort();
-            return new MftNodeCollection(parsed, dense, hardLinkedEntries.ToArray(),
+            {
+                if (entry >= (uint)parsed.Length || parsed[entry] == null) continue;
+                var live = links.Where(link =>
+                {
+                    var parentEntry = (uint)(link & FileReferenceMask);
+                    return parentEntry < (uint)parsed.Length
+                        && parsed[parentEntry] is { IsDirectory: true } parent
+                        && SequencesMatch((ushort)(link >> 48), parent.SequenceNumber);
+                }).ToArray();
+                if (live.Length > 1) hardLinkSets.Add((entry, live));
+            }
+            hardLinkSets.Sort((a, b) => a.Entry.CompareTo(b.Entry));
+            var hardLinkedEntries = new uint[hardLinkSets.Count];
+            var hardLinkOffsets = new int[hardLinkSets.Count + 1];
+            var hardLinkParents = new ulong[hardLinkSets.Sum(x => x.Parents.Length)];
+            var hardLinkAt = 0;
+            for (var i = 0; i < hardLinkSets.Count; i++)
+            {
+                hardLinkedEntries[i] = hardLinkSets[i].Entry;
+                hardLinkOffsets[i] = hardLinkAt;
+                hardLinkSets[i].Parents.CopyTo(hardLinkParents, hardLinkAt);
+                hardLinkAt += hardLinkSets[i].Parents.Length;
+            }
+            hardLinkOffsets[hardLinkSets.Count] = hardLinkAt;
+            return new MftNodeCollection(parsed, dense, hardLinkedEntries,
+                hardLinkOffsets, hardLinkParents,
                 new MftLoadTiming(readParseMs, linkMs, aggregateHashMs, phase.ElapsedMilliseconds,
                     nameStats.NamesSeen, nameStats.UniqueNames, nameStats.SavedBytes));
         }
@@ -727,13 +749,18 @@ namespace search.Models
             readonly MftNode[] byEntry;
             readonly INode[] dense;
             readonly uint[] hardLinkedEntries;
+            readonly int[] hardLinkOffsets;
+            readonly ulong[] hardLinkParents;
 
             public MftNodeCollection(MftNode[] byEntry, INode[] dense, uint[] hardLinkedEntries,
+                int[] hardLinkOffsets, ulong[] hardLinkParents,
                 MftLoadTiming loadTiming)
             {
                 this.byEntry = byEntry;
                 this.dense = dense;
                 this.hardLinkedEntries = hardLinkedEntries;
+                this.hardLinkOffsets = hardLinkOffsets;
+                this.hardLinkParents = hardLinkParents;
                 LoadTiming = loadTiming;
             }
 
@@ -760,6 +787,20 @@ namespace search.Models
                     && byEntry[(int)entry] is { } found
                     && found.Frn == frn
                     && Array.BinarySearch(hardLinkedEntries, (uint)entry) >= 0;
+            }
+
+            public bool TryGetLinkParents(ulong frn, out ReadOnlyMemory<ulong> parents)
+            {
+                parents = default;
+                var entry = frn & FileReferenceMask;
+                if (entry >= (ulong)byEntry.Length || byEntry[(int)entry] is not { } found
+                    || found.Frn != frn)
+                    return false;
+                var at = Array.BinarySearch(hardLinkedEntries, (uint)entry);
+                if (at < 0) return false;
+                parents = new ReadOnlyMemory<ulong>(hardLinkParents,
+                    hardLinkOffsets[at], hardLinkOffsets[at + 1] - hardLinkOffsets[at]);
+                return true;
             }
 
             public IEnumerator<INode> GetEnumerator() => ((IEnumerable<INode>)dense).GetEnumerator();

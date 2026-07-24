@@ -189,8 +189,30 @@ namespace search.Models
             HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen,
             HashSet<ulong> createdSeen, HashSet<ulong> ghosts)
         {
-            if (RequiresExactMftRescan(r.Reason, frnMap.HasMultipleLinks(r.Frn)))
+            var hadMultipleLinks = frnMap.HasMultipleLinks(r.Frn);
+            var repairedHardLinks = false;
+            var hardLinkFileGone = false;
+            var liveLinkCount = 0;
+            if (CanRepairHardLinkIncrementally(r.Reason, hadMultipleLinks))
+            {
+                repairedHardLinks = TryQueueHardLinkUpdate(r.Frn,
+                    out liveLinkCount, out hardLinkFileGone);
+                if (!repairedHardLinks && !hardLinkFileGone)
+                    RequestExactMftRescan();
+            }
+            if (!repairedHardLinks && !hardLinkFileGone
+                && RequiresExactMftRescan(r.Reason, hadMultipleLinks))
                 RequestExactMftRescan();
+
+            //Hard-link reason flags can retain FILE_CREATE/FILE_DELETE from the link
+            //operation. The targeted topology diff already represents that name change;
+            //treating it as the canonical node's create/delete would corrupt the index.
+            const uint renameReasons = UsnJournal.ReasonRenameOldName
+                | UsnJournal.ReasonRenameNewName;
+            if (repairedHardLinks && liveLinkCount > 0
+                && (r.Reason & UsnJournal.ReasonHardLinkChange) != 0
+                && (r.Reason & renameReasons) == 0)
+                return;
 
             //Reason bits accumulate over a file's open-close session - classify by the
             //most existence-relevant bit. A delete record may still carry the create bits
@@ -235,6 +257,19 @@ namespace search.Models
                     if (oldPath == null) ghosts.Add(r.Frn);
                     return;
                 }
+                if (UsnJournal.IsNtfsDeletedPath(journal.Root, newPath))
+                {
+                    //POSIX-style delete can first rename the file into NTFS's private
+                    //$Extend\$Deleted namespace. Report the user-visible path as deleted
+                    //now; never index the private holding name while a handle drains.
+                    frnMap.Remove(r.Frn);
+                    ghosts.Add(r.Frn); //Swallow the later terminal FILE_DELETE duplicate.
+                    if (oldPath != null)
+                        Process(new FsEvent(WatcherChangeTypes.Deleted, oldPath,
+                            descendantDeletesReported: true, frn: r.Frn,
+                            ntfsAttributes: r.Attributes));
+                    return;
+                }
                 ghosts.Remove(r.Frn);
                 if (oldPath == null) Process(new FsEvent(WatcherChangeTypes.Created,
                     newPath, frn: r.Frn, ntfsAttributes: r.Attributes)); //Moved in from an unindexed place
@@ -274,6 +309,7 @@ namespace search.Models
                 return;
             }
             //Data/attribute change
+            if (repairedHardLinks) return; //Snapshot + every link parent were updated together.
             if (!changedSeen.Add(r.Frn)) return;
             var changed = MapPath(r.Frn);
             if (changed == null && journal.TryResolvePath(r.Frn) is { } live)
@@ -290,19 +326,169 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Folder aggregates count a file once per hard link. An unprivileged USN record
-        /// carries no link name, so a link mutation cannot be adjusted to the right parent;
-        /// data/rename/delete changes of a record already known to have several links have
-        /// the same ambiguity. Rebuild those rare cases from the MFT after the burst.
+        /// A hard-link topology change, or a size change of an already multi-linked file,
+        /// can be repaired by enumerating that one FRN's live names and diffing their
+        /// parents against the sparse topology retained from the MFT scan.
         /// </summary>
-        internal static bool RequiresExactMftRescan(uint reason, bool hasMultipleLinks)
+        internal static bool CanRepairHardLinkIncrementally(uint reason, bool hasMultipleLinks)
         {
             if ((reason & UsnJournal.ReasonHardLinkChange) != 0) return true;
             if (!hasMultipleLinks) return false;
-            const uint pathOrSize = UsnJournal.ReasonDataOverwrite | UsnJournal.ReasonDataExtend
-                | UsnJournal.ReasonDataTruncation | UsnJournal.ReasonFileDelete
+            const uint size = UsnJournal.ReasonDataOverwrite | UsnJournal.ReasonDataExtend
+                | UsnJournal.ReasonDataTruncation;
+            return (reason & size) != 0;
+        }
+
+        /// <summary>
+        /// Renaming/deleting a canonical name of a multi-linked record still needs the rare
+        /// fallback: the compact index intentionally stores one searchable row per FRN, and
+        /// changing which name owns that row is separate from adjusting link-parent aggregates.
+        /// </summary>
+        internal static bool RequiresExactMftRescan(uint reason, bool hasMultipleLinks)
+        {
+            if (!hasMultipleLinks) return false;
+            const uint canonicalPath = UsnJournal.ReasonFileDelete
                 | UsnJournal.ReasonRenameOldName | UsnJournal.ReasonRenameNewName;
-            return (reason & pathOrSize) != 0;
+            return (reason & canonicalPath) != 0;
+        }
+
+        bool TryQueueHardLinkUpdate(ulong frn, out int liveLinkCount,
+            out bool fileReferenceGone)
+        {
+            liveLinkCount = 0;
+            fileReferenceGone = false;
+            if (!frnMap.TryGetValue(frn, out var mapped) || mapped.IsDirectory)
+            {
+                $"USN targeted hard-link repair on {journal.Root} failed: FRN {frn:x} is not mapped".Debug();
+                return false;
+            }
+            var path = mapped.FullName;
+            var indexed = FSChangeProcessor.Lookup(path);
+            if (indexed == null || indexed.IsDirectory)
+            {
+                $"USN targeted hard-link repair on {journal.Root} failed: canonical path is not indexed ({path})".Debug();
+                return false;
+            }
+            if (!frnMap.TryGetLinkState(frn, out var oldParentRefs, out var oldSize))
+            {
+                $"USN targeted hard-link repair on {journal.Root} failed: no baseline parents for {frn:x}".Debug();
+                return false;
+            }
+            if (!journal.TryGetHardLinkPaths(frn, out var currentPaths,
+                    out fileReferenceGone)
+                || currentPaths.Length == 0)
+            {
+                if (fileReferenceGone)
+                    $"USN hard-link target on {journal.Root} vanished before enumeration: frn={frn:x}".Debug();
+                else
+                    $"USN targeted hard-link repair on {journal.Root} failed: link-name enumeration for {frn:x}".Debug();
+                return false;
+            }
+            if (!INode.TryReadMetadata(path, out var snapshot) || snapshot.IsDirectory)
+            {
+                $"USN targeted hard-link repair on {journal.Root} failed: canonical metadata ({path})".Debug();
+                return false;
+            }
+
+            var oldParentPaths = new string[oldParentRefs.Length];
+            for (var i = 0; i < oldParentRefs.Length; i++)
+            {
+                if (!TryResolveLinkParent(oldParentRefs[i], out var parent))
+                {
+                    $"USN targeted hard-link repair on {journal.Root} failed: old parent {oldParentRefs[i]:x}".Debug();
+                    return false;
+                }
+                oldParentPaths[i] = parent.FullName;
+            }
+
+            var currentParentRefs = new ulong[currentPaths.Length];
+            var currentParentPaths = new string[currentPaths.Length];
+            for (var i = 0; i < currentPaths.Length; i++)
+            {
+                var parentPath = Path.GetDirectoryName(currentPaths[i]);
+                var parent = string.IsNullOrEmpty(parentPath)
+                    ? null : FSChangeProcessor.Lookup(parentPath);
+                if (parent?.IsDirectory != true || parent.Frn == 0)
+                {
+                    $"USN targeted hard-link repair on {journal.Root} failed: current parent {parentPath}".Debug();
+                    return false;
+                }
+                currentParentRefs[i] = parent.Frn;
+                currentParentPaths[i] = parent.FullName;
+            }
+
+            if (!TryCalculateHardLinkParentDeltas(oldParentPaths, currentParentPaths,
+                    oldParentRefs.Length == 1 ? indexed.Size : oldSize,
+                    snapshot.Size, out var deltas))
+            {
+                $"USN targeted hard-link repair on {journal.Root} failed: aggregate delta overflow".Debug();
+                return false;
+            }
+
+            liveLinkCount = currentParentRefs.Length;
+            //Publish the queried state before enqueueing. Several records for one open
+            //handle can share a USN batch while the serialized model queue is still
+            //waiting; the following record must diff from this state, not add the same
+            //size delta again from the not-yet-updated index node.
+            frnMap.SetLinkState(frn, currentParentRefs, snapshot.Size);
+            Process(FsEvent.HardLinkUpdate(path, frn, indexed, snapshot, deltas));
+            ($"USN hard-link update on {journal.Root}: frn={frn:x}, links "
+                + $"{oldParentRefs.Length}->{currentParentRefs.Length}, parents changed={deltas.Length}")
+                .Debug();
+            return true;
+        }
+
+        bool TryResolveLinkParent(ulong parentId, out INode parent)
+        {
+            if (frnMap.TryGetValue(parentId, out parent) && parent.IsDirectory)
+                return true;
+            var path = journal.TryResolvePath(parentId);
+            parent = path == null ? null : FSChangeProcessor.Lookup(path);
+            return parent?.IsDirectory == true;
+        }
+
+        internal static bool TryCalculateHardLinkParentDeltas(
+            IReadOnlyList<string> oldParents, IReadOnlyList<string> currentParents,
+            ulong oldSize, ulong currentSize, out HardLinkParentDelta[] deltas)
+        {
+            deltas = null;
+            if (oldParents == null || currentParents == null
+                || oldSize > long.MaxValue || currentSize > long.MaxValue)
+                return false;
+            var counts = new Dictionary<string, (int Old, int Current)>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var path in oldParents)
+            {
+                if (string.IsNullOrEmpty(path)) return false;
+                counts.TryGetValue(path, out var count);
+                if (count.Old == int.MaxValue) return false;
+                counts[path] = (count.Old + 1, count.Current);
+            }
+            foreach (var path in currentParents)
+            {
+                if (string.IsNullOrEmpty(path)) return false;
+                counts.TryGetValue(path, out var count);
+                if (count.Current == int.MaxValue) return false;
+                counts[path] = (count.Old, count.Current + 1);
+            }
+
+            var result = new List<HardLinkParentDelta>(counts.Count);
+            foreach (var (path, count) in counts.OrderBy(x => x.Key,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                if ((oldSize != 0 && (ulong)count.Old > (ulong)long.MaxValue / oldSize)
+                    || (currentSize != 0
+                        && (ulong)count.Current > (ulong)long.MaxValue / currentSize))
+                    return false;
+                var oldContribution = checked((long)oldSize * count.Old);
+                var currentContribution = checked((long)currentSize * count.Current);
+                var sizeDelta = currentContribution - oldContribution;
+                var countDelta = (long)count.Current - count.Old;
+                if (sizeDelta != 0 || countDelta != 0)
+                    result.Add(new HardLinkParentDelta(path, sizeDelta, countDelta));
+            }
+            deltas = result.ToArray();
+            return true;
         }
 
         void RequestExactMftRescan()
@@ -424,19 +610,23 @@ namespace search.Models
 
             sealed class PageTable
             {
-                public static PageTable Empty() => new(null, new Dictionary<ulong, Page>(), new(), new());
+                public static PageTable Empty() => new(null, new Dictionary<ulong, Page>(),
+                    new(), new(), new());
                 public readonly IFrnNodeSource Source;
                 public readonly Dictionary<ulong, Page> Pages;
                 public readonly NonBlocking.ConcurrentDictionary<ulong, INode> Sparse;
                 public readonly NonBlocking.ConcurrentDictionary<ulong, SourceOverride> Overrides;
+                public readonly NonBlocking.ConcurrentDictionary<ulong, LinkOverride> LinkOverrides;
                 public PageTable(IFrnNodeSource source, Dictionary<ulong, Page> pages,
                     NonBlocking.ConcurrentDictionary<ulong, INode> sparse,
-                    NonBlocking.ConcurrentDictionary<ulong, SourceOverride> overrides)
+                    NonBlocking.ConcurrentDictionary<ulong, SourceOverride> overrides,
+                    NonBlocking.ConcurrentDictionary<ulong, LinkOverride> linkOverrides)
                 {
                     Source = source;
                     Pages = pages;
                     Sparse = sparse;
                     Overrides = overrides;
+                    LinkOverrides = linkOverrides;
                 }
             }
 
@@ -445,6 +635,19 @@ namespace search.Models
                 public readonly ulong Frn;
                 public readonly INode Node; //null = tombstone hiding the immutable scan slot
                 public SourceOverride(ulong frn, INode node) { Frn = frn; Node = node; }
+            }
+
+            sealed class LinkOverride
+            {
+                public readonly ulong Frn;
+                public readonly ulong[] Parents;
+                public readonly ulong Size;
+                public LinkOverride(ulong frn, ulong[] parents, ulong size)
+                {
+                    Frn = frn;
+                    Parents = parents;
+                    Size = size;
+                }
             }
 
             readonly object mutationLock = new();
@@ -511,7 +714,11 @@ namespace search.Models
                     {
                         //A stale delete must not hide a newer owner of the same MFT slot.
                         if (TryGetValue(frn, out _))
+                        {
                             pageTable.Overrides[entry] = new SourceOverride(frn, null);
+                            pageTable.LinkOverrides[entry] =
+                                new LinkOverride(frn, Array.Empty<ulong>(), 0);
+                        }
                         return;
                     }
                     if (pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
@@ -524,6 +731,9 @@ namespace search.Models
                         }
                     }
                     pageTable.Sparse.TryRemove(frn, out _);
+                    if (pageTable.LinkOverrides.TryGetValue(entry, out var links)
+                        && links.Frn == frn)
+                        pageTable.LinkOverrides.TryRemove(entry, out _);
                 }
             }
 
@@ -538,7 +748,52 @@ namespace search.Models
             public bool HasMultipleLinks(ulong frn)
             {
                 var table = pageTable;
+                var entry = frn & EntryMask;
+                if (table.LinkOverrides.TryGetValue(entry, out var changed))
+                    return changed.Frn == frn && changed.Parents.Length > 1;
                 return table.Source?.HasMultipleLinks(frn) == true;
+            }
+
+            public bool TryGetLinkParents(ulong frn, out ulong[] parents)
+                => TryGetLinkState(frn, out parents, out _);
+
+            public bool TryGetLinkState(ulong frn, out ulong[] parents, out ulong size)
+            {
+                parents = null;
+                size = 0;
+                var entry = frn & EntryMask;
+                var table = pageTable;
+                if (table.LinkOverrides.TryGetValue(entry, out var changed))
+                {
+                    if (changed.Frn != frn || changed.Parents.Length == 0) return false;
+                    parents = changed.Parents;
+                    size = changed.Size;
+                    return true;
+                }
+                if (table.Source?.TryGetLinkParents(frn, out var scanned) == true
+                    && table.Source.TryGetByFrn(frn, out var scannedNode))
+                {
+                    parents = scanned.ToArray();
+                    size = scannedNode.Size;
+                    return true;
+                }
+                if (!TryGetValue(frn, out var node) || node.PathParent?.Frn is not { } parent
+                    || parent == 0)
+                    return false;
+                parents = new[] { parent };
+                size = node.Size;
+                return true;
+            }
+
+            public void SetLinkState(ulong frn, ulong[] parents, ulong size)
+            {
+                if (parents == null) throw new ArgumentNullException(nameof(parents));
+                lock (mutationLock)
+                {
+                    var entry = frn & EntryMask;
+                    pageTable.LinkOverrides[entry] =
+                        new LinkOverride(frn, parents, size);
+                }
             }
 
             /// <summary>
@@ -553,7 +808,8 @@ namespace search.Models
                     {
                         //The source owns both the record table and dense enumeration; retaining
                         //it replaces the old 16-byte-per-slot Frns[] + Nodes[] page pair.
-                        pageTable = new PageTable(source, new Dictionary<ulong, Page>(), new(), new());
+                        pageTable = new PageTable(source, new Dictionary<ulong, Page>(),
+                            new(), new(), new());
                         return;
                     }
                     var pages = new Dictionary<ulong, Page>();
@@ -589,7 +845,7 @@ namespace search.Models
                     //Set/Remove wait on mutationLock and therefore apply after this fresh
                     //table is visible. No event delta from the population window is lost.
                     pageTable = pages.Count == 0 && sparse.IsEmpty
-                        ? PageTable.Empty() : new PageTable(null, pages, sparse, new());
+                        ? PageTable.Empty() : new PageTable(null, pages, sparse, new(), new());
                 }
             }
         }

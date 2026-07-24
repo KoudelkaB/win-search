@@ -145,6 +145,47 @@ namespace search.Tests
         }
 
         [Fact]
+        public void FrnMapOverlaysSparseHardLinkTopologyChanges()
+        {
+            var mft = new FakeMft(1024).AddEmpty(5).AddRoot()
+                .AddRecord(directory: true,
+                    attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "A") }) //6
+                .AddRecord(directory: true,
+                    attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "B") }) //7
+                .AddRecord(sequence: 4, attributes: new[]
+                {
+                    FakeMft.FileName(6, "one.bin"),
+                    FakeMft.FileName(7, "two.bin")
+                }); //8
+            using var stream = new MemoryStream(mft.Image());
+            var source = MftDriveReader.GetNodes(stream, mft.BytesPerRecord,
+                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root);
+            var frn = ((ulong)4 << 48) | 8;
+            var map = new UsnDriveWatcher.FrnMap();
+
+            map.Populate(source);
+            Assert.True(map.HasMultipleLinks(frn));
+            Assert.True(map.TryGetLinkParents(frn, out var scanned));
+            Assert.Equal(new ulong[] { 6, 7 }, scanned);
+
+            map.SetLinkState(frn, new ulong[] { 6 }, 100);
+            Assert.False(map.HasMultipleLinks(frn));
+            Assert.True(map.TryGetLinkParents(frn, out var single));
+            Assert.Equal(new ulong[] { 6 }, single);
+
+            map.SetLinkState(frn, new ulong[] { 7, 7 }, 125);
+            Assert.True(map.HasMultipleLinks(frn));
+            Assert.True(map.TryGetLinkParents(frn, out var relinked));
+            Assert.Equal(new ulong[] { 7, 7 }, relinked);
+            Assert.True(map.TryGetLinkState(frn, out _, out var size));
+            Assert.Equal(125UL, size);
+
+            map.Remove(frn);
+            Assert.False(map.TryGetLinkParents(frn, out _));
+            Assert.False(map.HasMultipleLinks(frn));
+        }
+
+        [Fact]
         public void FrnMapSetRemoveAndOverflowBehaveLikeTheDictionary()
         {
             var map = new UsnDriveWatcher.FrnMap();
@@ -185,16 +226,61 @@ namespace search.Tests
         }
 
         [Fact]
-        public void HardLinkAndMultiLinkedSizeChangesRequireAnExactMftRebuild()
+        public void HardLinkTopologyAndSizeChangesPreferTargetedRepair()
         {
-            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonHardLinkChange, false));
-            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonDataExtend, true));
+            Assert.True(UsnDriveWatcher.CanRepairHardLinkIncrementally(
+                UsnJournal.ReasonHardLinkChange, false));
+            Assert.True(UsnDriveWatcher.CanRepairHardLinkIncrementally(
+                UsnJournal.ReasonDataExtend, true));
+            Assert.False(UsnDriveWatcher.CanRepairHardLinkIncrementally(
+                UsnJournal.ReasonDataExtend, false));
+            Assert.False(UsnDriveWatcher.CanRepairHardLinkIncrementally(
+                UsnJournal.ReasonBasicInfoChange, true));
+
+            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(
+                UsnJournal.ReasonHardLinkChange, false));
+            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(
+                UsnJournal.ReasonDataExtend, true));
             Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonFileDelete, true));
             Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonRenameNewName, true));
-
-            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonDataExtend, false));
             Assert.False(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonBasicInfoChange, true));
             Assert.InRange(UsnDriveWatcher.ExactRescanQuietMs, 1, 1999);
+        }
+
+        [Fact]
+        public void HardLinkParentDeltasCoverAddsRemovesAndSizeChanges()
+        {
+            Assert.True(UsnDriveWatcher.TryCalculateHardLinkParentDeltas(
+                new[] { @"C:\A" }, new[] { @"C:\A", @"C:\B" },
+                100, 100, out var added));
+            Assert.Equal(new HardLinkParentDelta(@"C:\B", 100, 1), Assert.Single(added));
+
+            Assert.True(UsnDriveWatcher.TryCalculateHardLinkParentDeltas(
+                new[] { @"C:\A", @"C:\B" }, new[] { @"C:\A", @"C:\B" },
+                100, 125, out var resized));
+            Assert.Equal(new[]
+            {
+                new HardLinkParentDelta(@"C:\A", 25, 0),
+                new HardLinkParentDelta(@"C:\B", 25, 0)
+            }, resized);
+
+            Assert.True(UsnDriveWatcher.TryCalculateHardLinkParentDeltas(
+                new[] { @"C:\A", @"C:\A" }, new[] { @"C:\A" },
+                100, 100, out var removed));
+            Assert.Equal(new HardLinkParentDelta(@"C:\A", -100, -1), Assert.Single(removed));
+        }
+
+        [Fact]
+        public void ExpandsVolumeRelativeHardLinkNames()
+        {
+            Assert.Equal(@"C:\folder\file.bin",
+                UsnJournal.ExpandHardLinkPath(@"C:\", @"\folder\file.bin"));
+            Assert.Equal(@"D:\file.bin",
+                UsnJournal.ExpandHardLinkPath(@"D:\", "file.bin"));
+            Assert.True(UsnJournal.IsNtfsDeletedPath(@"C:\",
+                @"C:\$Extend\$Deleted\000F0000000292DD2B860726"));
+            Assert.False(UsnJournal.IsNtfsDeletedPath(@"C:\",
+                @"C:\Users\$Deleted\ordinary.bin"));
         }
 
         [Fact]

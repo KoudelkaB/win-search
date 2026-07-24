@@ -273,6 +273,27 @@ namespace search.Tests
         }
 
         [Fact]
+        public void TargetedHardLinkSnapshotAbsorbsAnEarlierRawChangeForTheSameFile()
+        {
+            var node = (INode)new FileNode(@"C:\hard-link.test",
+                new NodeMetadataSnapshot(false, 10, DateTime.MinValue));
+            var rawBefore = new FsEvent(WatcherChangeTypes.Changed, node.FullName,
+                frn: 0x0007_00000000002A);
+            var unrelated = new FsEvent(WatcherChangeTypes.Changed, @"C:\other.test");
+            var targeted = FsEvent.HardLinkUpdate(node.FullName,
+                0x0007_00000000002A, node,
+                new NodeMetadataSnapshot(false, 20, DateTime.MinValue),
+                new[] { new HardLinkParentDelta(@"C:\", 10, 0) });
+            var rawAfter = new FsEvent(WatcherChangeTypes.Changed, node.FullName,
+                frn: 0x0007_00000000002A);
+
+            var result = FSChangeProcessor.CoalesceChangedEvents(
+                new[] { rawBefore, unrelated, targeted, rawAfter });
+
+            Assert.Equal(new[] { unrelated, targeted, rawAfter }, result);
+        }
+
+        [Fact]
         public void LiveUpdateWindowsStayBelowOneSecondAndIgnoreLastAccessNoise()
         {
             Assert.InRange(FSChangeProcessor.NormalCoalesceWindowMs, 1, 999);

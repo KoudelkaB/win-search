@@ -53,8 +53,12 @@ namespace search.Core
         internal const uint ReturnOnlyOnClose = 0;
 
         const int ERROR_INVALID_FUNCTION = 1;
+        const int ERROR_FILE_NOT_FOUND = 2;
+        const int ERROR_PATH_NOT_FOUND = 3;
         const int ERROR_ACCESS_DENIED = 5;
+        const int ERROR_HANDLE_EOF = 38;
         const int ERROR_NOT_SUPPORTED = 50;
+        const int ERROR_MORE_DATA = 234;
         const int ERROR_JOURNAL_DELETE_IN_PROGRESS = 1178;
         const int ERROR_JOURNAL_NOT_ACTIVE = 1179;
 
@@ -226,16 +230,134 @@ namespace search.Core
         /// file is gone or inaccessible - deleted files must resolve through the FRN map instead.
         /// </summary>
         public string TryResolvePath(ulong frn)
+            => TryResolvePath(frn, out _);
+
+        string TryResolvePath(ulong frn, out int error)
         {
+            error = 0;
             var id = new FILE_ID_DESCRIPTOR { dwSize = Marshal.SizeOf<FILE_ID_DESCRIPTOR>(), Type = 0, FileId = (long)frn };
             using var handle = OpenFileById(root, ref id, FILE_READ_ATTRIBUTES, SHARE_ALL, IntPtr.Zero, FILE_FLAG_BACKUP_SEMANTICS);
-            if (handle.IsInvalid) return null;
+            if (handle.IsInvalid)
+            {
+                error = Marshal.GetLastWin32Error();
+                return null;
+            }
             var path = new StringBuilder(1024);
             var length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
-            if (length == 0 || length > path.Capacity) return null;
+            if (length == 0 || length > path.Capacity)
+            {
+                error = Marshal.GetLastWin32Error();
+                return null;
+            }
             var result = path.ToString();
             //GetFinalPathNameByHandle returns the \\?\ form
             return result.StartsWith(@"\\?\", StringComparison.Ordinal) ? result.Substring(4) : result;
+        }
+
+        /// <summary>
+        /// Current full paths for every hard-link name of one live NTFS file. Windows
+        /// enumerates only this file's names; no directory tree or MFT pass is needed.
+        /// Different names in the same directory are retained because each contributes
+        /// separately to that directory's aggregate item count and size.
+        /// </summary>
+        public bool TryGetHardLinkPaths(ulong frn, out string[] paths,
+            out bool fileReferenceGone)
+        {
+            paths = null;
+            fileReferenceGone = false;
+            var canonicalPath = TryResolvePath(frn, out var resolveError);
+            if (canonicalPath == null)
+            {
+                fileReferenceGone = IsGoneError(resolveError);
+                return false;
+            }
+            if (IsNtfsDeletedPath(Root, canonicalPath))
+            {
+                fileReferenceGone = true;
+                return false;
+            }
+
+            var capacity = 1024U;
+            IntPtr find = INVALID_HANDLE_VALUE;
+            StringBuilder name = null;
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                name = new StringBuilder(checked((int)capacity));
+                var length = capacity;
+                find = FindFirstFileName(canonicalPath, 0, ref length, name);
+                if (find != INVALID_HANDLE_VALUE) break;
+                var error = Marshal.GetLastWin32Error();
+                if (IsGoneError(error))
+                {
+                    fileReferenceGone = true;
+                    return false;
+                }
+                if (error != ERROR_MORE_DATA
+                    || length <= capacity || length > 65_536)
+                    return false;
+                capacity = length;
+            }
+            if (find == INVALID_HANDLE_VALUE) return false;
+
+            var result = new List<string>();
+            try
+            {
+                while (true)
+                {
+                    result.Add(ExpandHardLinkPath(Root, name.ToString()));
+                    if (result.Count > 1_048_576) return false;
+
+                    var length = capacity;
+                    name.Clear();
+                    if (FindNextFileName(find, ref length, name)) continue;
+
+                    var error = Marshal.GetLastWin32Error();
+                    if (error == ERROR_HANDLE_EOF) break;
+                    if (IsGoneError(error))
+                    {
+                        fileReferenceGone = true;
+                        return false;
+                    }
+                    if (error != ERROR_MORE_DATA || length <= capacity || length > 65_536)
+                        return false;
+
+                    capacity = length;
+                    name = new StringBuilder(checked((int)capacity));
+                    length = capacity;
+                    if (!FindNextFileName(find, ref length, name)) return false;
+                }
+            }
+            finally
+            {
+                FindClose(find);
+            }
+            paths = result.ToArray();
+            return paths.Length != 0;
+        }
+
+        static bool IsGoneError(int error)
+            => error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+
+        /// <summary>
+        /// Modern Windows can temporarily move a delete-pending file into NTFS's private
+        /// $Extend\$Deleted namespace. It is no longer a searchable user path and its
+        /// terminal USN delete may arrive only after the final handle closes.
+        /// </summary>
+        public static bool IsNtfsDeletedPath(string rootPath, string path)
+        {
+            if (string.IsNullOrEmpty(rootPath) || string.IsNullOrEmpty(path))
+                return false;
+            var prefix = rootPath.TrimEnd('\\') + @"\$Extend\$Deleted\";
+            return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static string ExpandHardLinkPath(string rootPath, string volumeRelativePath)
+        {
+            if (string.IsNullOrEmpty(rootPath) || string.IsNullOrEmpty(volumeRelativePath))
+                return null;
+            return volumeRelativePath[0] == '\\'
+                ? rootPath.TrimEnd('\\') + volumeRelativePath
+                : System.IO.Path.Combine(rootPath, volumeRelativePath);
         }
 
         public void Dispose() => root.Dispose();
@@ -247,6 +369,7 @@ namespace search.Core
         const uint SHARE_ALL = 0x7; //read | write | delete
         const uint OPEN_EXISTING = 3;
         const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+        static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
         [StructLayout(LayoutKind.Sequential)]
         struct FILE_ID_DESCRIPTOR { public int dwSize; public int Type; public long FileId; long pad; }
@@ -266,6 +389,19 @@ namespace search.Core
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern uint GetFinalPathNameByHandle(SafeFileHandle hFile, StringBuilder lpszFilePath, uint cchFilePath, uint dwFlags);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true,
+            EntryPoint = "FindFirstFileNameW")]
+        static extern IntPtr FindFirstFileName(string lpFileName, uint dwFlags,
+            ref uint stringLength, StringBuilder linkName);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true,
+            EntryPoint = "FindNextFileNameW")]
+        static extern bool FindNextFileName(IntPtr hFindStream, ref uint stringLength,
+            StringBuilder linkName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool FindClose(IntPtr hFindFile);
         #endregion
     }
 }

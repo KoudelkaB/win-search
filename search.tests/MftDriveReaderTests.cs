@@ -530,7 +530,7 @@ namespace search.Tests
         }
 
         [Fact]
-        public void MftSourceRetainsOnlyTheSparseMultiLinkMarkerNeededByUsnUpdates()
+        public void MftSourceRetainsSparseMultiLinkParentTopologyForUsnUpdates()
         {
             var mft = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") })  // 6
@@ -545,9 +545,14 @@ namespace search.Tests
             var source = Assert.IsAssignableFrom<IFrnNodeSource>(MftDriveReader.GetNodes(stream,
                 mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root));
 
-            Assert.True(source.HasMultipleLinks(((ulong)4 << 48) | 8));
+            var linkedFrn = ((ulong)4 << 48) | 8;
+            Assert.True(source.HasMultipleLinks(linkedFrn));
+            Assert.True(source.TryGetLinkParents(linkedFrn, out var parents));
+            Assert.Equal(new ulong[] { 6, 7 }, parents.ToArray());
             Assert.False(source.HasMultipleLinks(((ulong)5 << 48) | 9));
+            Assert.False(source.TryGetLinkParents(((ulong)5 << 48) | 9, out _));
             Assert.False(source.HasMultipleLinks(((ulong)6 << 48) | 8)); //stale sequence
+            Assert.False(source.TryGetLinkParents(((ulong)6 << 48) | 8, out _));
         }
 
         [Fact]

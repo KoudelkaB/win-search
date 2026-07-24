@@ -236,7 +236,21 @@ namespace search.Models
 
             foreach (var e in events)
             {
-                if (e?.ChangeType == WatcherChangeTypes.Changed && e.FullPath != null)
+                if (e?.IsHardLinkUpdate == true && e.FullPath != null)
+                {
+                    //The targeted snapshot/delta was calculated from the indexed baseline
+                    //and the final live link state. A raw Changed (or its deferred snapshot)
+                    //already pending for the same path is included in that transition.
+                    //Keeping both would propagate the canonical size change twice.
+                    if (pending.Remove(e.FullPath))
+                        order.RemoveAll(path => string.Equals(path, e.FullPath,
+                            StringComparison.OrdinalIgnoreCase));
+                    Flush();
+                    result.Add(e);
+                    continue;
+                }
+                if (e?.ChangeType == WatcherChangeTypes.Changed && e.FullPath != null
+                    && !e.IsHardLinkUpdate)
                 {
                     if (pending.TryGetValue(e.FullPath, out var priorChange)
                         && priorChange.IsMetadataResult != e.IsMetadataResult)

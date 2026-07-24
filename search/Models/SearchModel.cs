@@ -1808,6 +1808,58 @@ namespace search.Models
             if (changed) RefreshAggregatesSoon();
         }
 
+        /// <summary>
+        /// Apply the explicit parent contributions of one multi-linked file. Unlike the
+        /// ordinary node propagation, each delta starts at the named parent directory
+        /// itself because the compact searchable node has only one canonical parent chain.
+        /// Resolve every parent before mutating anything so a stale topology falls back
+        /// cleanly instead of leaving a partially adjusted tree.
+        /// </summary>
+        bool ApplyHardLinkParentDeltas(IReadOnlyList<HardLinkParentDelta> deltas)
+        {
+            if (deltas == null) return false;
+            if (deltas.Count == 0) return true;
+            var roots = new INode[deltas.Count];
+            for (var i = 0; i < deltas.Count; i++)
+                if (!files.TryGetValue(deltas[i].ParentPath, out roots[i])
+                    || !roots[i].IsDirectory)
+                    return false;
+
+            var generation = Interlocked.Increment(ref aggregateChangeGeneration);
+            var changed = false;
+            for (var i = 0; i < deltas.Count; i++)
+            {
+                var delta = deltas[i];
+                var root = roots[i];
+                if (root.PathParent != null || IsDriveRoot(root.FullName))
+                {
+                    var depth = 0;
+                    for (var dir = root; dir != null && depth++ < 256; dir = dir.PathParent)
+                    {
+                        if (!dir.IsDirectory) continue;
+                        if (delta.SizeDelta != 0) dir.AddSizeDelta(delta.SizeDelta);
+                        if (delta.CountDelta != 0) dir.AddCountDelta(delta.CountDelta);
+                        pendingAggregateRows[dir] = generation;
+                        changed = true;
+                    }
+                }
+                else
+                {
+                    for (var path = delta.ParentPath; path != null;
+                        path = Path.GetDirectoryName(path))
+                        if (files.TryGetValue(path, out var dir) && dir.IsDirectory)
+                        {
+                            if (delta.SizeDelta != 0) dir.AddSizeDelta(delta.SizeDelta);
+                            if (delta.CountDelta != 0) dir.AddCountDelta(delta.CountDelta);
+                            pendingAggregateRows[dir] = generation;
+                            changed = true;
+                        }
+                }
+            }
+            if (changed) RefreshAggregatesSoon();
+            return true;
+        }
+
         internal static int ApplySizeDeltaToParentChain(INode node, long delta, Action<INode> markChanged)
             => ApplyAggregateDeltaToParentChain(node, delta, 0, markChanged);
 
@@ -2230,6 +2282,24 @@ namespace search.Models
                             case WatcherChangeTypes.Changed:
                                 //Change attributes and size
                                 FlushConflictingDeletes(e.FullPath);
+                                if (e.IsHardLinkUpdate)
+                                {
+                                    var current = files.TryGetValue(e.FullPath,
+                                        out var indexedCurrent) ? indexedCurrent : null;
+                                    if (current == null || !ReferenceEquals(current, e.MetadataNode)
+                                        || !ApplyHardLinkParentDeltas(e.HardLinkParentDeltas))
+                                    {
+                                        //A manual/startup scan may have replaced the shard
+                                        //between the topology read and this ordered event.
+                                        //Its baseline cannot safely accept the old deltas.
+                                        _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
+                                            DriveScanReason.UsnHardLinkChange);
+                                        break;
+                                    }
+                                    current.ApplyMetadata(e.MetadataSnapshot.Value);
+                                    RecordMetadata(current);
+                                    break;
+                                }
                                 if (!e.IsMetadataResult)
                                 {
                                     //The actual stat runs outside this ordered queue. A

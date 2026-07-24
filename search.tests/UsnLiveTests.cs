@@ -11,11 +11,18 @@ using Xunit;
 
 namespace search.Tests
 {
+    [CollectionDefinition(Name, DisableParallelization = true)]
+    public sealed class LiveNtfsCollection
+    {
+        public const string Name = "Live NTFS journal";
+    }
+
     /// <summary>
     /// Against the real USN journal of C: - runs unelevated (the FSCTLs work through the
     /// root-directory handle + FSCTL_READ_UNPRIVILEGED_USN_JOURNAL). Skips itself cleanly
     /// on volumes without a readable journal.
     /// </summary>
+    [Collection(LiveNtfsCollection.Name)]
     public class UsnLiveTests
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -30,6 +37,32 @@ namespace search.Tests
                 await Task.Delay(100);
             }
             return condition();
+        }
+
+        sealed class LiveFrnNode : INode
+        {
+            readonly ulong frn;
+            readonly string path;
+            readonly INode parent;
+
+            public LiveFrnNode(ulong frn, string path, INode parent,
+                NodeMetadataSnapshot snapshot)
+            {
+                this.frn = frn;
+                this.path = path;
+                this.parent = parent;
+                Attributes = snapshot.Attributes;
+                Size = snapshot.Size;
+                LastChangeTime = snapshot.LastChangeTime;
+            }
+
+            public override ulong Frn => frn;
+            public override string FullName => path;
+            public override string Name => Path.GetFileName(path);
+            public override INode PathParent => parent;
+            public override FileAttributes Attributes { get; protected set; }
+            public override ulong Size { get; protected set; }
+            public override DateTime LastChangeTime { get; protected set; }
         }
 
         [Fact]
@@ -144,15 +177,37 @@ namespace search.Tests
         }
 
         [Fact]
-        public async Task HardLinkJournalChangeSchedulesAnExactMftRescan()
+        public async Task HardLinkJournalChangeIsRepairedWithoutAnExactMftRescan()
         {
             var root = Path.GetPathRoot(Path.GetTempPath());
-            var requested = new TaskCompletionSource<DriveScanReason>(
+            var updates = new ConcurrentQueue<FsEvent>();
+            var rescan = new TaskCompletionSource<DriveScanReason>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
-            var watcher = UsnDriveWatcher.TryStart(root, _ => Task.CompletedTask,
-                reason => requested.TrySetResult(reason), _ => { });
+            var indexed = new ConcurrentDictionary<string, INode>(
+                StringComparer.OrdinalIgnoreCase);
+            var lookup = FSChangeProcessor.Lookup;
+            FSChangeProcessor.Lookup = path =>
+                indexed.TryGetValue(path, out var node) ? node : null;
+            var watcher = UsnDriveWatcher.TryStart(root, e =>
+            {
+                if (e.IsHardLinkUpdate)
+                {
+                    e.MetadataNode.ApplyMetadata(e.MetadataSnapshot.Value);
+                    updates.Enqueue(e);
+                }
+                else if (e.ChangeType == WatcherChangeTypes.Created && e.Frn != 0
+                    && INode.TryReadMetadata(e.FullPath, out var snapshot))
+                {
+                    indexed.TryGetValue(Path.GetDirectoryName(e.FullPath) ?? "",
+                        out var parent);
+                    indexed[e.FullPath] =
+                        new LiveFrnNode(e.Frn, e.FullPath, parent, snapshot);
+                }
+                return Task.CompletedTask;
+            }, reason => rescan.TrySetResult(reason), _ => { });
             if (watcher == null)
             {
+                FSChangeProcessor.Lookup = lookup;
                 Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
                     $"USN journal failed to open on NTFS volume {root}");
                 return;
@@ -165,16 +220,45 @@ namespace search.Tests
                 var file = Path.Combine(dir, "source.bin");
                 var link = Path.Combine(dir, "link.bin");
                 File.WriteAllBytes(file, new byte[4096]);
+                Assert.True(await WaitFor(() => indexed.ContainsKey(file)),
+                    $"the source file was not mapped by FRN; indexed: {string.Join("; ", indexed.Keys)}");
                 Assert.True(CreateHardLink(link, file, IntPtr.Zero),
                     $"CreateHardLink failed: {Marshal.GetLastWin32Error()}");
 
-                var completed = await Task.WhenAny(requested.Task, Task.Delay(15_000));
-                Assert.Same(requested.Task, completed);
-                Assert.Equal(DriveScanReason.UsnHardLinkChange, await requested.Task);
+                Assert.True(await WaitFor(() => updates.Any(e =>
+                        e.HardLinkParentDeltas.Any(d =>
+                            d.SizeDelta == 4096 && d.CountDelta == 1))),
+                    $"no targeted hard-link addition; got: {string.Join("; ", updates)}");
+                var hardLinkUpdate = updates.First(e => e.HardLinkParentDeltas.Any(d =>
+                    d.SizeDelta == 4096 && d.CountDelta == 1));
+                Assert.Equal(file, hardLinkUpdate.FullPath, ignoreCase: true);
+                var delta = Assert.Single(hardLinkUpdate.HardLinkParentDeltas);
+                Assert.Equal(dir, delta.ParentPath, ignoreCase: true);
+                Assert.Equal(4096, delta.SizeDelta);
+                Assert.Equal(1, delta.CountDelta);
+
+                while (updates.TryDequeue(out _)) { }
+                File.WriteAllBytes(file, new byte[8192]);
+                Assert.True(await WaitFor(() => updates.Any(e =>
+                        e.HardLinkParentDeltas.Any(d =>
+                            d.SizeDelta == 8192 && d.CountDelta == 0))),
+                    $"no targeted multi-link resize; got: {string.Join("; ", updates)}");
+
+                while (updates.TryDequeue(out _)) { }
+                File.Delete(link);
+                Assert.True(await WaitFor(() => updates.Any(e =>
+                        e.HardLinkParentDeltas.Any(d =>
+                            d.SizeDelta == -8192 && d.CountDelta == -1))),
+                    $"no targeted hard-link removal; got: {string.Join("; ", updates)}");
+
+                await Task.Delay(UsnDriveWatcher.ExactRescanQuietMs + 500);
+                Assert.False(rescan.Task.IsCompleted,
+                    "targeted hard-link repair unexpectedly requested an exact MFT rescan");
             }
             finally
             {
                 watcher.Dispose();
+                FSChangeProcessor.Lookup = lookup;
                 Directory.Delete(dir, recursive: true);
             }
         }
