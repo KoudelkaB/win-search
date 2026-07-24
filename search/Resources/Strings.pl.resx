@@ -26,4 +26,5 @@
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>Aktualizacje wyników na żywo wstrzymane — indeksowanie trwa</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Nadrabianie wyników na żywo...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→siatka {0:0} ms  |  UI {1:0} ms  |  Odzwierciedlenie FS {2:0} ms  |  Kolejka {3} (najstarszy {4:0} ms)  |  Odświeżanie {5:0} ms  |  CPU {6:0.0} rdzeni  |  RAM {7:0} MB</value></data>
+  <data name="Selected" xml:space="preserve"><value>Wybrano</value></data>
 </root>

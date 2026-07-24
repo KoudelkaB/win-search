@@ -26,4 +26,5 @@
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>ライブ結果の更新を一時停止中 — インデックス作成は継続しています</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>ライブ結果を追いつかせています...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→グリッド {0:0} ms  |  UI {1:0} ms  |  FS反映 {2:0} ms  |  キュー {3}（最古 {4:0} ms）  |  更新 {5:0} ms  |  CPU {6:0.0} コア  |  RAM {7:0} MB</value></data>
+  <data name="Selected" xml:space="preserve"><value>選択済み</value></data>
 </root>

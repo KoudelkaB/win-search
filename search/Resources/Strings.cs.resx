@@ -39,4 +39,5 @@ a ponechte libovolnou klávesu stisknutou</value></data>
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>Aktualizace živých výsledků pozastaveny – indexování pokračuje</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Dohánění živých výsledků...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→grid {0:0} ms  |  UI {1:0} ms  |  Propsání FS {2:0} ms  |  Fronta {3} (nejstarší {4:0} ms)  |  Obnovení {5:0} ms  |  CPU {6:0.0} jader  |  RAM {7:0} MB</value></data>
+  <data name="Selected" xml:space="preserve"><value>Vybráno</value></data>
 </root>

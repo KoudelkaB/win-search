@@ -26,4 +26,5 @@
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>Mises à jour des résultats en direct suspendues — l'indexation continue</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Mise à jour des résultats en direct en cours...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→grille {0:0} ms  |  UI {1:0} ms  |  Répercussion FS {2:0} ms  |  File {3} (plus ancien {4:0} ms)  |  Actualisation {5:0} ms  |  CPU {6:0.0} cœurs  |  RAM {7:0} Mo</value></data>
+  <data name="Selected" xml:space="preserve"><value>Sélectionnés</value></data>
 </root>

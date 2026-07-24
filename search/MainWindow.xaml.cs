@@ -31,8 +31,18 @@ namespace search
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window 
     {
+        public static readonly DependencyProperty SelectedCountProperty =
+            DependencyProperty.Register(nameof(SelectedCount), typeof(int), typeof(MainWindow),
+                new PropertyMetadata(0));
+
+        public int SelectedCount
+        {
+            get => (int)GetValue(SelectedCountProperty);
+            private set => SetValue(SelectedCountProperty, value);
+        }
+
         Filters filters = new Filters();
         SearchTerms searchTerms = new SearchTerms();
         public ObservableCollection<PinnedFilter> PinnedFilters { get; } = new();
@@ -231,7 +241,11 @@ namespace search
             // Save filter to history on any command
             filesViewCmd.OnCommand += () => filters.Used(filterTextBox.Text);
             filesViewCmd.nodes = () => filesView.SelectedItems?.Cast<INode>() ?? Enumerable.Empty<INode>();
-            filesView.SelectionChanged += (o, e) => filesViewCmd.OnChange();
+            filesView.SelectionChanged += (o, e) =>
+            {
+                SelectedCount = filesView.SelectedItems.Count;
+                filesViewCmd.OnChange();
+            };
 
             //The window-wide commander: the same ALT tree (and behavior) as the result list,
             //fed from Window_KeyDown/KeyUp whenever the list itself does not have the focus.

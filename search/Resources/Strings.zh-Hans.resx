@@ -26,4 +26,5 @@
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>实时结果更新已暂停 — 索引仍在继续</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>正在追赶实时结果...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→网格 {0:0} ms  |  UI {1:0} ms  |  FS 反映 {2:0} ms  |  队列 {3}（最早 {4:0} ms）  |  刷新 {5:0} ms  |  CPU {6:0.0} 核心  |  RAM {7:0} MB</value></data>
+  <data name="Selected" xml:space="preserve"><value>已选择</value></data>
 </root>
