@@ -294,8 +294,11 @@ namespace search
                 restoringSelection = true;
                 selected = filesView.SelectedItems.Cast<INode>().ToArray();
                 selectedStart = FirstSelectedItemIndex(selected);
-                focused = (ItemsControl.ContainerFromElement(filesView, Keyboard.FocusedElement as DependencyObject)
-                    as ListViewItem)?.DataContext as INode;
+                //END scrolls the previously focused row out of the virtualized viewport.
+                //WPF can then have no focused element until another row receives focus.
+                focused = filesView.IsKeyboardFocusWithin
+                    ? FocusedItemFromElement(filesView, Keyboard.FocusedElement) as INode
+                    : null;
                 restoreKeyboardFocus = focused != null;
             };
             Model.AfterItemsExchange = () =>
@@ -383,6 +386,15 @@ namespace search
             => firstSelectedIndex < 0 || remainingCount <= 0
                 ? -1
                 : Math.Min(firstSelectedIndex, remainingCount - 1);
+
+        internal static object FocusedItemFromElement(
+            ItemsControl itemsControl, IInputElement focusedElement)
+        {
+            if (focusedElement is not DependencyObject element || itemsControl == null)
+                return null;
+            return (ItemsControl.ContainerFromElement(itemsControl, element)
+                as FrameworkElement)?.DataContext;
+        }
 
         int FirstSelectedItemIndex(INode[] selected)
         {

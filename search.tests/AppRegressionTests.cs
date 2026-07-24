@@ -771,6 +771,36 @@ namespace search.Tests
             int firstSelectedIndex, int remainingCount, int expected)
             => Assert.Equal(expected, MainWindow.SelectionContinuationIndex(firstSelectedIndex, remainingCount));
 
+        [Fact]
+        public void MissingKeyboardFocusAfterEndIsBenign()
+            => Assert.Null(MainWindow.FocusedItemFromElement(null, null));
+
+        [Fact]
+        public void ItemExchangeAlwaysRunsSelectionCleanup()
+        {
+            var calls = new List<string>();
+            Assert.Throws<InvalidOperationException>(() => SearchModel.ExchangeItems(
+                () => calls.Add("before"),
+                () =>
+                {
+                    calls.Add("mutation");
+                    throw new InvalidOperationException();
+                },
+                () => calls.Add("after")));
+            Assert.Equal(new[] { "before", "mutation", "after" }, calls);
+
+            calls.Clear();
+            Assert.Throws<InvalidOperationException>(() => SearchModel.ExchangeItems(
+                () =>
+                {
+                    calls.Add("before");
+                    throw new InvalidOperationException();
+                },
+                () => calls.Add("mutation"),
+                () => calls.Add("after")));
+            Assert.Equal(new[] { "before", "after" }, calls);
+        }
+
         [Theory]
         [InlineData(0, -1, -1, false, -1)]
         [InlineData(3, 1, -1, false, 1)] //First jump reveals the active selected row

@@ -348,6 +348,25 @@ namespace search.Models
         public Action BeforeItemsExchange = () => { };
         public Action AfterItemsExchange = () => { };
 
+        internal static void ExchangeItems(
+            Action before, Action mutation, Action after)
+        {
+            try
+            {
+                before();
+                mutation();
+            }
+            finally
+            {
+                //Selection/focus preservation keeps transient UI state between these
+                //callbacks. Always release it, including when capture or mutation fails.
+                after();
+            }
+        }
+
+        void ExchangeItems(Action mutation)
+            => ExchangeItems(BeforeItemsExchange, mutation, AfterItemsExchange);
+
         long BeginViewQuery()
         {
             lock (viewQueryDeltaLock)
@@ -616,25 +635,26 @@ namespace search.Models
                                 //stable collection and its scroll/selection state.
                                 var replaceSource = PreferFreshItemsSource(filterChanged,
                                     Items.Count, items.Length);
-                                BeforeItemsExchange();
-                                itemsComplete = false;
-                                if (replaceSource)
+                                ExchangeItems(() =>
                                 {
-                                    var fresh = new RangeObservableCollection<INode>();
-                                    fresh.AddRange(items);
-                                    //The Fody-woven setter raises Items immediately, before
-                                    //AfterItemsExchange checks surviving selection/focus.
-                                    Items = fresh;
-                                }
-                                else if (Items is RangeObservableCollection<INode> target)
-                                    target.ReplaceRange(items);
-                                else
-                                {
-                                    var fresh = new RangeObservableCollection<INode>();
-                                    fresh.AddRange(items);
-                                    Items = fresh;
-                                }
-                                AfterItemsExchange();
+                                    itemsComplete = false;
+                                    if (replaceSource)
+                                    {
+                                        var fresh = new RangeObservableCollection<INode>();
+                                        fresh.AddRange(items);
+                                        //The Fody-woven setter raises Items immediately, before
+                                        //AfterItemsExchange checks surviving selection/focus.
+                                        Items = fresh;
+                                    }
+                                    else if (Items is RangeObservableCollection<INode> target)
+                                        target.ReplaceRange(items);
+                                    else
+                                    {
+                                        var fresh = new RangeObservableCollection<INode>();
+                                        fresh.AddRange(items);
+                                        Items = fresh;
+                                    }
+                                });
                                 reset = true;
                                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
                             }
@@ -956,9 +976,8 @@ namespace search.Models
                     liveWindow.ApplySmallBatch(changed, Include, compare, operations);
                     if (operations.Count > 0)
                     {
-                        BeforeItemsExchange();
-                        LiveResultWindow<INode>.ApplyOperations(Items, operations);
-                        AfterItemsExchange();
+                        ExchangeItems(() =>
+                            LiveResultWindow<INode>.ApplyOperations(Items, operations));
                         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
                     }
                     itemsTruncated = liveWindow.IsTruncated;
@@ -1072,9 +1091,9 @@ namespace search.Models
                     if (removalCount >= 0 && removalCount <= TargetedBulkRemovalLimit)
                     {
                         gridMode = "bulk-remove";
-                        BeforeItemsExchange();
-                        LiveResultWindow<INode>.ApplyPureRemovalDiff(items, merged, removed);
-                        AfterItemsExchange();
+                        ExchangeItems(() =>
+                            LiveResultWindow<INode>.ApplyPureRemovalDiff(
+                                items, merged, removed));
                         PropertyChanged?.Invoke(this,
                             new PropertyChangedEventArgs(nameof(CountsInfo)));
                         publishedRowCount = items.Count;
@@ -1092,9 +1111,9 @@ namespace search.Models
                         && targeted.OperationCount <= TargetedBulkMutationLimit)
                     {
                         gridMode = "bulk-diff";
-                        BeforeItemsExchange();
-                        LiveResultWindow<INode>.ApplyTargetedDiff(items, merged, targeted);
-                        AfterItemsExchange();
+                        ExchangeItems(() =>
+                            LiveResultWindow<INode>.ApplyTargetedDiff(
+                                items, merged, targeted));
                         PropertyChanged?.Invoke(this,
                             new PropertyChangedEventArgs(nameof(CountsInfo)));
                         publishedRowCount = items.Count;
@@ -1103,15 +1122,17 @@ namespace search.Models
                     }
 
                     gridMode = "bulk-reset";
-                    BeforeItemsExchange();
-                    if (items is RangeObservableCollection<INode> target) target.ReplaceRange(merged);
-                    else
+                    ExchangeItems(() =>
                     {
-                        target = new RangeObservableCollection<INode>();
-                        target.AddRange(merged);
-                        Items = target;
-                    }
-                    AfterItemsExchange();
+                        if (items is RangeObservableCollection<INode> target)
+                            target.ReplaceRange(merged);
+                        else
+                        {
+                            target = new RangeObservableCollection<INode>();
+                            target.AddRange(merged);
+                            Items = target;
+                        }
+                    });
                     PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountsInfo)));
                     publishedRowCount = Items.Count;
                     return new BatchUpdateOutcome(true, liveWindow.NeedsRefill,

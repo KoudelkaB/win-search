@@ -26,5 +26,8 @@
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>Atualizações dos resultados em tempo real suspensas — a indexação continua</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>Atualizando os resultados em tempo real...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→grade {0:0} ms  |  UI {1:0} ms  |  Reflexo do FS {2:0} ms  |  Fila {3} (mais antigo {4:0} ms)  |  Atualização {5:0} ms  |  CPU {6:0.0} núcleos  |  RAM {7:0} MB</value></data>
+  <data name="Show next selected item" xml:space="preserve"><value>Mostrar próximo item selecionado</value></data>
+  <data name="Show previous selected item" xml:space="preserve"><value>Mostrar item selecionado anterior</value></data>
+  <data name="ShowSelectedTooltip" xml:space="preserve"><value>Mostrar próximo item selecionado (Ctrl+J); mantenha Shift pressionado para o item anterior</value></data>
   <data name="Selected" xml:space="preserve"><value>Selecionados</value></data>
 </root>

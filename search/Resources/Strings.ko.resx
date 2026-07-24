@@ -26,5 +26,8 @@
   <data name="LiveUpdatesSuspended" xml:space="preserve"><value>실시간 결과 업데이트 일시 중지됨 - 인덱싱 계속 진행 중</value></data>
   <data name="LiveUpdatesRecovering" xml:space="preserve"><value>실시간 결과를 따라잡는 중...</value></data>
   <data name="LiveUpdatesHealthDetails" xml:space="preserve"><value>FS→그리드 {0:0}ms  |  UI {1:0}ms  |  FS 반영 {2:0}ms  |  대기열 {3} (가장 오래됨 {4:0}ms)  |  새로 고침 {5:0}ms  |  CPU {6:0.0}코어  |  RAM {7:0}MB</value></data>
+  <data name="Show next selected item" xml:space="preserve"><value>다음 선택 항목 표시</value></data>
+  <data name="Show previous selected item" xml:space="preserve"><value>이전 선택 항목 표시</value></data>
+  <data name="ShowSelectedTooltip" xml:space="preserve"><value>다음 선택 항목 표시 (Ctrl+J); Shift 키를 누르면 이전 항목 표시</value></data>
   <data name="Selected" xml:space="preserve"><value>선택됨</value></data>
 </root>
