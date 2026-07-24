@@ -18,7 +18,8 @@ namespace search.Models
     }
 
     internal readonly record struct MftLoadTiming(
-        long ReadParseMs, long LinkMs, long AggregateHashMs, long DenseMs);
+        long ReadParseMs, long LinkMs, long AggregateDirectoryHashMs, long FileHashDenseMs,
+        long NamesSeen, long UniqueNames, long NameBytesSaved);
 
     /// <summary>
     /// Base of every file-system entry the search works with (MFT records, watcher events, archive entries).

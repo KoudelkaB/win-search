@@ -6,7 +6,7 @@ using System.Globalization;
 
 namespace search.Models
 {
-    public class SearchTerms : History
+    public class SearchTerms : History, IDisposable
     {
         class Info
         {
@@ -16,6 +16,7 @@ namespace search.Models
 
         static readonly string path = UserDataPaths.For("SearchTerms");
         Dictionary<string, Info> items;
+        readonly DebouncedLinesWriter writer;
 
         /// <summary>
         /// 1000 most used search terms
@@ -55,6 +56,7 @@ namespace search.Models
                 $"New '{path}' will be created".Debug();
                 items = new Dictionary<string, Info>(StringComparer.OrdinalIgnoreCase);
             }
+            writer = new DebouncedLinesWriter(path);
         }
 
         private static void MigrateLegacyStore()
@@ -76,8 +78,8 @@ namespace search.Models
         public void Used(string item)
         {
             Add2History(item);
-            item = item.Trim();
             if (string.IsNullOrWhiteSpace(item)) return; // Don't save empty search terms
+            item = item.Trim();
             
             if (items.TryGetValue(item, out var i))
             {
@@ -108,12 +110,12 @@ namespace search.Models
         /// </summary>
         public void Save()
         {
-            try
-            {
-                File.WriteAllLines(path, items.OrderByDescending(x => x.Value.TimesUsed)
-                    .Select(x => $"{x.Value.TimesUsed.ToString(CultureInfo.InvariantCulture)}|{x.Value.LastUsed:O}|{x.Key}"));
-            }
-            catch { }
+            var lines = items.OrderByDescending(x => x.Value.TimesUsed)
+                .Select(x => $"{x.Value.TimesUsed.ToString(CultureInfo.InvariantCulture)}|{x.Value.LastUsed:O}|{x.Key}")
+                .ToArray();
+            writer.Schedule(lines);
         }
+
+        public void Dispose() => writer.Dispose();
     }
 }

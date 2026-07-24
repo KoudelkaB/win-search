@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using search;
+using search.Models;
 using Xunit;
 
 namespace search.Tests
@@ -102,6 +106,61 @@ namespace search.Tests
                 Assert.False(Directory.Exists(obsolete.FullName));
             }
             finally { Directory.Delete(root, true); }
+        }
+
+        [Fact]
+        public async Task DeferredHistoryWriteNeverBlocksTheSchedulingThread()
+        {
+            var entered = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var writes = new ConcurrentQueue<string[]>();
+            var writer = new DebouncedLinesWriter("unused", TimeSpan.Zero,
+                async (_, lines) =>
+                {
+                    writes.Enqueue(lines);
+                    entered.TrySetResult();
+                    await release.Task;
+                });
+            try
+            {
+                writer.Schedule(new[] { "first" });
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+                var schedule = Task.Run(() => writer.Schedule(new[] { "latest" }));
+                var completed = await Task.WhenAny(schedule, Task.Delay(TimeSpan.FromSeconds(1)));
+                Assert.Same(schedule, completed);
+                await schedule;
+            }
+            finally
+            {
+                release.TrySetResult();
+                writer.Dispose();
+            }
+
+            Assert.Equal(2, writes.Count);
+            Assert.Equal("latest", writes.Last().Single());
+        }
+
+        [Fact]
+        public void DeferredHistoryWriteCoalescesRapidSnapshotsAndFlushesTheLastOne()
+        {
+            var writes = new ConcurrentQueue<string[]>();
+            using (var writer = new DebouncedLinesWriter("unused", TimeSpan.FromSeconds(30),
+                (_, lines) =>
+                {
+                    writes.Enqueue(lines);
+                    return Task.CompletedTask;
+                }))
+            {
+                writer.Schedule(new[] { "first" });
+                writer.Schedule(new[] { "second" });
+                writer.Schedule(new[] { "latest" });
+            }
+
+            Assert.Single(writes);
+            Assert.Equal("latest", writes.Single().Single());
         }
 
         private static string CreateRoot()

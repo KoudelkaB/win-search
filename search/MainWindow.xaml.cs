@@ -106,6 +106,8 @@ namespace search
                 Broker.StartupElevationAccepted -= Broker_StartupElevationAccepted;
                 WindowLayoutStore.Save(this, CaptureColumnWidths());
                 SaveWorkspaceSettings();
+                filters.Dispose();
+                searchTerms.Dispose();
                 Model?.Dispose();
             };
 

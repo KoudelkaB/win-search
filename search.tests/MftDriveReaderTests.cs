@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using search.Models;
 using Xunit;
 
@@ -280,6 +281,43 @@ namespace search.Tests
         }
 
         [Fact]
+        public void ReusesEqualNameStringsAcrossDifferentDirectories()
+        {
+            var mft = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "A") }) // 6
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "B") }) // 7
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "shared.bin") })                          // 8
+                .AddRecord(attributes: new[] { FakeMft.FileName(7, "shared.bin") });                         // 9
+            using var stream = new MemoryStream(mft.Image());
+            var source = Assert.IsAssignableFrom<IFrnNodeSource>(MftDriveReader.GetNodes(
+                stream, mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root));
+            var files = source.DenseNodes.Where(n => n.Name == "shared.bin").ToArray();
+
+            Assert.Equal(2, files.Length);
+            Assert.Same(files[0].Name, files[1].Name);
+            Assert.Equal(4, source.LoadTiming.NamesSeen);
+            Assert.Equal(3, source.LoadTiming.UniqueNames);
+            Assert.Equal(48, source.LoadTiming.NameBytesSaved);
+        }
+
+        [Fact]
+        public void NameDeduplicationPreservesExactCasing()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "A") })
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "B") })
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "Shared.bin") })
+                .AddRecord(attributes: new[] { FakeMft.FileName(7, "shared.bin") })
+                .Parse();
+            var upper = nodes.Single(n => n.Name == "Shared.bin");
+            var lower = nodes.Single(n => n.Name == "shared.bin");
+
+            Assert.NotSame(upper.Name, lower.Name);
+            Assert.Equal(@"Q:\A\Shared.bin", upper.FullName);
+            Assert.Equal(@"Q:\B\shared.bin", lower.FullName);
+        }
+
+        [Fact]
         public void RecoversTheWin32NameFromAnExtensionRecord()
         {
             // A crowded base record kept only the DOS 8.3 name; the Win32 name overflowed
@@ -301,6 +339,41 @@ namespace search.Tests
             Assert.Equal(@"Q:\dotnet-sdk-10.0.100-preview.7.25380.108-win-x64.exe", file.FullName);
             Assert.DoesNotContain(nodes, n => n.Name == "DOTNET~4.EXE");
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size); // one link, counted once
+        }
+
+        [Fact]
+        public void ExtensionRecordNamesUseTheSameNamePool()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "A") }) // 6
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "B") }) // 7
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "shared.bin") })                          // 8
+                .AddRecord(attributes: new[] { FakeMft.FileName(7, "SHARED~1.BIN", ns: 2) })                // 9
+                .AddRecord(baseReference: 9, attributes: new[] { FakeMft.FileName(7, "shared.bin", ns: 1) })// 10
+                .Parse(chunkBytes: 1024);
+            var files = nodes.Where(n => n.Name == "shared.bin").ToArray();
+
+            Assert.Equal(2, files.Length);
+            Assert.Same(files[0].Name, files[1].Name);
+            Assert.Contains(files, n => n.FullName == @"Q:\A\shared.bin");
+            Assert.Contains(files, n => n.FullName == @"Q:\B\shared.bin");
+        }
+
+        [Fact]
+        public void NamePoolCanonicalizesConcurrentCallers()
+        {
+            const int count = 10_000;
+            var canonical = new string[count];
+            using var pool = new MftNamePool(count);
+
+            Parallel.For(0, count, i =>
+                canonical[i] = pool.Canonicalize(new string("shared.bin".ToCharArray())));
+
+            Assert.All(canonical, value => Assert.Same(canonical[0], value));
+            Assert.Equal(count, pool.Stats.NamesSeen);
+            Assert.Equal(1, pool.Stats.UniqueNames);
+            Assert.Equal(count - 1, pool.Stats.DuplicateNames);
+            Assert.True(pool.Stats.SavedBytes > 0);
         }
 
         [Fact]
@@ -529,6 +602,38 @@ namespace search.Tests
             Assert.Equal(42UL, nodes.Single(n => n.Name == "f42.dat").Size);
             Assert.Equal((ulong)(files * (files - 1) / 2), nodes.Single(n => n.Name == "Q:").Size);
             Assert.Equal((uint)files, nodes.Single(n => n.Name == "Q:").Count);
+        }
+
+        [Fact]
+        public void ParallelDenseCompactionPreservesMftOrderAndPathHashes()
+        {
+            const int records = 5_000;
+            var expected = new string[records];
+            var expectedCount = 0;
+            var mft = WithRoot(1024);
+            for (var i = 0; i < records; i++)
+            {
+                if (i % 997 == 0)
+                {
+                    mft.AddEmpty();
+                    continue;
+                }
+                var name = $"ordered-{i:D4}.bin";
+                expected[expectedCount++] = name;
+                mft.AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, name) });
+            }
+
+            var nodes = mft.Parse(chunkBytes: 64 * 1024);
+            var actual = nodes.Skip(1).Select(n => n.Name).ToArray();
+            var compact = new DriveNodeIndex.CompactPathIndex(nodes);
+
+            Assert.Equal(expected[..expectedCount], actual);
+            foreach (var at in new[] { 1, records / 2, records - 1 })
+            {
+                if (at % 997 == 0) continue;
+                Assert.True(compact.TryGetValue($@"Q:\ordered-{at:D4}.bin", out var node));
+                Assert.Equal($"ordered-{at:D4}.bin", node.Name);
+            }
         }
     }
 }

@@ -70,37 +70,44 @@ namespace search.Models
             var pendingSizes = new ConcurrentQueue<MftNode>();
             var parallelOptions = new ParallelOptions { CancellationToken = cancellationToken };
 
-            MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
+            MftNamePoolStats nameStats;
+            using (var namePool = new MftNamePool(recordCount))
             {
-                Parallel.ForEach(Partitioner.Create(0, count), parallelOptions, range =>
+                MftChunkReader.Read(mft, bytesPerRecord, length, (buffer, first, count) =>
                 {
-                    for (var i = range.Item1; i < range.Item2; i++)
+                    Parallel.ForEach(Partitioner.Create(0, count), parallelOptions, range =>
                     {
-                        var record = buffer.AsSpan(i * bytesPerRecord, bytesPerRecord);
-                        if (!MftFixup.Apply(record))
-                            continue;
-
-                        var baseReference = U64(record[32..]);
-                        if ((baseReference & FileReferenceMask) != 0)
+                        for (var i = range.Item1; i < range.Item2; i++)
                         {
-                            // Only in-use extensions - a freed one may point at a base index
-                            // that has since been reused by a different file
-                            if ((U16(record[22..]) & 0x1) != 0)
-                                ScanExtension(record, baseReference, extensionSizes, extensionLinks, extensionNames);
-                            continue;
-                        }
+                            var record = buffer.AsSpan(i * bytesPerRecord, bytesPerRecord);
+                            if (!MftFixup.Apply(record))
+                                continue;
 
-                        var index = first + i;
-                        var node = ParseRecord(record, index, rootName, pendingSizes,
-                            out var parentReference, out var nameRank, out var linkParents, out var hasOwnSingleLink);
-                        parsed[index] = node;
-                        if (node == null) continue;
-                        parentReferences[index] = parentReference;
-                        nameRanks[index] = (byte)(nameRank | (hasOwnSingleLink ? OwnSingleLink : 0));
-                        if (linkParents != null) baseHardLinks[(uint)index] = linkParents;
-                    }
-                });
-            }, chunkBytes, cancellationToken, drainOnCancellation);
+                            var baseReference = U64(record[32..]);
+                            if ((baseReference & FileReferenceMask) != 0)
+                            {
+                                // Only in-use extensions - a freed one may point at a base index
+                                // that has since been reused by a different file
+                                if ((U16(record[22..]) & 0x1) != 0)
+                                    ScanExtension(record, baseReference, extensionSizes, extensionLinks,
+                                        extensionNames, namePool);
+                                continue;
+                            }
+
+                            var index = first + i;
+                            var node = ParseRecord(record, index, rootName, pendingSizes, namePool,
+                                out var parentReference, out var nameRank, out var linkParents,
+                                out var hasOwnSingleLink);
+                            parsed[index] = node;
+                            if (node == null) continue;
+                            parentReferences[index] = parentReference;
+                            nameRanks[index] = (byte)(nameRank | (hasOwnSingleLink ? OwnSingleLink : 0));
+                            if (linkParents != null) baseHardLinks[(uint)index] = linkParents;
+                        }
+                    });
+                }, chunkBytes, cancellationToken, drainOnCancellation);
+                nameStats = namePool.Stats;
+            }
             var readParseMs = phase.ElapsedMilliseconds;
             phase.Restart();
             cancellationToken.ThrowIfCancellationRequested();
@@ -175,23 +182,11 @@ namespace search.Models
 
             var linkMs = phase.ElapsedMilliseconds;
             phase.Restart();
-            CalculateFolderSizesAndPathHashes(parsed, baseHardLinks, parentReferences, cancellationToken);
+            CalculateFolderSizesAndDirectoryPathHashes(
+                parsed, baseHardLinks, parentReferences, cancellationToken);
             var aggregateHashMs = phase.ElapsedMilliseconds;
             phase.Restart();
-
-            var liveCount = 0;
-            for (var i = 0; i < parsed.Length; i++)
-            {
-                if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
-                if (parsed[i] != null) liveCount++;
-            }
-            var dense = new INode[liveCount];
-            var at = 0;
-            for (var i = 0; i < parsed.Length; i++)
-            {
-                if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
-                if (parsed[i] != null) dense[at++] = parsed[i];
-            }
+            var dense = BuildDenseAndFinalizeFilePathHashes(parsed, cancellationToken);
             //Only genuinely multi-linked live records need to survive as sparse metadata.
             //The USN journal reports a hard-link mutation but an unprivileged record cannot
             //name the removed link, so the watcher uses this bit to request an exact MFT
@@ -202,12 +197,14 @@ namespace search.Models
                     hardLinkedEntries.Add(entry);
             hardLinkedEntries.Sort();
             return new MftNodeCollection(parsed, dense, hardLinkedEntries.ToArray(),
-                new MftLoadTiming(readParseMs, linkMs, aggregateHashMs, phase.ElapsedMilliseconds));
+                new MftLoadTiming(readParseMs, linkMs, aggregateHashMs, phase.ElapsedMilliseconds,
+                    nameStats.NamesSeen, nameStats.UniqueNames, nameStats.SavedBytes));
         }
 
         static MftNode ParseRecord(ReadOnlySpan<byte> record, int index, string rootName,
-            ConcurrentQueue<MftNode> pendingSizes, out ulong parentReference, out byte nameRank,
-            out ulong[] hardLinks, out bool hasOwnSingleLink)
+            ConcurrentQueue<MftNode> pendingSizes, MftNamePool namePool,
+            out ulong parentReference, out byte nameRank, out ulong[] hardLinks,
+            out bool hasOwnSingleLink)
         {
             parentReference = 0;
             nameRank = NoNameRank;
@@ -317,12 +314,13 @@ namespace search.Models
             hardLinks = linkParents?.ToArray();
             hasOwnSingleLink = linkCount == 1;
             var frn = ((ulong)sequenceNumber << 48) | (uint)index;
+            var selectedName = index == RootEntryNumber ? rootName : namePool.Canonicalize(name);
             var node = isDirectory
                 ? new MftDirectoryNode(frn,
-                    index == RootEntryNumber ? rootName : name,
+                    selectedName,
                     attributes, Time(hasStandardInfo ? siModified : fnModified))
                 : new MftNode(frn,
-                    index == RootEntryNumber ? rootName : name,
+                    selectedName,
                     attributes, dataSize,
                     Time(hasStandardInfo ? siModified : fnModified));
 
@@ -339,7 +337,11 @@ namespace search.Models
         /// of any non-DOS $FILE_NAME (hard-link names overflowed from the base), and the
         /// best-ranked name itself - the base may have kept only its DOS 8.3 name
         /// </summary>
-        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference, NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes, NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links, NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)> names)
+        static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference,
+            NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes,
+            NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links,
+            NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)> names,
+            MftNamePool namePool)
         {
             var baseIndex = (uint)(baseReference & FileReferenceMask);
             var baseSequence = (ushort)(baseReference >> 48);
@@ -400,8 +402,11 @@ namespace search.Models
                     });
 
             if (bestName != null)
+            {
+                bestName = namePool.Canonicalize(bestName);
                 names.AddOrUpdate(baseIndex, (baseSequence, bestRank, bestName, bestParent),
                     (_, old) => old.Rank <= bestRank ? old : (baseSequence, bestRank, bestName, bestParent));
+            }
         }
 
         /// <summary>
@@ -485,7 +490,7 @@ namespace search.Models
         /// Directory path hashes are finalized top-down; file hashes can then use their
         /// cached parent hash in parallel instead of recursively re-hashing every ancestor.
         /// </summary>
-        static void CalculateFolderSizesAndPathHashes(MftNode[] nodes,
+        static void CalculateFolderSizesAndDirectoryPathHashes(MftNode[] nodes,
             NonBlocking.ConcurrentDictionary<uint, ulong[]> hardLinks, ulong[] folderSizes,
             CancellationToken cancellationToken)
         {
@@ -588,14 +593,58 @@ namespace search.Models
                 foreach (var directory in levels[depth])
                     directory.SetPathHash(NodePath.ComputeChildPathHash(directory.Parent, directory.Name));
             }
+        }
 
-            Parallel.ForEach(Partitioner.Create(0, nodes.Length),
-                new ParallelOptions { CancellationToken = cancellationToken }, range =>
+        /// <summary>
+        /// Finalize file hashes and compact the sparse MFT record array without the former
+        /// third full-array pass. Per-range counts produce deterministic prefix offsets, so
+        /// both passes run in parallel while the dense array retains MFT entry order.
+        /// </summary>
+        static INode[] BuildDenseAndFinalizeFilePathHashes(MftNode[] nodes,
+            CancellationToken cancellationToken)
+        {
+            if (nodes.Length == 0) return Array.Empty<INode>();
+            var targetChunks = Math.Max(1, Environment.ProcessorCount * 4);
+            var chunkSize = (int)Math.Max(4096,
+                ((long)nodes.Length + targetChunks - 1) / targetChunks);
+            var chunkCount = (int)(((long)nodes.Length + chunkSize - 1) / chunkSize);
+            var counts = new int[chunkCount];
+            var options = new ParallelOptions { CancellationToken = cancellationToken };
+
+            Parallel.For(0, chunkCount, options, chunk =>
             {
-                for (var i = range.Item1; i < range.Item2; i++)
-                    if (nodes[i] is { IsDirectory: false } file)
-                        file.SetPathHash(NodePath.ComputeChildPathHash(file.Parent, file.Name));
+                var end = Math.Min(nodes.Length, (chunk + 1) * chunkSize);
+                var count = 0;
+                for (var i = chunk * chunkSize; i < end; i++)
+                {
+                    if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    if (nodes[i] is { } node)
+                    {
+                        count++;
+                        if (node is { IsDirectory: false } file)
+                            file.SetPathHash(NodePath.ComputeChildPathHash(file.Parent, file.Name));
+                    }
+                }
+                counts[chunk] = count;
             });
+
+            var offsets = new int[chunkCount + 1];
+            for (var i = 0; i < counts.Length; i++)
+                offsets[i + 1] = checked(offsets[i] + counts[i]);
+            var dense = new INode[offsets[chunkCount]];
+
+            Parallel.For(0, chunkCount, options, chunk =>
+            {
+                var end = Math.Min(nodes.Length, (chunk + 1) * chunkSize);
+                var at = offsets[chunk];
+                for (var i = chunk * chunkSize; i < end; i++)
+                {
+                    if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    if (nodes[i] is { } node)
+                        dense[at++] = node;
+                }
+            });
+            return dense;
         }
 
         class MftNode : INode

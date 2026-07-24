@@ -2909,7 +2909,10 @@ namespace search.Models
                 + $"total={totalMs}ms; nodes={nodes}"
                 + (mft.HasValue
                     ? $"; MFT(read/parse={mft.Value.ReadParseMs}ms, link={mft.Value.LinkMs}ms, "
-                        + $"sizes/hash={mft.Value.AggregateHashMs}ms, dense={mft.Value.DenseMs}ms)"
+                        + $"sizes/dir-hash={mft.Value.AggregateDirectoryHashMs}ms, "
+                        + $"file-hash/dense={mft.Value.FileHashDenseMs}ms, "
+                        + $"names={mft.Value.UniqueNames}/{mft.Value.NamesSeen}, "
+                        + $"dedup={mft.Value.NameBytesSaved / 1048576d:F1}MiB)"
                     : ""));
 
         static void ObserveAbandoned(Task task)
