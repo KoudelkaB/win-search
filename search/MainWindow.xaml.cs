@@ -1074,9 +1074,22 @@ namespace search
             if (filesView.View is not GridView gridView)
                 return;
 
-            for (var i = 0; i < gridView.Columns.Count && i < widths.Count; i++)
+            var countIndex = gridView.Columns
+                .Cast<GridViewColumn>()
+                .Select((column, index) => (column, index))
+                .Where(x => GridViewSort.GetSortKey(x.column) == nameof(INode.Count))
+                .Select(x => x.index)
+                .DefaultIfEmpty(-1)
+                .First();
+            //Layouts saved before Count had five positional widths. Leave the new column
+            //at Auto and shift Changed/Folder back onto their original saved values.
+            var legacyWithoutCount = countIndex >= 0 && widths.Count == gridView.Columns.Count - 1;
+            for (var i = 0; i < gridView.Columns.Count; i++)
             {
-                var width = widths[i];
+                if (legacyWithoutCount && i == countIndex) continue;
+                var source = legacyWithoutCount && i > countIndex ? i - 1 : i;
+                if (source >= widths.Count) break;
+                var width = widths[source];
                 if (width > 0)
                 {
                     gridView.Columns[i].Width = width;
@@ -1096,17 +1109,20 @@ namespace search
 
         private void UpdateFolderColumnWidth()
         {
-            if (updatingFolderWidth || filesView.View is not GridView gridView || gridView.Columns.Count < 5)
+            if (updatingFolderWidth || filesView.View is not GridView gridView)
                 return;
 
-            var folderColumn = gridView.Columns[4];
+            var folderColumn = gridView.Columns.Cast<GridViewColumn>()
+                .FirstOrDefault(column =>
+                    GridViewSort.GetSortKey(column) == nameof(INode.Folder));
+            if (folderColumn == null) return;
             var available = filesView.ActualWidth - SystemParameters.VerticalScrollBarWidth - 8;
             if (available <= 0)
                 return;
 
             var fixedWidth = gridView.Columns
                 .Cast<GridViewColumn>()
-                .Where((_, index) => index != 4)
+                .Where(column => !ReferenceEquals(column, folderColumn))
                 .Sum(column => column.ActualWidth);
 
             var width = Math.Max(80, available - fixedWidth);
@@ -3263,10 +3279,11 @@ namespace search
             var ascending = sort[0] == '+';
             var sortBy = sort.Substring(1);
 
-            // Size and date columns intentionally show their most useful order first:
-            // largest/newest to smallest/oldest. Their '+' token therefore maps to a
-            // descending value order, unlike the text and content-result columns.
+            // Numeric aggregate and date columns intentionally show their most useful
+            // order first: largest/newest to smallest/oldest. Their '+' token therefore
+            // maps to a descending value order, unlike text and content-result columns.
             if (sortBy == nameof(INode.Size) ||
+                sortBy == nameof(INode.Count) ||
                 sortBy == nameof(INode.LastChangeTime))
             {
                 ascending = !ascending;

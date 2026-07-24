@@ -1126,6 +1126,7 @@ namespace search.Models
                 case "C": key = (a, b) => FoundRank(a).CompareTo(FoundRank(b)); ascending = up; break;
                 case nameof(INode.Name): key = (a, b) => string.Compare(a.Name, b.Name); ascending = up; break;
                 case nameof(INode.Size): key = (a, b) => a.Size.CompareTo(b.Size); ascending = !up; break;
+                case nameof(INode.Count): key = (a, b) => a.Count.CompareTo(b.Count); ascending = !up; break;
                 case nameof(INode.LastChangeTime): key = (a, b) => a.LastChangeTime.CompareTo(b.LastChangeTime); ascending = !up; break;
                 case nameof(INode.FullName): key = NodePath.ByPath.Compare; ascending = up; break;
                 case nameof(INode.Folder): key = NodePath.ByFolderThenName.Compare; ascending = up; break;
@@ -1331,9 +1332,9 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Monotone unsigned key producing exactly SortComparison's order for the metadata
-        /// sorts (smaller key = earlier row; '+' shows largest values first, so it inverts
-        /// the key). Null for the comparer-based sorts - names, paths, content rank.
+        /// Monotone unsigned key producing exactly SortComparison's order for numeric and
+        /// date sorts (smaller key = earlier row; '+' shows largest values first, so it
+        /// inverts the key). Null for comparer-based sorts - names, paths, content rank.
         /// </summary>
         static Func<INode, ulong> SortScalarKey(string sort)
         {
@@ -1341,6 +1342,7 @@ namespace search.Models
             Func<INode, ulong> key = sort.Substring(1) switch
             {
                 nameof(INode.Size) => n => n.Size,
+                nameof(INode.Count) => n => n.Count,
                 nameof(INode.LastChangeTime) => n => (ulong)Math.Max(0, n.LastChangeTime.Ticks),
                 _ => null
             };
@@ -1448,7 +1450,7 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Remove node and subtract a removed file from its ancestor directory sizes
+        /// Remove node and subtract its size/item contribution from ancestor directories
         /// </summary>
         /// <param name="path"></param>
         INode Remove(string path, bool patchVersion = true)
@@ -1457,7 +1459,7 @@ namespace search.Models
             //path-backed watcher node has no parent references and resolves directories
             //through the index; doing that after TryRemove allowed a concurrent MFT publish
             //to place the lookup and the visible rows in different shard generations.
-            if (!files.TryRemove(path, SubtractFileSize, out var n)) return null;
+            if (!files.TryRemove(path, SubtractNodeAggregates, out var n)) return null;
             if (patchVersion) PatchFileRemoved(n);
             //Directories are routed through RemoveTrees by the batch handler. That method
             //subtracts their remaining aggregate once and removes every indexed descendant;
@@ -1465,10 +1467,9 @@ namespace search.Models
             return n;
         }
 
-        void SubtractFileSize(INode node)
-        {
-            if (!node.IsDirectory) PropagateUnsignedSizeDelta(node, node.Size, subtract: true);
-        }
+        void SubtractNodeAggregates(INode node)
+            => PropagateUnsignedAggregateDelta(node,
+                node.IsDirectory ? 0 : node.Size, 1, subtract: true);
 
         /// <summary>
         /// Remove a path and every indexed descendant. FileSystemWatcher normally emits
@@ -1523,10 +1524,10 @@ namespace search.Models
             var roots = new HashSet<object>(treeRoots.Select(x => x.Node), ReferenceEqualityComparer.Instance);
             var prefixes = treeRoots.Select(x => x.Path + Path.DirectorySeparatorChar).ToArray();
 
-            //The directory node already stores the aggregate of every indexed file below
-            //it. Subtract that value once from surviving ancestors. Walking every removed
-            //file was both expensive and dependent on receiving every descendant USN event.
-            foreach (var (_, root) in treeRoots) SubtractTreeSizeFromAncestors(root);
+            //The directory node already stores both aggregates for its complete subtree.
+            //Subtract them once from surviving ancestors. Walking every removed item was
+            //both expensive and dependent on receiving every descendant USN event.
+            foreach (var (_, root) in treeRoots) SubtractTreeAggregatesFromAncestors(root);
 
             var candidates = files.Values.AsParallel()
                 .Where(n => roots.Contains(n) || NodePath.IsUnderAny(n, roots, prefixes))
@@ -1541,20 +1542,27 @@ namespace search.Models
             return removed.ToArray();
         }
 
-        void SubtractTreeSizeFromAncestors(INode root)
-            => PropagateUnsignedSizeDelta(root, root?.Size ?? 0, subtract: true);
+        void SubtractTreeAggregatesFromAncestors(INode root)
+            => PropagateUnsignedAggregateDelta(root, root?.Size ?? 0,
+                root?.IsDirectory == true ? root.Count + 1 : 1, subtract: true);
 
-        void PropagateUnsignedSizeDelta(INode node, ulong size, bool subtract)
+        void PropagateUnsignedAggregateDelta(INode node, ulong size, uint count,
+            bool subtract)
         {
             var remaining = size;
-            //PropagateSizeDelta is signed; a practical tree fits in one pass, while the
-            //loop also keeps the arithmetic correct for aggregates beyond Int64.MaxValue.
-            while (remaining > 0)
+            var countDelta = subtract ? -(long)count : count;
+            //The signed propagation API covers every practical tree in one pass. The loop
+            //also keeps byte aggregates beyond Int64.MaxValue correct; Count is applied
+            //only on the first pass so even that edge case does not walk parents extra.
+            do
             {
                 var part = Math.Min(remaining, (ulong)long.MaxValue);
-                PropagateSizeDelta(node, subtract ? -(long)part : (long)part);
+                PropagateAggregateDelta(node,
+                    subtract ? -(long)part : (long)part, countDelta);
+                countDelta = 0;
                 remaining -= part;
             }
+            while (remaining > 0);
         }
 
         /// <summary>
@@ -1655,7 +1663,7 @@ namespace search.Models
             }).ToArray();
             foreach (var candidate in stale)
             {
-                if (!files.TryRemove(candidate, SubtractFileSize, out var actual)) continue;
+                if (!files.TryRemove(candidate, SubtractNodeAggregates, out var actual)) continue;
                 changed.Add(actual);
             }
             if (changed.Count > 0) PatchFilesVersion(Array.Empty<INode>(), changed);
@@ -1687,7 +1695,8 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Get the node or index a newly seen file, adding a new file to its ancestor directory sizes
+        /// Get the node or index a newly seen entry, adding its contribution to ancestor
+        /// directory size and item-count aggregates.
         /// </summary>
         INode GetOrAddNew(string path, NodeMetadataSnapshot? snapshot = null,
             ulong frn = 0)
@@ -1698,10 +1707,8 @@ namespace search.Models
             //those redundant disk round trips serialized the whole drive queue.
             if (files.TryGetValue(path, out var indexed)) return indexed;
             var added = snapshot.HasValue
-                ? frn != 0
-                    ? new FrnFileNode(path, snapshot.Value, frn)
-                    : new FileNode(path, snapshot.Value)
-                : new FileNode(path);
+                ? FileNode.Create(path, snapshot.Value, frn)
+                : FileNode.Create(path);
             //A path that does not resolve on disk must never enter the index: it carries no
             //metadata (1601 times, empty size) and would shadow nothing real. It happens for
             //watcher events of already-vanished temp files and for the ghost paths built from
@@ -1710,28 +1717,33 @@ namespace search.Models
             if (!added.Exists) return files.TryGetValue(path, out indexed) ? indexed : added;
             var node = files.GetOrAdd(path, added);
             if (ReferenceEquals(node, added)) PatchFileAdded(node);
-            //Only a first sighting contributes - an already indexed node was counted by the scan
-            if (ReferenceEquals(node, added) && !node.IsDirectory) PropagateSizeDelta(node, (long)node.Size);
+            //Only a first sighting contributes - an already indexed node was counted by the scan.
+            //Size and Count share one parent walk instead of doubling watcher-storm CPU.
+            if (ReferenceEquals(node, added))
+                PropagateAggregateDelta(node, node.IsDirectory ? 0 : (long)node.Size, 1);
             return node;
         }
 
         /// <summary>
-        /// Update aggregated ancestor directory sizes for a file-size delta. Ordinary MFT
-        /// nodes take the allocation-free parent-chain path below; hard-link ambiguity is
-        /// healed automatically by the USN watcher's quiet-window MFT rebuild.
+        /// Update ancestor size and recursive item-count aggregates in one walk. Ordinary
+        /// MFT nodes take the allocation-free parent-chain path below; hard-link ambiguity
+        /// is healed automatically by the USN watcher's quiet-window MFT rebuild.
         /// </summary>
         void PropagateSizeDelta(INode node, long delta)
+            => PropagateAggregateDelta(node, delta, 0);
+
+        void PropagateAggregateDelta(INode node, long sizeDelta, long countDelta)
         {
-            if (delta == 0) return;
+            if (sizeDelta == 0 && countDelta == 0) return;
             var changed = false;
-            var generation = Interlocked.Increment(ref sizeChangeGeneration);
+            var generation = Interlocked.Increment(ref aggregateChangeGeneration);
             //MFT nodes already carry their parent chain. A cleanup storm can delete hundreds
             //of thousands of files; walking these references avoids Path.GetDirectoryName
             //allocations and a hash lookup for every ancestor of every deleted file.
             if (node?.PathParent != null)
             {
-                changed = ApplySizeDeltaToParentChain(node, delta,
-                    dir => pendingSizeRows[dir] = generation) != 0;
+                changed = ApplyAggregateDeltaToParentChain(node, sizeDelta, countDelta,
+                    dir => pendingAggregateRows[dir] = generation) != 0;
             }
             else
             {
@@ -1739,53 +1751,62 @@ namespace search.Models
                 for (var dir = Path.GetDirectoryName(path); dir != null; dir = Path.GetDirectoryName(dir))
                     if (files.TryGetValue(dir, out var d) && d.IsDirectory)
                     {
-                        d.AddSizeDelta(delta);
-                        pendingSizeRows[d] = generation;
+                        if (sizeDelta != 0) d.AddSizeDelta(sizeDelta);
+                        if (countDelta != 0) d.AddCountDelta(countDelta);
+                        pendingAggregateRows[d] = generation;
                         changed = true;
                     }
             }
-            if (changed) RefreshSizesSoon();
+            if (changed) RefreshAggregatesSoon();
         }
 
         internal static int ApplySizeDeltaToParentChain(INode node, long delta, Action<INode> markChanged)
+            => ApplyAggregateDeltaToParentChain(node, delta, 0, markChanged);
+
+        internal static int ApplyCountDeltaToParentChain(INode node, long delta,
+            Action<INode> markChanged)
+            => ApplyAggregateDeltaToParentChain(node, 0, delta, markChanged);
+
+        static int ApplyAggregateDeltaToParentChain(INode node, long sizeDelta,
+            long countDelta, Action<INode> markChanged)
         {
             var changed = 0;
             var depth = 0;
             for (var dir = node?.PathParent; dir != null && depth++ < 256; dir = dir.PathParent)
             {
                 if (!dir.IsDirectory) continue;
-                dir.AddSizeDelta(delta);
+                if (sizeDelta != 0) dir.AddSizeDelta(sizeDelta);
+                if (countDelta != 0) dir.AddCountDelta(countDelta);
                 markChanged?.Invoke(dir);
                 changed++;
             }
             return changed;
         }
 
-        int sizeRefreshQueued = 0; //1 => a row repaint covering all size changes so far is already queued
-        long sizeChangeGeneration;
-        //Directories whose aggregated size changed since the last coalesced repaint
-        readonly NonBlocking.ConcurrentDictionary<INode, long> pendingSizeRows = new();
+        int aggregateRefreshQueued; //1 => a row repaint covering all aggregate changes so far is queued
+        long aggregateChangeGeneration;
+        //Directories whose aggregated size or recursive count changed since the last repaint
+        readonly NonBlocking.ConcurrentDictionary<INode, long> pendingAggregateRows = new();
         /// <summary>
-        /// Repaint the rows of directories whose aggregated size changed, coalesced to one
-        /// refresh per 2s - never per event, which would saturate the dispatcher during change
-        /// storms. Only the affected rows are repainted (and only when actually on screen) -
-        /// unrelated file system activity must never redraw or disturb the current view.
+        /// Repaint directory rows whose size or Count changed, coalesced to one refresh per
+        /// 2s - never per event, which would saturate the dispatcher during change storms.
+        /// Only affected rows are repainted (and only when actually on screen).
         /// </summary>
-        void RefreshSizesSoon()
+        void RefreshAggregatesSoon()
         {
-            if (Interlocked.CompareExchange(ref sizeRefreshQueued, 1, 0) != 0) return;
+            if (Interlocked.CompareExchange(ref aggregateRefreshQueued, 1, 0) != 0) return;
             Task.Run(async () =>
             {
                 await Task.Delay(2000);
                 //Reset before the snapshot: a directory added after the snapshot finds the
-                //flag cleared and queues the next round - no size change is ever dropped
-                Interlocked.Exchange(ref sizeRefreshQueued, 0);
-                var pending = pendingSizeRows.ToArray();
+                //flag cleared and queues the next round - no aggregate change is ever dropped
+                Interlocked.Exchange(ref aggregateRefreshQueued, 0);
+                var pending = pendingAggregateRows.ToArray();
                 var changed = pending.Select(change => change.Key).ToArray();
                 //Remove only the exact generation captured above. If another delete changed
                 //the same directory meanwhile, its newer generation remains queued instead
                 //of being accidentally consumed by this older repaint batch.
-                foreach (var change in pending) ConsumePendingSizeChange(pendingSizeRows, change);
+                foreach (var change in pending) ConsumePendingSizeChange(pendingAggregateRows, change);
                 if (changed.Length == 0) return;
                 if (health?.SuspendAutomaticGridUpdates == true)
                 {
@@ -1793,14 +1814,21 @@ namespace search.Models
                     return;
                 }
                 //Repaint unconditionally: a directory whose aggregate changed usually keeps
-                //its row (the drive root is always the largest row of a size sort), and a
+                //its row (the drive root is usually the largest aggregate row), and a
                 //collection update alone leaves such a row showing its old value. Only rows
                 //realized on screen are touched, so this stays cheap under any sort.
                 RowsRefreshRequested?.Invoke(changed);
-                //Under a size sort the new aggregates can also reorder rows.
-                if (sort?.Length > 1 && sort.Substring(1) == nameof(INode.Size))
+                //Under an aggregate sort the new values can also reorder rows.
+                if (IsAggregateSort(sort))
                     await UpdateSmall(changed);
             });
+        }
+
+        static bool IsAggregateSort(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length < 2) return false;
+            var key = value.Substring(1);
+            return key == nameof(INode.Size) || key == nameof(INode.Count);
         }
 
         /// <summary>
@@ -2269,11 +2297,11 @@ namespace search.Models
             var nodeList = new List<INode>();
             foreach (var node in changed)
                 if (node != null && unique.Add(node)) nodeList.Add(node);
-            //File-size deltas mutate their ancestor directory nodes too. They must join a
-            //Size-sort batch; otherwise the "kept" side of the merge is no longer sorted
-            //and directory rows remain at their old positions.
-            if (sort?.Length > 1 && sort.Substring(1) == nameof(INode.Size))
-                foreach (var directory in pendingSizeRows.Keys)
+            //Structural/count and file-size deltas mutate ancestor directory nodes too.
+            //They must join an aggregate-sort batch; otherwise the "kept" side of the
+            //merge is no longer sorted and directory rows remain at their old positions.
+            if (IsAggregateSort(sort))
+                foreach (var directory in pendingAggregateRows.Keys)
                     if (directory != null && unique.Add(directory)) nodeList.Add(directory);
             var nodes = nodeList.ToArray();
             if (nodes.Length == 0)
@@ -3112,11 +3140,11 @@ namespace search.Models
                 // explicit directory entry is recognised as the same folder later synthesized
                 // from its children - otherwise both are indexed and one shows as a blank row.
                 var keys = src.Select(e => e.Key.AsMemory().TrimEnd("/\\")).Where(x => !x.IsEmpty);
-                src.Select(e => new ZipNode(n, e))
+                src.Select(e => ZipNode.Create(n, e))
                     //Add remaining dirs not included in archive
                     .Concat(keys.Select(k => k.ParentFolder()).Where(x => !x.IsEmpty).Distinct()
                     .Except(keys, MemoryCharComparer.IgnoreCase)
-                    .Select(d => new ZipNode(n, d.ToString()))
+                    .Select(d => (ZipNode)new ZipDirectoryNode(n, d.ToString()))
                     ).ForEach(n =>
                     {
                         files.AddOrUpdate(n.FullName, x => n, (x, y) => n);
@@ -3124,17 +3152,19 @@ namespace search.Models
                     });
                 BumpFilesVersion();
 
-                // Aggregate uncompressed entry sizes into their ancestor archive folders so
-                // directory rows show a real size instead of 0 (mirrors how the MFT reader and
-                // DirectoryWalker size on-disk folders). Stop at the archive root - the .zip's own
-                // node keeps its on-disk (compressed) size and real filesystem folders are untouched.
+                // Aggregate entry sizes and recursive counts into ancestor archive folders.
+                // Stop at the archive root: the .zip remains one real file in its filesystem
+                // folder, while virtual archive members are counted only inside the archive.
                 var root = n.FullName;
-                foreach (var zn in zipNodes.Where(z => ReferenceEquals(z.ZIP, n) && !z.IsDirectory))
+                foreach (var zn in zipNodes.Where(z => ReferenceEquals(z.ZIP, n)))
                     for (var dir = Path.GetDirectoryName(zn.FullName);
                          dir != null && dir.Length > root.Length;
                          dir = Path.GetDirectoryName(dir))
                         if (files.TryGetValue(dir, out var d) && d is ZipNode dzn && dzn.IsDirectory)
-                            dzn.AddSize(zn.Size);
+                        {
+                            if (!zn.IsDirectory) dzn.AddSize(zn.Size);
+                            dzn.AddCountDelta(1);
+                        }
                 return true;
             }
             catch (Exception) { }

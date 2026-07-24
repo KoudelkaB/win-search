@@ -28,6 +28,11 @@ namespace search.Models
         public abstract FileAttributes Attributes { get; protected set; }
         public abstract string Name { get; }
         public abstract ulong Size { get; protected set; }
+        /// <summary>
+        /// Number of entries below a directory, or one for a file. Files use this
+        /// allocation-free default; only directory node types override it with storage.
+        /// </summary>
+        public virtual uint Count { get => IsDirectory ? 0U : 1U; protected set { } }
         public abstract string FullName { get; }
 
         /// <summary>
@@ -79,6 +84,22 @@ namespace search.Models
             Size = delta >= 0 ? Size + (ulong)delta : Size - Math.Min(Size, (ulong)-delta);
 
         /// <summary>
+        /// Adjust a directory's descendant count. The unsigned value saturates at both
+        /// ends so a missed or duplicated watcher event cannot wrap the grid value.
+        /// The default file setter is intentionally a no-op: files always report one.
+        /// </summary>
+        public void AddCountDelta(long delta)
+        {
+            if (delta >= 0)
+                Count = (uint)Math.Min(uint.MaxValue, (ulong)Count + (ulong)delta);
+            else
+            {
+                var magnitude = (ulong)(-(delta + 1)) + 1;
+                Count = (uint)((ulong)Count - Math.Min(Count, magnitude));
+            }
+        }
+
+        /// <summary>
         /// Re-read size, displayed modification time and the directory flag from the file system
         /// </summary>
         public void Refresh()
@@ -118,9 +139,21 @@ namespace search.Models
         /// <summary>Apply a previously read snapshot on the serialized model queue.</summary>
         internal void ApplyMetadata(NodeMetadataSnapshot snapshot)
         {
+            var wasDirectory = IsDirectory;
             LastChangeTime = snapshot.LastChangeTime;
             Attributes = snapshot.Attributes;
-            if (!snapshot.IsDirectory) Size = snapshot.Size;
+            if (!snapshot.IsDirectory)
+            {
+                Size = snapshot.Size;
+                Count = 1;
+            }
+            else if (!wasDirectory)
+            {
+                //A newly-created directory has no known descendants yet. Existing
+                //directory aggregates survive ordinary metadata refreshes.
+                Size = 0;
+                Count = 0;
+            }
         }
     }
 

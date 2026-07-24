@@ -74,6 +74,27 @@ namespace search.Models
         }
 
         public void Delete() => throw new Exception("Deleting archive entry not yet supported");
+
+        public static ZipNode Create(INode zip, IArchiveEntry entry)
+        {
+            var key = entry?.Key ?? "_";
+            var isDirectory = entry?.IsDirectory == true
+                || key.EndsWith('/') || key.EndsWith('\\');
+            return isDirectory
+                ? new ZipDirectoryNode(zip, entry)
+                : new ZipNode(zip, entry);
+        }
+    }
+
+    /// <summary>
+    /// Only archive directories pay for the recursive item counter. Archive files keep
+    /// INode's constant Count=1 and therefore remain the same size even in huge archives.
+    /// </summary>
+    sealed class ZipDirectoryNode : ZipNode
+    {
+        public ZipDirectoryNode(INode zip, string path) : base(zip, path) { }
+        public ZipDirectoryNode(INode zip, IArchiveEntry entry) : base(zip, entry) { }
+        public override uint Count { get; protected set; }
     }
 
     public static class INodeExtensions
@@ -487,6 +508,30 @@ namespace search.Models
             ApplyMetadata(snapshot);
         }
 
+        internal static FileNode Create(string path, NodeMetadataSnapshot snapshot,
+            ulong frn = 0)
+        {
+            if (snapshot.IsDirectory)
+                return frn == 0
+                    ? new DirectoryFileNode(path, snapshot)
+                    : new FrnDirectoryFileNode(path, snapshot, frn);
+            return frn == 0
+                ? new FileNode(path, snapshot)
+                : new FrnFileNode(path, snapshot, frn);
+        }
+
+        internal static FileNode Create(string path)
+        {
+            if (TryReadMetadata(path, out var snapshot))
+                return Create(path, snapshot);
+            return new FileNode(path);
+        }
+
+        internal static FileNode Create(FileSystemInfo info)
+            => info is DirectoryInfo
+                ? new DirectoryFileNode(info)
+                : new FileNode(info);
+
         /// <summary>
         /// From an already enumerated entry - no extra stat call (used by the directory walk)
         /// </summary>
@@ -515,6 +560,20 @@ namespace search.Models
     }
 
     /// <summary>
+    /// Path-backed directories carry one four-byte recursive counter. Path-backed files
+    /// retain INode's computed Count=1 and do not grow for the new grid column.
+    /// </summary>
+    class DirectoryFileNode : FileNode
+    {
+        internal DirectoryFileNode(string path, NodeMetadataSnapshot snapshot)
+            : base(path, snapshot) { }
+
+        internal DirectoryFileNode(FileSystemInfo info) : base(info) { }
+
+        public override uint Count { get; protected set; }
+    }
+
+    /// <summary>
     /// Path-backed node that must retain an exact NTFS identity after a create or
     /// rename. Kept separate so ordinary walked FileNodes and every ZipNode do not
     /// pay eight bytes for an FRN they can never have.
@@ -524,6 +583,16 @@ namespace search.Models
         readonly ulong frn;
 
         internal FrnFileNode(string path, NodeMetadataSnapshot snapshot, ulong frn)
+            : base(path, snapshot) => this.frn = frn;
+
+        public override ulong Frn => frn;
+    }
+
+    sealed class FrnDirectoryFileNode : DirectoryFileNode
+    {
+        readonly ulong frn;
+
+        internal FrnDirectoryFileNode(string path, NodeMetadataSnapshot snapshot, ulong frn)
             : base(path, snapshot) => this.frn = frn;
 
         public override ulong Frn => frn;

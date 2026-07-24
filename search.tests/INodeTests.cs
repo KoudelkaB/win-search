@@ -51,6 +51,23 @@ namespace search.Tests
         }
 
         [Fact]
+        public void CountIsConstantForFilesAndStoredOnlyForDirectories()
+        {
+            var file = new FileNode();
+            file.AddCountDelta(100);
+            Assert.Equal(1U, file.Count);
+
+            var directory = new DirectoryFileNode(@"Q:\Docs",
+                new NodeMetadataSnapshot(true, 0, DateTime.MinValue));
+            directory.AddCountDelta(100);
+            directory.AddCountDelta(23);
+            directory.AddCountDelta(-24);
+            Assert.Equal(99U, directory.Count);
+            directory.AddCountDelta(-1000);
+            Assert.Equal(0U, directory.Count);
+        }
+
+        [Fact]
         public void PermanentlyDeletingGitRepositoryClearsReadOnlyObjects()
         {
             var root = Path.Combine(Path.GetTempPath(), $"win-search-delete-{Guid.NewGuid():N}");

@@ -47,6 +47,8 @@ namespace search.Tests
         {
             Assert.Equal(48, RuntimeObjectSize(typeof(FileNode)));
             Assert.Equal(56, RuntimeObjectSize(typeof(FrnFileNode)));
+            Assert.Equal(56, RuntimeObjectSize(typeof(DirectoryFileNode)));
+            Assert.Equal(64, RuntimeObjectSize(typeof(FrnDirectoryFileNode)));
             Assert.Equal(24, Unsafe.SizeOf<NodeMetadataSnapshot>());
         }
 

@@ -44,7 +44,7 @@ namespace search.Models
 
             var result = new ConcurrentBag<INode>();
             var queue = new ConcurrentQueue<string>();
-            var root = new FileNode(drive.RootDirectory); // The MFT path has a root node too
+            var root = FileNode.Create(drive.RootDirectory); // The MFT path has a root node too
             result.Add(root);
             queue.Enqueue(drive.RootDirectory.FullName);
             var pending = 1;
@@ -76,7 +76,7 @@ namespace search.Models
                             foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
                             {
                                 if (token.IsCancellationRequested || cancellationToken.IsCancellationRequested) break;
-                                var node = new FileNode(info);
+                                var node = FileNode.Create(info);
                                 result.Add(node);
                                 Volatile.Write(ref lastProgress, Environment.TickCount64);
                                 if (node.IsDirectory && !info.Attributes.HasFlag(FileAttributes.ReparsePoint))
@@ -127,9 +127,11 @@ namespace search.Models
         }
 
         /// <summary>
-        /// The MFT path computes folder sizes - keep the walk consistent with it
+        /// The MFT path computes folder aggregates - keep the walk consistent with it.
+        /// Count includes every descendant file and directory, but not the directory itself.
         /// </summary>
-        static void AggregateFolderSizes(IEnumerable<INode> nodes, CancellationToken cancellationToken)
+        internal static void AggregateFolderSizes(IEnumerable<INode> nodes,
+            CancellationToken cancellationToken)
         {
             var dirs = new Dictionary<string, FileNode>(StringComparer.OrdinalIgnoreCase);
             var checkedNodes = 0;
@@ -141,13 +143,17 @@ namespace search.Models
             }
 
             checkedNodes = 0;
-            foreach (var file in nodes.Where(n => !n.IsDirectory))
+            foreach (var node in nodes)
             {
                 if ((checkedNodes++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
-                // Add the file size to every ancestor directory up to the drive root
-                for (var dir = Path.GetDirectoryName(file.FullName); dir != null; dir = Path.GetDirectoryName(dir))
+                // Add this entry to every ancestor directory up to the drive root. Only
+                // files contribute bytes; files and directories both contribute one item.
+                for (var dir = Path.GetDirectoryName(node.FullName); dir != null; dir = Path.GetDirectoryName(dir))
                     if (dirs.TryGetValue(dir, out var d))
-                        d.AddSize(file.Size);
+                    {
+                        if (!node.IsDirectory) d.AddSize(node.Size);
+                        d.AddCountDelta(1);
+                    }
             }
         }
     }

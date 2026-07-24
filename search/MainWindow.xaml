@@ -461,6 +461,13 @@
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
+                    <GridViewColumn Header="{local:Loc Key=Count}" Width="Auto" local:GridViewSort.SortKey="Count">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Count, StringFormat={}{0:### ### ### ##0}}" TextAlignment="Right" />
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
                     <GridViewColumn Header="{local:Loc Key=Changed}" DisplayMemberBinding="{Binding LastChangeTime, StringFormat={}{0:g}}" Width="Auto" local:GridViewSort.SortKey="LastChangeTime"/>
                     <GridViewColumn Header="{local:Loc Key=Folder}" Width="Auto" local:GridViewSort.SortKey="Folder">
                         <GridViewColumn.CellTemplate>

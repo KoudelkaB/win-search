@@ -16,19 +16,32 @@ namespace search.Tests
         static FakeMft WithRoot(int bytesPerRecord) => new FakeMft(bytesPerRecord).AddEmpty(5).AddRoot();
 
         [Fact]
-        public void RuntimeMftNodeFitsIn64BytesExcludingItsName()
+        public void OnlyMftDirectoriesPayForTheRecursiveCounter()
         {
-            var nodeType = WithRoot(1024).Parse().Single().GetType();
-            _ = RuntimeHelpers.GetUninitializedObject(nodeType); //Warm the runtime helper.
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[]
+                {
+                    FakeMft.FileName(FakeMft.RootEntry, "file.bin")
+                })
+                .Parse();
+            var fileType = nodes.Single(n => !n.IsDirectory).GetType();
+            var directoryType = nodes.Single(n => n.IsDirectory).GetType();
+            _ = RuntimeHelpers.GetUninitializedObject(fileType); //Warm the runtime helper.
             const int count = 10_000;
-            var nodes = new object[count];
+            var instances = new object[count];
             var before = GC.GetAllocatedBytesForCurrentThread();
-            for (var i = 0; i < nodes.Length; i++)
-                nodes[i] = RuntimeHelpers.GetUninitializedObject(nodeType);
-            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            for (var i = 0; i < instances.Length; i++)
+                instances[i] = RuntimeHelpers.GetUninitializedObject(fileType);
+            var fileBytes = (GC.GetAllocatedBytesForCurrentThread() - before) / count;
 
-            Assert.Equal(64, allocated / count);
-            GC.KeepAlive(nodes);
+            before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < instances.Length; i++)
+                instances[i] = RuntimeHelpers.GetUninitializedObject(directoryType);
+            var directoryBytes = (GC.GetAllocatedBytesForCurrentThread() - before) / count;
+
+            Assert.Equal(64, fileBytes);
+            Assert.Equal(72, directoryBytes);
+            GC.KeepAlive(instances);
         }
 
         [Theory]
@@ -58,6 +71,7 @@ namespace search.Tests
             Assert.False(file.IsDirectory);
             Assert.Equal(@"Q:\Docs\a.txt", file.FullName);
             Assert.Equal(123UL, file.Size);
+            Assert.Equal(1U, file.Count);
             // Local times - the grid mixes MFT rows with watcher/walk FileNodes, whose
             // FileSystemInfo times are local
             Assert.Equal(Modified.ToLocalTime(), file.LastChangeTime);
@@ -66,10 +80,12 @@ namespace search.Tests
             Assert.True(docs.IsDirectory);
             Assert.Equal(@"Q:\Docs", docs.FullName);
             Assert.Equal(123UL, docs.Size); // file sizes roll up into folders
+            Assert.Equal(1U, docs.Count); // descendant entries, excluding Docs itself
 
             var root = nodes.Single(n => n.Name == "Q:");
             Assert.Equal(FakeMft.Root, root.FullName);
             Assert.Equal(123UL, root.Size);
+            Assert.Equal(2U, root.Count); // Docs + a.txt
         }
 
         [Fact]
@@ -89,10 +105,15 @@ namespace search.Tests
             var docs = nodes.Single(n => n.Name == "Docs");
 
             var changed = SearchModel.ApplySizeDeltaToParentChain(docs, -(long)docs.Size, null);
+            var countChanged = SearchModel.ApplyCountDeltaToParentChain(
+                docs, -(long)(docs.Count + 1), null);
 
             Assert.Equal(1, changed);
+            Assert.Equal(1, countChanged);
             Assert.Equal(0UL, root.Size);
+            Assert.Equal(0U, root.Count);
             Assert.Equal(123UL, docs.Size); //Removed node itself is discarded, never decremented.
+            Assert.Equal(1U, docs.Count);
         }
 
         [Fact]
@@ -110,6 +131,10 @@ namespace search.Tests
 
             Assert.Equal(123UL, nodes.Single(n => n.Name == "Q:").Size);
             Assert.All(nodes.Where(n => n.IsDirectory), n => Assert.Equal(123UL, n.Size));
+            Assert.Equal(4U, nodes.Single(n => n.Name == "Q:").Count);
+            Assert.Equal(3U, nodes.Single(n => n.Name == "A").Count);
+            Assert.Equal(2U, nodes.Single(n => n.Name == "B").Count);
+            Assert.Equal(1U, nodes.Single(n => n.Name == "C").Count);
             var map = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
             foreach (var node in nodes) map[node] = node;
             Assert.True(map.TryGetValue(@"Q:\A\B\C\deep.bin", out var deep));
@@ -162,12 +187,17 @@ namespace search.Tests
             //One drive queue is FIFO. If the child record is delivered first it reduces
             //the directory aggregate; the later tree delete therefore has no remainder.
             SearchModel.ApplySizeDeltaToParentChain(file, -(long)file.Size, null);
+            SearchModel.ApplyCountDeltaToParentChain(file, -1, null);
             Assert.Equal(0UL, docs.Size);
             Assert.Equal(0UL, root.Size);
+            Assert.Equal(0U, docs.Count);
+            Assert.Equal(1U, root.Count); //Docs itself remains until its delete arrives.
 
             if (docs.Size > 0)
                 SearchModel.ApplySizeDeltaToParentChain(docs, -(long)docs.Size, null);
+            SearchModel.ApplyCountDeltaToParentChain(docs, -(long)(docs.Count + 1), null);
             Assert.Equal(0UL, root.Size);
+            Assert.Equal(0U, root.Count);
         }
 
         [Fact]
@@ -421,6 +451,9 @@ namespace search.Tests
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Other").Size);
             Assert.Equal(200UL, nodes.Single(n => n.Name == "Q:").Size);
+            Assert.Equal(1U, nodes.Single(n => n.Name == "Docs").Count);
+            Assert.Equal(1U, nodes.Single(n => n.Name == "Other").Count);
+            Assert.Equal(4U, nodes.Single(n => n.Name == "Q:").Count);
         }
 
         [Fact]
@@ -460,6 +493,7 @@ namespace search.Tests
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Other").Size);
             Assert.Equal(200UL, nodes.Single(n => n.Name == "Q:").Size);
+            Assert.Equal(4U, nodes.Single(n => n.Name == "Q:").Count);
         }
 
         [Fact]
@@ -478,6 +512,7 @@ namespace search.Tests
 
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size);
+            Assert.Equal(2U, nodes.Single(n => n.Name == "Q:").Count); //Docs + a file.txt
         }
 
         [Fact]
@@ -493,6 +528,7 @@ namespace search.Tests
             Assert.Equal(files + 1, nodes.Count);
             Assert.Equal(42UL, nodes.Single(n => n.Name == "f42.dat").Size);
             Assert.Equal((ulong)(files * (files - 1) / 2), nodes.Single(n => n.Name == "Q:").Size);
+            Assert.Equal((uint)files, nodes.Single(n => n.Name == "Q:").Count);
         }
     }
 }

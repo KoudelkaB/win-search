@@ -316,12 +316,15 @@ namespace search.Models
             nameRank = (byte)bestNameRank;
             hardLinks = linkParents?.ToArray();
             hasOwnSingleLink = linkCount == 1;
-            var node = new MftNode(
-                ((ulong)sequenceNumber << 48) | (uint)index,
-                index == RootEntryNumber ? rootName : name,
-                attributes,
-                isDirectory ? 0UL : dataSize,
-                Time(hasStandardInfo ? siModified : fnModified));
+            var frn = ((ulong)sequenceNumber << 48) | (uint)index;
+            var node = isDirectory
+                ? new MftDirectoryNode(frn,
+                    index == RootEntryNumber ? rootName : name,
+                    attributes, Time(hasStandardInfo ? siModified : fnModified))
+                : new MftNode(frn,
+                    index == RootEntryNumber ? rootName : name,
+                    attributes, dataSize,
+                    Time(hasStandardInfo ? siModified : fnModified));
 
             // The unnamed $DATA lives in an extension record - resolve after the last chunk
             if (!isDirectory && !hasDataSize)
@@ -472,7 +475,8 @@ namespace search.Models
 
         /// <summary>
         /// A file counts once per hard link (per non-DOS $FILE_NAME), so folder sizes
-        /// match what a directory walk and Explorer's folder properties report.
+        /// and item counts match what a directory walk and Explorer's folder properties
+        /// report. Directory Count is the number of descendants and excludes itself.
         ///
         /// The former implementation added every file to every ancestor independently,
         /// making this O(files * path depth). Aggregate direct file contributions first,
@@ -527,6 +531,12 @@ namespace search.Models
                     sizes[parent.EntryNumber] = unchecked(sizes[parent.EntryNumber] + size);
             }
 
+            static void AddCount(MftNode parent, uint count)
+            {
+                if (parent?.IsDirectory == true)
+                    parent.AddCountDelta(count);
+            }
+
             //Each file contributes only to its immediate link parent(s).
             checkedNodes = 0;
             foreach (var node in nodes)
@@ -537,6 +547,7 @@ namespace search.Models
                 if (!hardLinks.TryGetValue(node.EntryNumber, out var links))
                 {
                     Add(folderSizes, node.Parent, node.Size);
+                    AddCount(node.Parent, 1);
                 }
                 else
                 {
@@ -545,12 +556,16 @@ namespace search.Models
                         var entry = (uint)(link & FileReferenceMask);
                         if (entry < (uint)nodes.Length && nodes[entry] is { } parent && parent != node
                             && SequencesMatch((ushort)(link >> 48), parent.SequenceNumber))
+                        {
                             Add(folderSizes, parent, node.Size);
+                            AddCount(parent, 1);
+                        }
                     }
                 }
             }
 
-            //Children are complete before their parent, so every directory is propagated once.
+            //Children are complete before their parent, so every directory is propagated
+            //once. It contributes its aggregate bytes, plus itself and all descendants.
             for (var depth = maxDepth; depth >= 1; depth--)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -559,6 +574,7 @@ namespace search.Models
                 {
                     directory.SetSize(folderSizes[directory.EntryNumber]);
                     Add(folderSizes, directory.Parent, directory.Size);
+                    AddCount(directory.Parent, directory.Count + 1);
                 }
             }
 
@@ -582,7 +598,7 @@ namespace search.Models
             });
         }
 
-        sealed class MftNode : INode
+        class MftNode : INode
         {
             readonly ulong frn;
             string name;
@@ -642,6 +658,19 @@ namespace search.Models
 
             public void SetName(string name) => this.name = name;
             public void SetPathHash(int hash) => pathHash = hash;
+        }
+
+        /// <summary>
+        /// The extra recursive counter exists only on directories. The overwhelmingly more
+        /// numerous MFT file nodes remain 64 bytes and return INode's constant Count=1.
+        /// </summary>
+        sealed class MftDirectoryNode : MftNode
+        {
+            public MftDirectoryNode(ulong frn, string name, FileAttributes attributes,
+                DateTime lastChangeTime)
+                : base(frn, name, attributes, 0, lastChangeTime) { }
+
+            public override uint Count { get; protected set; }
         }
 
         sealed class MftNodeCollection : IFrnNodeSource

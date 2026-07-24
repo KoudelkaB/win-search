@@ -24,5 +24,10 @@ namespace search.Tests
             Assert.Equal("Help", L.Text("Help", CultureInfo.GetCultureInfo("fi-FI")));
             Assert.Equal("FutureKey", L.Text("FutureKey", CultureInfo.GetCultureInfo("cs-CZ")));
         }
+
+        [Fact]
+        public void CountColumnHasALocalizedCzechHeader()
+            => Assert.Equal("Počet",
+                L.Text("Count", CultureInfo.GetCultureInfo("cs-CZ")));
     }
 }

@@ -709,6 +709,8 @@ namespace search.Tests
         [InlineData("-Name", ListSortDirection.Descending)]
         [InlineData("+Size", ListSortDirection.Descending)]
         [InlineData("-Size", ListSortDirection.Ascending)]
+        [InlineData("+Count", ListSortDirection.Descending)]
+        [InlineData("-Count", ListSortDirection.Ascending)]
         [InlineData("+LastChangeTime", ListSortDirection.Descending)]
         public void GridHeaderArrowMatchesTheDisplayedValueOrder(string sort, ListSortDirection expected)
             => Assert.Equal(expected, MainWindow.HeaderSortDirection(sort));
@@ -933,8 +935,10 @@ namespace search.Tests
                 Assert.NotNull(logs);
                 Assert.True(logs.IsDirectory);
                 Assert.Equal(15ul, logs.Size);
+                Assert.Equal(3U, logs.Count); // app.txt + sub + sub/b.txt
                 Assert.NotNull(sub);
                 Assert.Equal(10ul, sub.Size);
+                Assert.Equal(1U, sub.Count);
             }
             finally
             {

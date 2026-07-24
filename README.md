@@ -9,7 +9,8 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 - Fast NTFS indexing with live file-system updates and safe fallback scanning.
 - Filtering by name, immediate parent folder, full path, or exact directory.
 - UTF-8, UTF-16, case-insensitive, and hexadecimal content search.
-- Sortable Name, Size, Changed, Folder, and content-result columns.
+- Sortable Name, Size, Count, Changed, Folder, and content-result columns. Count is
+  `1` for a file and the number of all descendant files and folders for a directory.
 - Extended mouse selection plus keyboard-driven selection commands.
 - Drag files and directories to other applications from the Name or Folder column.
 - Drop files onto selected directories to copy, move, create symbolic links, or create hard links.
