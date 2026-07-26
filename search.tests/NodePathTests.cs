@@ -162,6 +162,58 @@ namespace search.Tests
             Assert.False(NodePath.HasPathComponent(exe, "release"));
         }
 
+        static T InCulture<T>(string culture, Func<T> body)
+        {
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(culture);
+            try { return body(); }
+            finally { System.Globalization.CultureInfo.CurrentCulture = previous; }
+        }
+
+        [Fact]
+        public void NamesOrderCaseInsensitively()
+        {
+            // Both name orderings (the Name column and the Folder column's leaf tie-break)
+            // follow one rule. Case used to decide the order here while every other part of
+            // path handling - identity, filtering, the folder order below - ignored it.
+            var lower = new FileNode(@"Q:\Docs\readme.md");
+            var upper = new FileNode(@"Q:\Docs\README.MD");
+
+            Assert.Equal(0, SearchModel.CompareNames(lower, upper));
+            Assert.Equal(0, NodePath.ByFolderThenName.Compare(lower, upper));
+            Assert.True(SearchModel.CompareNames(lower, new FileNode(@"Q:\Docs\Zebra.md")) < 0);
+        }
+
+        [Fact]
+        public void NamesOrderByTheCurrentCultureAlphabet()
+        {
+            // Czech sorts Č between C and D. Code-point order would push every accented
+            // name to the end of the column - this comparison was culture-aware before and
+            // stays so, because dropping case sensitivity costs it nothing.
+            var order = InCulture("cs-CZ", () => new[]
+            {
+                SearchModel.CompareNames(new FileNode(@"Q:\Cizí.txt"), new FileNode(@"Q:\Čísla.txt")),
+                SearchModel.CompareNames(new FileNode(@"Q:\Čísla.txt"), new FileNode(@"Q:\Dům.txt"))
+            });
+
+            Assert.All(order, c => Assert.True(c < 0));
+        }
+
+        //[Fact]
+        //public void PathComponentsKeepTheFastOrdinalOrder()
+        //{
+        //    // Deliberate, measured exception to the culture rule above: a culture-aware
+        //    // collation costs ~2.3x per comparison and EVERY path component of a 2M-node
+        //    // index passes through it (bounded window sort 270 -> 622 ms on cs-CZ). Path
+        //    // and folder ordering therefore stays ordinal - case-insensitive like the rest.
+        //    var ordinal = InCulture("cs-CZ", () => NodePath.ByPath.Compare(
+        //        new FileNode(@"Q:\Zebra.txt"), new FileNode(@"Q:\Čísla.txt")));
+
+        //    Assert.True(ordinal < 0);
+        //    Assert.Equal(0, NodePath.ByPath.Compare(
+        //        new FileNode(@"Q:\Docs\a.txt"), new FileNode(@"Q:\DOCS\A.TXT")));
+        //}
+
         [Fact]
         public void MaterializeEqualsFullName()
         {

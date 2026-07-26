@@ -120,7 +120,19 @@ namespace search.Models
         /// </summary>
         public bool Loading { get; private set; }
 
-        public string CountsInfo => Items.Count == files.Count ? $"{files.Count:# ### ###}" : $"{Items.Count:### ###}/{files.Count:# ### ###}";
+        public string CountsInfo => FormatCounts(Items.Count, files.Count);
+
+        /// <summary>
+        /// Group a count in threes. A "#"-only mask emits an EMPTY string for zero and a
+        /// literal space for every unused placeholder, so an empty result showed no count
+        /// at all ("/1 234 567") and small ones carried leading padding.
+        /// </summary>
+        internal static string FormatCount(int value) => value.ToString("# ### ##0").TrimStart();
+
+        internal static string FormatCounts(int shown, int total)
+            => shown == total
+                ? FormatCount(total)
+                : $"{FormatCount(shown)}/{FormatCount(total)}";
 
         public ObservableCollection<INode> Items { get; private set; } = new RangeObservableCollection<INode>();
 
@@ -1202,7 +1214,7 @@ namespace search.Models
             switch (sort.Substring(1))
             {
                 case "C": key = (a, b) => FoundRank(a).CompareTo(FoundRank(b)); ascending = up; break;
-                case nameof(INode.Name): key = (a, b) => string.Compare(a.Name, b.Name); ascending = up; break;
+                case nameof(INode.Name): key = CompareNames; ascending = up; break;
                 case nameof(INode.Size): key = (a, b) => a.Size.CompareTo(b.Size); ascending = !up; break;
                 case nameof(INode.Count): key = (a, b) => a.Count.CompareTo(b.Count); ascending = !up; break;
                 case nameof(INode.LastChangeTime): key = (a, b) => a.LastChangeTime.CompareTo(b.LastChangeTime); ascending = !up; break;
@@ -1212,6 +1224,13 @@ namespace search.Models
             }
             return ascending ? key : (a, b) => key(b, a);
         }
+
+        /// <summary>
+        /// The Name column and the leaf tie-break of the Folder column order names by the
+        /// same rule - see <see cref="NodePath.NameOrder"/>.
+        /// </summary>
+        internal static int CompareNames(INode a, INode b)
+            => string.Compare(a.Name, b.Name, NodePath.NameOrder);
 
         int FoundRank(INode x) => FoundIn(x) switch { true => 1, false => 2, null => x.IsDirectory ? 4 : 3 };
 

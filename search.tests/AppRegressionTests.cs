@@ -775,6 +775,41 @@ namespace search.Tests
         public void MissingKeyboardFocusAfterEndIsBenign()
             => Assert.Null(MainWindow.FocusedItemFromElement(null, null));
 
+        [Theory]
+        [InlineData(0, 0, "0")]              //An empty index showed nothing at all
+        [InlineData(0, 1234567, "0/1 234 567")] //A filter matching nothing showed "/1 234 567"
+        [InlineData(123, 4567, "123/4 567")] //Small counts carried leading padding spaces
+        [InlineData(1234567, 1234567, "1 234 567")]
+        public void ResultCountsAreAlwaysShown(int shown, int total, string expected)
+            => Assert.Equal(expected, SearchModel.FormatCounts(shown, total));
+
+        [Theory]
+        [InlineData("current", null, "current")] //Both history ends kept the current filter
+        [InlineData("current", "older", "older")]
+        [InlineData("", null, "")]
+        public void FilterHistoryEndsKeepTheCurrentFilter(string current, string moved, string expected)
+            => Assert.Equal(expected, MainWindow.HistoryStep(current, moved));
+
+        [Fact]
+        public void TypedNewFolderNameIsNeverReadAsAnOverwriteFlag()
+        {
+            //"output" starts with the F2 Overwrite key. Consuming it here made the command
+            //delete the existing folder tree before recreating it.
+            Assert.Equal("output", MainWindow.NewFolderName(
+                new[] { Key.O, Key.U, Key.T, Key.P, Key.U, Key.T }));
+            Assert.Equal("", MainWindow.NewFolderName(Array.Empty<Key>()));
+        }
+
+        [Fact]
+        public void DigitKeysReadTheirDigits()
+        {
+            IEnumerator<Key> Keys(params Key[] keys) => ((IEnumerable<Key>)keys).GetEnumerator();
+            Assert.Equal(120, Keys(Key.D1, Key.D2, Key.D0).ReadDigits());
+            Assert.Equal(305, Keys(Key.NumPad3, Key.NumPad0, Key.NumPad5).ReadDigits());
+            Assert.Equal(7, Keys(Key.D7, Key.A, Key.D9).ReadDigits()); //Stops at the first non-digit
+            Assert.Equal(0, Keys(Key.A).ReadDigits());
+        }
+
         [Fact]
         public void ItemExchangeAlwaysRunsSelectionCleanup()
         {

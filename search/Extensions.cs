@@ -230,11 +230,24 @@ namespace search
             long i = 0;
             try
             {
-                while (e.MoveNext() && e.Current <= Key.HangulMode) i = 10 * i + (long)e.Current;
-
+                // Both digit rows carry the same value; the raw enum value is not the digit
+                // (Key.D0 is 34), and no digit key is below Key.HangulMode - the old bounds
+                // check therefore stopped before the first digit and always returned 0.
+                while (e.MoveNext() && TryDigit(e.Current, out var digit)) i = checked(10 * i + digit);
             }
-            catch { } // Return the longest int possible
+            catch (OverflowException) { } // Return the longest number that still fits
             return i;
+        }
+
+        static bool TryDigit(Key key, out int digit)
+        {
+            digit = key switch
+            {
+                >= Key.D0 and <= Key.D9 => key - Key.D0,
+                >= Key.NumPad0 and <= Key.NumPad9 => key - Key.NumPad0,
+                _ => -1
+            };
+            return digit >= 0;
         }
 
         /// <summary>

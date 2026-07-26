@@ -2285,17 +2285,24 @@ namespace search
                 case Key.Left:
                     if (Keyboard.Modifiers != ModifierKeys.Control) return;
                     filters.Add2History(filterTextBox.Text);
-                    filterTextBox.Text = filters.Backward;
+                    filterTextBox.Text = HistoryStep(filterTextBox.Text, filters.Backward);
                     break;
                 case Key.Right:
                     if (Keyboard.Modifiers != ModifierKeys.Control) return;
-                    filterTextBox.Text = filters.Forward;
+                    filterTextBox.Text = HistoryStep(filterTextBox.Text, filters.Forward);
                     break;
                 default:
                     return;
             }
             e.Handled = true;
         }
+
+        /// <summary>
+        /// History returns null at both of its ends. Assigning that null cleared the filter
+        /// box (WPF coerces a null Text to ""), so one Ctrl+Left/Ctrl+Right too many wiped
+        /// the current filter instead of simply staying where it is.
+        /// </summary>
+        internal static string HistoryStep(string current, string moved) => moved ?? current;
 
         internal static string HelpFilePath => FindHelpFile(CultureInfo.CurrentUICulture);
 
@@ -3097,19 +3104,24 @@ namespace search
             return false;
         }
 
+        /// <summary>
+        /// Every key of the new-folder argument belongs to the typed name. Unlike F2, this
+        /// command tree declares no Overwrite step, so reading a leading O as that flag made
+        /// any name starting with "o" (e.g. "output") RECURSIVELY DELETE the existing folder
+        /// of that name before recreating it.
+        /// </summary>
+        internal static string NewFolderName(IEnumerable<Key> arg) => arg.ReadTill();
+
         void NewFolders(IEnumerable<INode> nodes, IEnumerable<Key> arg)
         {
             var targetNodes = nodes.ToArray();
-            var e = arg.GetEnumerator();
-            bool overwrite = e.MoveNext() && e.Current == Key.O;
-            if (overwrite) e.MoveNext();
-            var name = arg.ReadTill();
+            var name = NewFolderName(arg);
             if (string.IsNullOrWhiteSpace(name))
             {
-                ShowNewFolderBar(targetNodes, overwrite);
+                ShowNewFolderBar(targetNodes, overwrite: false);
                 return;
             }
-            CreateFolders(targetNodes, name, overwrite);
+            CreateFolders(targetNodes, name, overwrite: false);
         }
 
         void ShowNewFolderBar(INode[] nodes, bool overwrite)
