@@ -15,13 +15,13 @@ By default only NTFS drives are indexed - other file systems (network mounts, FA
 
 For NTFS drives, the fastest path is reading the NTFS Master File Table. File Search Manager can do that in one of these ways:
 
-- Optional Windows service: no prompt after installation.
-- Elevated broker: approve the startup UAC prompt once per app run.
+- Windows service: no prompt at all. Selected by default in the installer.
+- Elevated helper: one UAC prompt per app run. Without the service it is offered at startup, so indexing can begin immediately. With the service it is not offered until the first action that actually needs administrator rights - the `A` key, or reading admin-only files. The **🛡** button next to **🌐** asks at launch instead.
 - Direct elevated app: run File Search Manager as administrator.
 
 If none of those are available, File Search Manager falls back to walking folders. The app still works, but the initial load may be slower.
 
-The optional service is read-only for indexing. It exposes MFT data to the desktop app and is named `WinSearchService`.
+The service is read-only for indexing. It exposes MFT data to the desktop app and is named `WinSearchService`.
 
 ## Filter Syntax
 
@@ -107,6 +107,8 @@ Typing anything other than `Enter` in the search field clears the current conten
 The context menu adapts to the current selection:
 
 - **Open with** lists only installed applications compatible with the selection. A configured diff tool is listed first for exactly two files or directories.
+- **Open containing folder** opens File Explorer at the item's parent.
+- **Copy path** copies the full paths of the selected items.
 - **7-Zip** is shown when `7zFM.exe` is installed.
 - **Zip** creates a ZIP archive.
 - **Create 7z archive** is shown only when `7z.exe` or `7zz.exe` is installed.
@@ -160,8 +162,9 @@ Common commands:
 - `Ctrl+C`: standard shell-compatible copy.
 - `Ctrl+X`: standard shell-compatible cut.
 - `Ctrl+V`: paste after choosing copy, move, symbolic link, or hard link.
-- `C`: copy selected items to the clipboard.
+- `C`: copy selected items to the clipboard. Add `V`, `T`, `W`, or `A` to copy the file version, creation time, last write time, or last access time instead; `+` first appends to the clipboard rather than replacing it.
 - `X`: cut selected items to the clipboard.
+- `D`: compare in the configured diff tool. Available only with exactly two items selected.
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
 - `A`: open selected items as administrator.
@@ -174,28 +177,42 @@ Common commands:
 - `M`: show an inline bar for creating a directory in the selected folders.
 - `S`: selection commands.
 - `T`: target commands — add selected as targets; then `F` for parent folders, `V` to send clipboard to all targets (with `L`/`H`/`O` for link, hard link, overwrite), `C` to clear targets.
-- `U`: unzip selected archives.
-- `Z`: zip selected items.
+- `U`: unzip selected archives. Add `NumPad7` to call `7z.exe` instead of the built-in handler.
+- `Z`: zip selected items. Add `NumPad7` to call `7z.exe`.
 - `F1`: open this help file. Works anywhere in the window.
 - `F12`: refresh from NTFS. Works anywhere in the window, no selection needed; each drive refreshes independently, so a slow network drive never delays the others. Both `F1` and `F12` remain visible in **Hints** when the result grid has focus.
 - `Right Shift`: move focus back to the filter field.
 
-Open targets after `O` or `A`:
+Commands held under `Ctrl`:
+
+- `Ctrl+A`: select or unselect all.
+- `Ctrl+D`: filter into the parent directories of the selected items.
+- `Ctrl+F`: filter into the selected folders.
+- `Ctrl+N`: create new folders in the selected folders.
+- `Ctrl+J`: scroll to the next selected item; `Ctrl+Shift+J` goes to the previous one.
+
+Open targets after `O` or `A`. Each entry appears only when the application was detected:
 
 - `B`: File Explorer.
 - `W`: default detected web browser.
 - `C`: Chrome.
 - `F`: Firefox.
 - `E`: Edge.
+- `O`: Opera.
+- `I`: Internet Explorer.
+- `A`: Adobe Reader.
 - `T`: text viewer.
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
+- `Y`: Antigravity.
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.
 - `R`: viewer detected for PRN content.
 - `S`, then `P`: PowerShell.
 - `S` alone: Command Prompt.
+
+`G`, `P`, `X`, and `R` ask for a DPI value before they run.
 
 Selection commands after `S`:
 
@@ -209,17 +226,17 @@ Selection commands after `S`:
 
 Rename/change commands after `F2`:
 
+- `V`: take the new path or name from the clipboard.
 - `N`: change name.
-- `E`: change extension.
+- `E`: change extension; `E` then `Delete` removes the extension.
 - `.`: add extension.
 - `Delete`: delete text from the name.
 - `F`: add prefix.
 - `L`: add postfix.
 - `Insert`: insert text at an index.
 - `R`: replace text.
-- `C`: change creation time.
-- `W`: change last write time.
-- `A`: change last access time.
+- `C`: change creation time, then `V` for the time from the clipboard or `C` for the current time.
+- `W`: change last write time, with the same `V` and `C` choices.
 - Add `O` first to overwrite existing targets when supported.
 
 ## Data and Troubleshooting
@@ -230,6 +247,6 @@ User state is stored under:
 %LOCALAPPDATA%\win-search
 ```
 
-If NTFS loading is slow, install the optional service from the installer or approve the startup UAC prompt. The status bar reports whether each drive used the service, direct access, admin helper, or folder walk.
+If NTFS loading is slow, install the service from the installer - it is selected by default - or approve the elevation prompt. The status bar reports whether each drive used the service, direct access, admin helper, or folder walk.
 
 If a mapped or external drive is unavailable, File Search Manager skips it after a short readiness check so startup does not stall on unreachable storage.

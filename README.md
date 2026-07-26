@@ -29,7 +29,7 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 
 Download the latest installer from [GitHub Releases](https://github.com/KoudelkaB/win-search/releases).
 
-The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and optionally installs the read-only `WinSearchService` for prompt-free NTFS indexing.
+The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and installs the read-only `WinSearchService` for prompt-free NTFS indexing. The service is selected by default and can be unchecked during setup; without it the app asks for administrator rights at every start, or falls back to a slower folder walk.
 
 After the package is accepted into the Windows Package Manager community repository:
 
@@ -40,7 +40,7 @@ winget install BohdanKoudelka.FileSearchManager
 ## Quick Start
 
 1. Start **File Search Manager**.
-2. Approve the optional startup elevation prompt for immediate MFT access, or decline it to use the installed service or folder-walk fallback.
+2. With the service installed there is no prompt at startup. Without it, approve the optional elevation prompt for immediate MFT access, or decline it for the folder-walk fallback. Either way the elevated helper is offered on the first action that needs administrator rights (the `A` key, admin-only files); the 🛡 toggle next to 🌐 asks for it at launch instead.
 3. Type in **Filter** to narrow the result list.
 4. Type in **Search** and press `Enter` to search contents within the filtered files.
 5. Select results with the mouse or keyboard.

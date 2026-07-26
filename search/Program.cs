@@ -47,10 +47,12 @@ namespace search
             if (args.Length == 1 && args[0].Equals("--help", StringComparison.OrdinalIgnoreCase))
                 OpenHelpRequested = true;
 
-            // Normal start: offer one optional UAC prompt for the elevated broker;
-            // declining it leaves the app fully functional (per-task prompts, service/walk indexing).
+            // Normal start: offer one optional UAC prompt for the elevated broker, but only when
+            // something at startup needs it - with the WinSearchService serving the $MFT, nothing
+            // does, and the offer moves to the first action that actually requires admin rights.
+            // Declining leaves the app fully functional (per-task prompts, service/walk indexing).
             // A help launch just shows the help window, so skip the elevation offer for it.
-            if (!OpenHelpRequested)
+            if (!OpenHelpRequested && ElevationSettingsStore.ShouldStartHelperAtLaunch())
                 Broker.StartClient();
             try
             {

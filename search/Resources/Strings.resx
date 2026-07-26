@@ -8,6 +8,7 @@
   <data name="Help" xml:space="preserve"><value>Help</value></data>
   <data name="Close" xml:space="preserve"><value>Close</value></data>
   <data name="Language" xml:space="preserve"><value>Language…</value></data>
+  <data name="ElevateAtStart" xml:space="preserve"><value>Start the elevated helper at launch. When off, it starts at the first action needing administrator rights.</value></data>
   <data name="ChooseLanguage" xml:space="preserve"><value>Choose the language used by File Search Manager.</value></data>
   <data name="Refresh" xml:space="preserve"><value>Refresh from NTFS</value></data>
   <data name="Filter" xml:space="preserve"><value>Filter:</value></data>

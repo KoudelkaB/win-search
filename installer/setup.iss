@@ -33,7 +33,11 @@ LicenseFile=..\LICENSE
 SetupIconFile=..\search\app.ico
 OutputDir=Output
 OutputBaseFilename=FileSearchManager-Setup-{#MyAppVersion}
-CloseApplications=yes
+; "force", not "yes": with plain "yes", an app that does not answer RestartManager makes Setup
+; ask Abort/Retry/Ignore - and under winget's /SILENT /SUPPRESSMSGBOXES that prompt defaults to
+; Abort, so the install dies with exit code 5. "force" still asks politely first and only
+; terminates what stays unresponsive.
+CloseApplications=force
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
@@ -54,16 +58,16 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 ; falls back to English for it. The app UI and help are still fully localized to zh-Hans.
 
 [CustomMessages]
-english.InstallService=Install the background service for prompt-free NTFS indexing (advanced; most users can skip this)
-czech.InstallService=Nainstalovat službu na pozadí pro indexování NTFS bez dalších výzev (pokročilé; většina uživatelů ji nepotřebuje)
-german.InstallService=Hintergrunddienst für NTFS-Indizierung ohne Rückfragen installieren (erweitert; meist nicht erforderlich)
-french.InstallService=Installer le service d’arrière-plan pour indexer NTFS sans demande (avancé ; généralement inutile)
-spanish.InstallService=Instalar el servicio en segundo plano para indexar NTFS sin avisos (avanzado; normalmente no es necesario)
-polish.InstallService=Zainstaluj usługę indeksowania NTFS w tle bez monitów (zaawansowane; zwykle niepotrzebne)
-italian.InstallService=Installa il servizio in background per l’indicizzazione NTFS senza richieste (avanzato; la maggior parte degli utenti può saltarlo)
-portuguesebrazil.InstallService=Instalar o serviço em segundo plano para indexação NTFS sem solicitações (avançado; a maioria dos usuários pode ignorar)
-japanese.InstallService=確認なしで NTFS をインデックス化するバックグラウンドサービスをインストールします（上級者向け。ほとんどのユーザーは不要です）
-korean.InstallService=확인 없이 NTFS를 색인화하는 백그라운드 서비스를 설치합니다(고급, 대부분의 사용자는 건너뛰어도 됩니다)
+english.InstallService=Install the background service for prompt-free NTFS indexing (recommended; without it File Search Manager asks for administrator rights at every start)
+czech.InstallService=Nainstalovat službu na pozadí pro indexování NTFS bez dalších výzev (doporučeno; jinak si File Search Manager při každém spuštění vyžádá práva správce)
+german.InstallService=Hintergrunddienst für NTFS-Indizierung ohne Rückfragen installieren (empfohlen; andernfalls fragt File Search Manager bei jedem Start nach Administratorrechten)
+french.InstallService=Installer le service d’arrière-plan pour indexer NTFS sans demande (recommandé ; sinon File Search Manager demande les droits administrateur à chaque démarrage)
+spanish.InstallService=Instalar el servicio en segundo plano para indexar NTFS sin avisos (recomendado; de lo contrario, File Search Manager pedirá permisos de administrador en cada inicio)
+polish.InstallService=Zainstaluj usługę indeksowania NTFS w tle bez monitów (zalecane; w przeciwnym razie File Search Manager przy każdym uruchomieniu poprosi o uprawnienia administratora)
+italian.InstallService=Installa il servizio in background per l’indicizzazione NTFS senza richieste (consigliato; in caso contrario File Search Manager chiede i diritti di amministratore a ogni avvio)
+portuguesebrazil.InstallService=Instalar o serviço em segundo plano para indexação NTFS sem solicitações (recomendado; caso contrário, o File Search Manager pedirá direitos de administrador a cada inicialização)
+japanese.InstallService=確認なしで NTFS をインデックス化するバックグラウンドサービスをインストールします（推奨。インストールしない場合、File Search Manager は起動のたびに管理者権限を求めます）
+korean.InstallService=확인 없이 NTFS를 색인화하는 백그라운드 서비스를 설치합니다(권장. 설치하지 않으면 File Search Manager가 시작할 때마다 관리자 권한을 요청합니다)
 english.HelpShortcut=File Search Manager Help
 czech.HelpShortcut=Nápověda File Search Manager
 german.HelpShortcut=File Search Manager Hilfe
@@ -107,10 +111,15 @@ Type: files; Name: "{autoprograms}\Win Search.lnk"
 Type: files; Name: "{autoprograms}\Win Search Help.lnk"
 
 [Tasks]
-; Off by default - most users never need it. The service lets File Search Manager index NTFS
-; drives instantly without any admin prompt; without it the app still works (accept the
-; startup admin prompt for instant indexing, or it falls back to a slower folder walk).
-Name: "installservice"; Description: "{cm:InstallService}"; Flags: unchecked
+; On by default: the service is what makes instant NTFS indexing work without an admin prompt
+; at every start, so it belongs in the default experience rather than behind an opt-in. Without
+; it the app still works - accept the startup admin prompt, or it falls back to a slower folder
+; walk. Two things make the default safe to flip:
+;   - Unchecking it here still works, so nobody is forced into a service.
+;   - UsePreviousTasks defaults to yes, so an upgrade reuses whatever the user picked last time.
+;     Existing installs that declined the service do not silently acquire one, which matters
+;     because winget upgrades run silently with no chance to intervene.
+Name: "installservice"; Description: "{cm:InstallService}"
 
 [Icons]
 Name: "{autoprograms}\File Search Manager"; Filename: "{app}\File Search Manager.exe"
@@ -176,7 +185,14 @@ begin
       Code := Exec2(ExpandConstant('{sys}\sc.exe'), 'start {#MyServiceName}');
     end;
     if Code <> 0 then
-      { Never abort the install - the app still works via the admin prompt or the folder scan }
+    begin
+      { Never abort the install - the app still works via the admin prompt or the folder scan.
+        Log it as well as showing it: now that the task is on by default, most installs are
+        silent ones from winget, where /SUPPRESSMSGBOXES eats this message box and nobody would
+        ever learn the service was not created. winget passes /LOG, so this line lands in the
+        diagnostic log it prints on failure. }
+      Log('Service setup failed with code ' + IntToStr(Code) + ' - continuing without the service.');
       MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbInformation, MB_OK);
+    end;
   end;
 end;

@@ -63,6 +63,17 @@ namespace search
             if (elevated && !Program.IsProcessElevated)
             {
                 if (Broker.Available) return Broker.OpenElevated(name, args, workDir);
+
+                // Startup skipped the broker because the service was serving the index. This is
+                // the first action that genuinely needs admin rights, so raise the offer now.
+                if (Broker.CanOffer)
+                {
+                    if (Broker.EnsureStarted(TimeSpan.FromMinutes(2)))
+                        return Broker.OpenElevated(name, args, workDir);
+                    // Declining the offer declines this open too. Falling through would prompt a
+                    // second time for the same action the user just refused.
+                    if (Broker.Declined) return null;
+                }
                 try
                 {
                     return Process.Start(new ProcessStartInfo

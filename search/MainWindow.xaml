@@ -190,6 +190,9 @@
             <DockPanel LastChildFill="True">
                 <Button DockPanel.Dock="Right" Content="🌐" Click="Language_Click" Padding="2,0" MinWidth="24" Foreground="DodgerBlue"
                         ToolTip="{local:Loc Key=Language}" AutomationProperties.Name="{local:Loc Key=Language}"/>
+                <ToggleButton DockPanel.Dock="Right" x:Name="elevateAtStart" Content="🛡" Click="ElevateAtStart_Click"
+                              Padding="2,0" MinWidth="24" Background="Transparent" BorderThickness="0"
+                              ToolTip="{local:Loc Key=ElevateAtStart}" AutomationProperties.Name="{local:Loc Key=ElevateAtStart}"/>
                 <TextBlock FontWeight="DemiBold" Text="{local:Loc Key=Hints}" VerticalAlignment="Center"/>
             </DockPanel>
             <TextBlock x:Name="filterTextBoxCmd">

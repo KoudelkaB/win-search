@@ -113,6 +113,7 @@ namespace search
         {
             InitializeComponent();
             Broker.StartupElevationAccepted += Broker_StartupElevationAccepted;
+            elevateAtStart.IsChecked = ElevationSettingsStore.StartHelperAtLaunch();
             ApplyWorkspaceSettings(WorkspaceSettingsStore.Load());
             ApplyWindowLayout();
             AttachColumnWidthHandlers();
@@ -940,6 +941,11 @@ namespace search
             var target = TargetFromMenu(sender);
             OpenTarget(target);
         }
+
+        // Takes effect at the next start: the current session either already has the helper or
+        // will raise its offer on the first action that needs it.
+        void ElevateAtStart_Click(object sender, RoutedEventArgs e) =>
+            ElevationSettingsStore.Save(elevateAtStart.IsChecked == true);
 
         void Language_Click(object sender, RoutedEventArgs e)
         {

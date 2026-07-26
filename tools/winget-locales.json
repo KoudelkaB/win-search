@@ -1,0 +1,42 @@
+{
+  "cs-CZ": {
+    "ShortDescription": "Rychlé vyhledávání a správa souborů ve Windows s indexováním NTFS MFT.",
+    "Description": "Rychlé vyhledávání a správa souborů pro Windows s průběžným filtrováním, prohledáváním obsahu, přetahováním myší, podporou archivů, volitelným indexováním NTFS MFT a operacemi se soubory z klávesnice nebo místní nabídky."
+  },
+  "de-DE": {
+    "ShortDescription": "Schnelle Dateisuche und -verwaltung für Windows mit NTFS-MFT-Indizierung.",
+    "Description": "Schnelle Dateisuche und Dateiverwaltung für Windows mit Live-Filterung, Inhaltssuche, Drag & Drop, Archivunterstützung, optionaler NTFS-MFT-Indizierung und Dateioperationen per Tastatur oder Kontextmenü."
+  },
+  "fr-FR": {
+    "ShortDescription": "Recherche et gestion de fichiers rapides pour Windows avec indexation NTFS MFT.",
+    "Description": "Recherche et gestion de fichiers rapides pour Windows, avec filtrage en direct, recherche dans le contenu, glisser-déposer, prise en charge des archives, indexation NTFS MFT facultative et opérations sur les fichiers au clavier ou par menu contextuel."
+  },
+  "es-ES": {
+    "ShortDescription": "Búsqueda y gestión rápida de archivos en Windows con indexación NTFS MFT.",
+    "Description": "Búsqueda y gestión rápida de archivos para Windows con filtrado en vivo, búsqueda en el contenido, arrastrar y soltar, compatibilidad con archivos comprimidos, indexación NTFS MFT opcional y operaciones de archivo con el teclado o el menú contextual."
+  },
+  "pl-PL": {
+    "ShortDescription": "Szybkie wyszukiwanie i zarządzanie plikami w systemie Windows z indeksowaniem NTFS MFT.",
+    "Description": "Szybkie wyszukiwanie i zarządzanie plikami dla systemu Windows z filtrowaniem na żywo, wyszukiwaniem w treści, przeciąganiem i upuszczaniem, obsługą archiwów, opcjonalnym indeksowaniem NTFS MFT oraz operacjami na plikach z klawiatury lub menu kontekstowego."
+  },
+  "it-IT": {
+    "ShortDescription": "Ricerca e gestione file rapide per Windows con indicizzazione NTFS MFT.",
+    "Description": "Ricerca e gestione dei file rapide per Windows con filtro in tempo reale, ricerca nei contenuti, trascinamento della selezione, supporto per gli archivi, indicizzazione NTFS MFT opzionale e operazioni sui file da tastiera o menu contestuale."
+  },
+  "pt-BR": {
+    "ShortDescription": "Busca e gerenciamento rápidos de arquivos no Windows com indexação NTFS MFT.",
+    "Description": "Busca e gerenciamento rápidos de arquivos para Windows com filtragem ao vivo, pesquisa de conteúdo, arrastar e soltar, suporte a arquivos compactados, indexação NTFS MFT opcional e operações de arquivo pelo teclado ou menu de contexto."
+  },
+  "ja-JP": {
+    "ShortDescription": "NTFS MFT インデックスによる高速な Windows ファイル検索・管理ツール。",
+    "Description": "ライブ フィルター、内容検索、ドラッグ アンド ドロップ、アーカイブ対応、オプションの NTFS MFT インデックス、キーボードやコンテキスト メニューからのファイル操作を備えた、高速な Windows 向けファイル検索・管理ツールです。"
+  },
+  "ko-KR": {
+    "ShortDescription": "NTFS MFT 색인을 활용한 빠른 Windows 파일 검색 및 관리 도구.",
+    "Description": "실시간 필터링, 내용 검색, 끌어서 놓기, 압축 파일 지원, 선택적 NTFS MFT 색인, 키보드 및 컨텍스트 메뉴 파일 작업을 제공하는 빠른 Windows 파일 검색 및 관리 도구입니다."
+  },
+  "zh-CN": {
+    "ShortDescription": "基于 NTFS MFT 索引的快速 Windows 文件搜索与管理工具。",
+    "Description": "面向 Windows 的快速文件搜索与管理工具，支持实时筛选、内容搜索、拖放操作、压缩包支持、可选的 NTFS MFT 索引，以及通过键盘或右键菜单执行文件操作。"
+  }
+}

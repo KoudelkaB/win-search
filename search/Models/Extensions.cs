@@ -209,8 +209,11 @@ namespace search.Models
                 // as access denied) => pull it through the elevated broker
                 try
                 {
+                    // Bring the helper up on demand when startup skipped it (service was serving
+                    // the index); a no-op once the offer has already been answered this session.
+                    if (!Broker.Available) Broker.EnsureStarted(TimeSpan.FromMinutes(2));
                     if (!Broker.Available)
-                        throw new UnauthorizedAccessException($"Access denied to '{file}' - the elevated helper is not running (it was declined at startup).");
+                        throw new UnauthorizedAccessException($"Access denied to '{file}' - the elevated helper is not running (it was declined).");
                     Broker.CopyFromElevated(file, dest, overwrite, move);
                     EchoTransferred(file, dest, move, batchEcho);
                 }

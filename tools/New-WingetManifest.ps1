@@ -11,7 +11,13 @@ param(
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string] $InstallerPath,
 
-    [string] $OutputRoot = "packaging\winget\generated"
+    [string] $OutputRoot = "packaging\winget\generated",
+
+    # Translations for the additional locale manifests. Kept out of this script so the
+    # script itself stays pure ASCII - Windows PowerShell 5.1 decodes a BOM-less .ps1 as
+    # ANSI, which would silently mangle the accented and CJK text.
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+    [string] $LocaleData = (Join-Path $PSScriptRoot "winget-locales.json")
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,11 +83,13 @@ ManifestType: defaultLocale
 ManifestVersion: $manifestVersion
 "@
 
+# Deliberately no InstallerLocale: the Inno installer bundles ten wizard languages, so it is
+# locale-neutral. Pinning it to one locale can make "winget install --locale xx" find no
+# applicable installer, even though the one we ship speaks that language.
 $installerManifest = @"
 # yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: $packageIdentifier
 PackageVersion: $Version
-InstallerLocale: en-US
 Platform:
 - Windows.Desktop
 MinimumOSVersion: 10.0.17763.0
@@ -109,7 +117,40 @@ Write-Utf8NoBomFile -Path (Join-Path $outDir "$packageIdentifier.yaml") -Value $
 Write-Utf8NoBomFile -Path (Join-Path $outDir "$packageIdentifier.locale.en-US.yaml") -Value $localeManifest
 Write-Utf8NoBomFile -Path (Join-Path $outDir "$packageIdentifier.installer.yaml") -Value $installerManifest
 
+# Additional locales only translate what "winget show" displays; they have nothing to do with
+# the languages the app or the installer speak. Every field is optional and falls back to the
+# default locale, so these carry just the two descriptions plus the ARP correlation fields.
+$translations = Get-Content -LiteralPath $LocaleData -Raw -Encoding UTF8 | ConvertFrom-Json
+
+foreach ($entry in $translations.PSObject.Properties) {
+    $locale = $entry.Name
+    $short = $entry.Value.ShortDescription
+    $long = $entry.Value.Description
+
+    if ([string]::IsNullOrWhiteSpace($short) -or [string]::IsNullOrWhiteSpace($long)) {
+        throw "Locale '$locale' in $LocaleData is missing ShortDescription or Description."
+    }
+
+    # Quoted so punctuation in the translations can never be read as YAML syntax
+    $manifest = @"
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.locale.1.12.0.schema.json
+PackageIdentifier: $packageIdentifier
+PackageVersion: $Version
+PackageLocale: $locale
+Publisher: "$publisher"
+PackageName: "$packageName"
+ShortDescription: "$short"
+Description: "$long"
+ManifestType: locale
+ManifestVersion: $manifestVersion
+"@
+
+    Write-Utf8NoBomFile -Path (Join-Path $outDir "$packageIdentifier.locale.$locale.yaml") -Value $manifest
+}
+
 Write-Host "Generated winget manifests:"
 Write-Host "  $outDir"
+Write-Host "Locales:"
+Write-Host "  en-US (default), $($translations.PSObject.Properties.Name -join ', ')"
 Write-Host "Installer SHA256:"
 Write-Host "  $sha256"

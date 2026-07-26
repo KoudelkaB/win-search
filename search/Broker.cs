@@ -43,6 +43,7 @@ namespace search
         static readonly object channel = new object(); // Single serialized request channel
         static Task startup = Task.CompletedTask;
         static volatile bool elevationAccepted;
+        static int spawned; // 0 until StartClient has actually spawned; guards the lazy path
 
         /// <summary>
         /// True once the elevated broker is connected and answered the handshake
@@ -67,12 +68,21 @@ namespace search
         public static event Action StartupElevationAccepted;
 
         /// <summary>
+        /// True while an elevation offer has never been made, so a caller that needs admin
+        /// rights may still raise one. False once the broker was spawned (accepted, declined,
+        /// or failed) - the answer is not asked for twice in a session.
+        /// </summary>
+        public static bool CanOffer => !Program.IsProcessElevated && Volatile.Read(ref spawned) == 0;
+
+        /// <summary>
         /// Spawn the elevated broker in the background. Never blocks the UI:
-        /// the UAC prompt can sit unanswered for minutes.
+        /// the UAC prompt can sit unanswered for minutes. Idempotent - the lazy path may race
+        /// with the startup path, and two spawns would mean two UAC prompts.
         /// </summary>
         public static void StartClient()
         {
             if (Program.IsProcessElevated) return; // The UI itself is elevated => everything works in-process
+            if (Interlocked.CompareExchange(ref spawned, 1, 0) != 0) return;
 
             startup = Task.Run(() =>
             {
@@ -127,6 +137,24 @@ namespace search
         {
             try { startup.Wait(timeout); } catch { }
             return Available;
+        }
+
+        /// <summary>
+        /// Bring the broker up on demand for an action that needs admin rights right now, and
+        /// wait out its UAC prompt. Used when startup skipped the spawn because the service was
+        /// already serving the $MFT - the prompt then lands on the first 'A'-key open or
+        /// admin-only file access instead of on every launch.
+        ///
+        /// Blocking is deliberate and is what the caller already did: the per-action fallback in
+        /// Extensions.Open raises its own "runas" prompt on this same thread. The wait ends as
+        /// soon as the prompt is answered either way.
+        /// </summary>
+        public static bool EnsureStarted(TimeSpan timeout)
+        {
+            if (Available) return true;
+            if (!CanOffer) return false; // Already answered once this session - do not ask again
+            StartClient();
+            return WaitAvailable(timeout);
         }
 
         public static void Stop()
