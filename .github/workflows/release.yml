@@ -55,3 +55,23 @@ jobs:
             installer/Output/FileSearchManager-Setup-${{ env.VERSION }}.exe
             installer/Output/SHA256SUMS.txt
           generate_release_notes: true
+
+  # Opens the manifest-update PR against microsoft/winget-pkgs. This only works once the
+  # package already exists there - the very first version has to be submitted by hand
+  # (see docs/WINGET.md). Until WINGET_TOKEN is set the step is skipped, so the release
+  # itself never goes red because of winget.
+  winget:
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }} # skip prereleases like v0.2.0-rc1
+    env:
+      HAS_TOKEN: ${{ secrets.WINGET_TOKEN != '' }}
+    steps:
+      - name: Submit manifest to winget-pkgs
+        if: env.HAS_TOKEN == 'true'
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: BohdanKoudelka.FileSearchManager
+          installers-regex: '^FileSearchManager-Setup-.*\.exe$'
+          max-versions-to-keep: 5
+          token: ${{ secrets.WINGET_TOKEN }}

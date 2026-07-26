@@ -24,25 +24,46 @@ Useful references:
 
 The installer writes the same package name and publisher to Apps & Features, which helps winget correlate installs and upgrades.
 
-## Release Checklist
+## How Publishing Works
 
-1. Tag the release:
+Releases are automated. Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the
+installer, publishes the GitHub release, and then opens the manifest pull request against
+`microsoft/winget-pkgs` via the [WinGet Releaser](https://github.com/vedantmgoyal9/winget-releaser)
+action.
+
+That action updates an **existing** package - it uses the previous version's manifests as its base.
+So the first version has to be submitted by hand once (below); every version after that needs no
+manual step beyond the tag push.
+
+Prereleases (tags containing `-`, e.g. `v0.2.0-rc1`) skip the winget job.
+
+## One-Time Setup
+
+1. Fork `microsoft/winget-pkgs` to the `KoudelkaB` account and keep the fork.
+
+2. Create a **classic** personal access token with the `public_repo` scope. Fine-grained tokens are
+   not supported by the action.
+
+3. Add it to this repository as the secret `WINGET_TOKEN`
+   (Settings -> Secrets and variables -> Actions).
+
+   Until this secret exists the winget job is skipped, so the release still succeeds without it.
+
+4. Do the first manual submission described below.
+
+## First Submission (one time only)
+
+1. Tag the release and let the workflow publish `FileSearchManager-Setup-0.1.0.exe` and
+   `SHA256SUMS.txt`:
 
    ```powershell
    git tag v0.1.0
    git push origin v0.1.0
    ```
 
-2. Wait for the GitHub Actions release workflow to publish:
+2. Download the installer from the release, or use the local build output.
 
-   ```text
-   FileSearchManager-Setup-0.1.0.exe
-   SHA256SUMS.txt
-   ```
-
-3. Download the installer or use the local build output.
-
-4. Generate winget manifests:
+3. Generate the winget manifests:
 
    ```powershell
    .\tools\New-WingetManifest.ps1 `
@@ -51,21 +72,36 @@ The installer writes the same package name and publisher to Apps & Features, whi
      -InstallerPath .\installer\Output\FileSearchManager-Setup-0.1.0.exe
    ```
 
-5. Copy the generated `manifests\b\BohdanKoudelka\FileSearchManager\0.1.0` folder into a fork of `microsoft/winget-pkgs`.
+4. Copy the generated `manifests\b\BohdanKoudelka\FileSearchManager\0.1.0` folder into the
+   `winget-pkgs` fork.
 
-6. Validate from the `winget-pkgs` checkout:
+5. Validate from the `winget-pkgs` checkout:
 
    ```powershell
    winget validate .\manifests\b\BohdanKoudelka\FileSearchManager\0.1.0
    ```
 
-7. Test install locally from the manifest folder:
+6. Test install locally from the manifest folder:
 
    ```powershell
    winget install --manifest .\manifests\b\BohdanKoudelka\FileSearchManager\0.1.0
    ```
 
-8. Submit a pull request to `microsoft/winget-pkgs`.
+7. Submit the pull request to `microsoft/winget-pkgs`.
+
+   Every pull request there needs community-moderator approval, and the first one for a new package
+   gets the closest look - expect anywhere from two days to a week. Once it is merged, later
+   releases publish automatically.
+
+## Subsequent Releases
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+Then watch for the pull request the action opens against `microsoft/winget-pkgs`. It still has to be
+approved by a moderator, but the manifest work is done for you.
 
 ## Notes
 
