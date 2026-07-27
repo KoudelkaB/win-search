@@ -15,7 +15,7 @@ Ve výchozím stavu se indexují jen disky NTFS – ostatní systémy souborů (
 
 U disků NTFS je nejrychlejší cestou čtení hlavní tabulky souborů (MFT). File Search Manager to zvládne jedním z těchto způsobů:
 
-- Služba Windows: žádná výzva. V instalátoru je vybraná ve výchozím stavu.
+- Služba Windows: žádná výzva. V instalátoru je vybraná ve výchozím stavu. Spuštění instalátoru verze, kterou už máte nainstalovanou, nabídne volbu **Upravit nastavení**, kde lze službu přidat nebo odebrat bez přeinstalace.
 - Elevovaný pomocník: jedna výzva UAC na spuštění aplikace. Bez služby se nabídne při startu, aby indexování mohlo začít okamžitě. Se službou se nenabídne dřív než při první akci, která práva správce skutečně potřebuje – klávesa `A`, čtení souborů přístupných jen správci nebo přejmenování a změna časů u položek chráněných proti zápisu. Tlačítko **🛡** vedle **🌐** se místo toho zeptá už při spuštění.
 - Přímo elevovaná aplikace: spusťte File Search Manager jako správce.
 

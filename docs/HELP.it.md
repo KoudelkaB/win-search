@@ -15,7 +15,7 @@ Per impostazione predefinita vengono indicizzati solo i dischi NTFS: gli altri f
 
 Per i dischi NTFS la via più rapida è leggere la Master File Table di NTFS. File Search Manager può farlo in uno di questi modi:
 
-- Servizio di Windows: nessuna richiesta. Selezionato per impostazione predefinita nel programma di installazione.
+- Servizio di Windows: nessuna richiesta. Selezionato per impostazione predefinita nel programma di installazione. Eseguendo il programma di installazione della versione già presente viene proposto **Modifica le impostazioni**, che aggiunge o rimuove il servizio senza reinstallare il resto.
 - Helper con privilegi elevati: una richiesta UAC per ogni esecuzione dell’applicazione. Senza il servizio viene proposta all’avvio, così l’indicizzazione può iniziare subito. Con il servizio non viene proposta finché non arriva la prima azione che richiede davvero i diritti di amministratore: il tasto `A`, la lettura di file riservati agli amministratori, oppure la rinomina e la modifica delle date su elementi protetti da scrittura. Il pulsante **🛡** accanto a **🌐** la richiede invece all’avvio.
 - Applicazione elevata direttamente: esegui File Search Manager come amministratore.
 

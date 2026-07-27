@@ -15,7 +15,7 @@ Standardmäßig werden nur NTFS-Laufwerke indiziert – andere Dateisysteme (Net
 
 Bei NTFS-Laufwerken ist das Lesen der NTFS-Master File Table der schnellste Weg. File Search Manager kann das auf eine dieser Arten tun:
 
-- Windows-Dienst: überhaupt keine Abfrage. Im Installationsprogramm standardmäßig ausgewählt.
+- Windows-Dienst: überhaupt keine Abfrage. Im Installationsprogramm standardmäßig ausgewählt. Das Installationsprogramm der bereits installierten Version bietet **Einstellungen ändern** an – damit lässt sich der Dienst hinzufügen oder entfernen, ohne alles Übrige neu zu installieren.
 - Erhöhter Helfer: eine UAC-Abfrage pro Programmlauf. Ohne den Dienst wird sie beim Start angeboten, damit die Indizierung sofort beginnen kann. Mit dem Dienst wird sie erst bei der ersten Aktion angeboten, die tatsächlich Administratorrechte benötigt – die Taste `A`, das Lesen von Dateien, die nur Administratoren zugänglich sind, oder das Umbenennen und Ändern von Zeitstempeln an schreibgeschützten Elementen. Die Schaltfläche **🛡** neben **🌐** fragt stattdessen beim Start.
 - Direkt erhöhte Anwendung: File Search Manager als Administrator ausführen.
 

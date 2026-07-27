@@ -13,6 +13,9 @@
 #define MyPublisher "Bohdan Koudelka"
 #define MyServiceName "WinSearchService"
 #define MyServiceExe "{app}\service\search.service.exe"
+; Where Inno records this install - "{AppId}_is1". Used to detect an existing installation
+; and its version, which is what unlocks the "Modify" mode.
+#define MyUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{D9AE5E34-602D-49AF-9263-89E7B851B8D4}_is1"
 
 [Setup]
 ; Never change the AppId - upgrades are matched by it
@@ -88,17 +91,80 @@ italian.ServiceFailed=Impossibile installare o avviare il servizio File Search M
 portuguesebrazil.ServiceFailed=Não foi possível instalar ou iniciar o serviço File Search Manager (código %1).%nO aplicativo continuará funcionando: aprove a solicitação na inicialização para indexação instantânea ou será usada uma verificação de pastas mais lenta.
 japanese.ServiceFailed=File Search Manager サービスをインストールまたは開始できませんでした（コード %1）。%nアプリは引き続き動作します。起動時の確認を承認すると即時インデックス化が行われ、承認しない場合は低速なフォルダースキャンが使用されます。
 korean.ServiceFailed=File Search Manager 서비스를 설치하거나 시작할 수 없습니다(코드 %1).%n앱은 계속 작동합니다. 시작 시 표시되는 확인을 승인하면 즉시 색인화되고, 그렇지 않으면 느린 폴더 검색이 사용됩니다.
+english.ServiceRemoveFailed=The File Search Manager service could not be removed (code %1).%nIt is still installed and running.
+czech.ServiceRemoveFailed=Službu File Search Manager se nepodařilo odebrat (kód %1).%nZůstává nainstalovaná a spuštěná.
+german.ServiceRemoveFailed=Der File Search Manager-Dienst konnte nicht entfernt werden (Code %1).%nEr bleibt installiert und aktiv.
+french.ServiceRemoveFailed=Le service File Search Manager n’a pas pu être supprimé (code %1).%nIl reste installé et actif.
+spanish.ServiceRemoveFailed=No se pudo quitar el servicio File Search Manager (código %1).%nSigue instalado y en ejecución.
+polish.ServiceRemoveFailed=Nie udało się usunąć usługi File Search Manager (kod %1).%nPozostaje zainstalowana i uruchomiona.
+italian.ServiceRemoveFailed=Impossibile rimuovere il servizio File Search Manager (codice %1).%nRimane installato e in esecuzione.
+portuguesebrazil.ServiceRemoveFailed=Não foi possível remover o serviço do File Search Manager (código %1).%nEle continua instalado e em execução.
+japanese.ServiceRemoveFailed=File Search Manager サービスを削除できませんでした（コード %1）。%nサービスはインストールされたまま実行されています。
+korean.ServiceRemoveFailed=File Search Manager 서비스를 제거할 수 없습니다(코드 %1).%n서비스가 계속 설치되어 실행 중입니다.
+english.MaintCaption=Existing installation
+czech.MaintCaption=Existující instalace
+german.MaintCaption=Vorhandene Installation
+french.MaintCaption=Installation existante
+spanish.MaintCaption=Instalación existente
+polish.MaintCaption=Istniejąca instalacja
+italian.MaintCaption=Installazione esistente
+portuguesebrazil.MaintCaption=Instalação existente
+japanese.MaintCaption=既存のインストール
+korean.MaintCaption=기존 설치
+english.MaintDescription=This version of File Search Manager is already installed on this computer.
+czech.MaintDescription=Tato verze aplikace File Search Manager je již v tomto počítači nainstalována.
+german.MaintDescription=Diese Version von File Search Manager ist auf diesem Computer bereits installiert.
+french.MaintDescription=Cette version de File Search Manager est déjà installée sur cet ordinateur.
+spanish.MaintDescription=Esta versión de File Search Manager ya está instalada en este equipo.
+polish.MaintDescription=Ta wersja programu File Search Manager jest już zainstalowana na tym komputerze.
+italian.MaintDescription=Questa versione di File Search Manager è già installata in questo computer.
+portuguesebrazil.MaintDescription=Esta versão do File Search Manager já está instalada neste computador.
+japanese.MaintDescription=このバージョンの File Search Manager は、このコンピューターに既にインストールされています。
+korean.MaintDescription=이 버전의 File Search Manager가 이 컴퓨터에 이미 설치되어 있습니다.
+english.MaintPrompt=Select what Setup should do, then click Next.
+czech.MaintPrompt=Vyberte, co má instalátor udělat, a klikněte na Další.
+german.MaintPrompt=Wählen Sie aus, was Setup tun soll, und klicken Sie auf Weiter.
+french.MaintPrompt=Choisissez ce que doit faire le programme d’installation, puis cliquez sur Suivant.
+spanish.MaintPrompt=Seleccione lo que debe hacer el instalador y haga clic en Siguiente.
+polish.MaintPrompt=Wybierz, co ma zrobić instalator, a następnie kliknij Dalej.
+italian.MaintPrompt=Seleziona che cosa deve fare il programma di installazione, quindi fai clic su Avanti.
+portuguesebrazil.MaintPrompt=Selecione o que o instalador deve fazer e clique em Avançar.
+japanese.MaintPrompt=セットアップの動作を選択して、[次へ] をクリックしてください。
+korean.MaintPrompt=설치 프로그램이 수행할 작업을 선택한 다음 [다음]을 클릭하세요.
+english.MaintModify=Modify settings - keep the installed files and only change the options on the next page (for example whether the background service is installed)
+czech.MaintModify=Upravit nastavení - ponechat nainstalované soubory a změnit pouze volby na další stránce (například zda má být nainstalována služba na pozadí)
+german.MaintModify=Einstellungen ändern - die installierten Dateien beibehalten und nur die Optionen auf der nächsten Seite ändern (zum Beispiel, ob der Hintergrunddienst installiert wird)
+french.MaintModify=Modifier les paramètres - conserver les fichiers installés et ne changer que les options de la page suivante (par exemple si le service d’arrière-plan est installé)
+spanish.MaintModify=Modificar la configuración: conservar los archivos instalados y cambiar solo las opciones de la página siguiente (por ejemplo, si se instala el servicio en segundo plano)
+polish.MaintModify=Zmień ustawienia - zachowaj zainstalowane pliki i zmień tylko opcje na następnej stronie (na przykład to, czy usługa w tle ma być zainstalowana)
+italian.MaintModify=Modifica le impostazioni - mantieni i file installati e cambia solo le opzioni della pagina successiva (ad esempio se installare il servizio in background)
+portuguesebrazil.MaintModify=Modificar as configurações - manter os arquivos instalados e alterar apenas as opções da próxima página (por exemplo, se o serviço em segundo plano será instalado)
+japanese.MaintModify=設定を変更する - インストール済みのファイルはそのままにして、次のページのオプションのみを変更します（バックグラウンドサービスをインストールするかどうかなど）
+korean.MaintModify=설정 변경 - 설치된 파일은 그대로 두고 다음 페이지의 옵션만 변경합니다(예: 백그라운드 서비스 설치 여부)
+english.MaintReinstall=Reinstall - replace all program files and apply the options on the next page
+czech.MaintReinstall=Přeinstalovat - nahradit všechny programové soubory a použít volby na další stránce
+german.MaintReinstall=Neu installieren - alle Programmdateien ersetzen und die Optionen auf der nächsten Seite anwenden
+french.MaintReinstall=Réinstaller - remplacer tous les fichiers du programme et appliquer les options de la page suivante
+spanish.MaintReinstall=Reinstalar: reemplazar todos los archivos del programa y aplicar las opciones de la página siguiente
+polish.MaintReinstall=Zainstaluj ponownie - zastąp wszystkie pliki programu i zastosuj opcje z następnej strony
+italian.MaintReinstall=Reinstalla - sostituisci tutti i file del programma e applica le opzioni della pagina successiva
+portuguesebrazil.MaintReinstall=Reinstalar - substituir todos os arquivos do programa e aplicar as opções da próxima página
+japanese.MaintReinstall=再インストールする - すべてのプログラムファイルを置き換えて、次のページのオプションを適用します
+korean.MaintReinstall=다시 설치 - 모든 프로그램 파일을 교체하고 다음 페이지의 옵션을 적용합니다
 
 [Files]
+; NotModifying keeps every file out of a settings-only "Modify" run: the files on disk are
+; already this exact version (Modify is only offered then), so re-copying them would only cost
+; time and force the app shut. Shortcuts below are still refreshed - that repairs a deleted one.
 ; The two self-contained publishes MUST stay in separate directories -
 ; they contain same-named runtime DLLs with different content
-Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
-Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion
-Source: "..\LICENSE"; DestDir: "{app}"
-Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"
-Source: "..\README.md"; DestDir: "{app}"
-Source: "..\docs\HELP*.md"; DestDir: "{app}\Docs"
-Source: "..\docs\WINGET.md"; DestDir: "{app}\Docs"
+Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Check: NotModifying
+Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion; Check: NotModifying
+Source: "..\LICENSE"; DestDir: "{app}"; Check: NotModifying
+Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Check: NotModifying
+Source: "..\README.md"; DestDir: "{app}"; Check: NotModifying
+Source: "..\docs\HELP*.md"; DestDir: "{app}\Docs"; Check: NotModifying
+Source: "..\docs\WINGET.md"; DestDir: "{app}\Docs"; Check: NotModifying
 
 [InstallDelete]
 ; Remove main-binary names left by releases before the File Search Manager rename.
@@ -116,9 +182,12 @@ Type: files; Name: "{autoprograms}\Win Search Help.lnk"
 ; it the app still works - accept the startup admin prompt, or it falls back to a slower folder
 ; walk. Two things make the default safe to flip:
 ;   - Unchecking it here still works, so nobody is forced into a service.
-;   - UsePreviousTasks defaults to yes, so an upgrade reuses whatever the user picked last time.
-;     Existing installs that declined the service do not silently acquire one, which matters
-;     because winget upgrades run silently with no chance to intervene.
+;   - On an existing install the box is preset from whether the service actually exists (see
+;     InitializeWizard), so an upgrade keeps what the machine already has. Existing installs
+;     that declined the service do not silently acquire one, which matters because winget
+;     upgrades run silently with no chance to intervene.
+; This box is now the single switch for the service in both directions: checked installs it,
+; unchecked removes an existing one. That is what makes the Modify mode work.
 Name: "installservice"; Description: "{cm:InstallService}"
 
 [Icons]
@@ -130,6 +199,10 @@ Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden;
 Filename: "{sys}\sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcDelete"
 
 [Code]
+var
+  { Nil unless this run offers the maintenance choice - see InitializeWizard }
+  MaintPage: TInputOptionWizardPage;
+
 function Exec2(const FileName, Params: string): Integer;
 var
   ResultCode: Integer;
@@ -145,12 +218,85 @@ begin
   Result := Exec2(ExpandConstant('{sys}\sc.exe'), 'query {#MyServiceName}') = 0;
 end;
 
-{ Stop the service before file copy so the exe is not locked on upgrade }
+{ Setup is 32-bit while the install itself is 64-bit, so read the 64-bit view first and
+  only fall back to the redirected one. }
+function ReadUninstallValue(const ValueName: String; var Value: String): Boolean;
+begin
+  Result := False;
+  if IsWin64 then
+    Result := RegQueryStringValue(HKLM64, '{#MyUninstallKey}', ValueName, Value);
+  if not Result then
+    Result := RegQueryStringValue(HKLM, '{#MyUninstallKey}', ValueName, Value);
+end;
+
+function IsInstalled(): Boolean;
+var
+  Ignored: String;
+begin
+  Result := ReadUninstallValue('UninstallString', Ignored);
+end;
+
+{ Modify is offered only when the installed version is the one inside this setup. Then the
+  files on disk are exactly what would be copied, so a settings-only run leaves a consistent
+  installation and the version shown in Programs and Features stays true. When the versions
+  differ this is an upgrade - and its Tasks page changes the service just as well. }
+function SameVersionInstalled(): Boolean;
+var
+  Installed: String;
+begin
+  Result := ReadUninstallValue('DisplayVersion', Installed) and
+            (CompareText(Trim(Installed), '{#MyAppVersion}') = 0);
+end;
+
+function IsModifying(): Boolean;
+begin
+  Result := Assigned(MaintPage) and (MaintPage.SelectedValueIndex = 0);
+end;
+
+{ Check function for [Files] }
+function NotModifying(): Boolean;
+begin
+  Result := not IsModifying();
+end;
+
+procedure InitializeWizard();
+begin
+  { Never created for a silent run (that is how winget upgrades come in): there is nobody to
+    answer the page, and IsModifying must stay False so a silent run always copies the files. }
+  if (not WizardSilent) and SameVersionInstalled() then
+  begin
+    MaintPage := CreateInputOptionPage(wpWelcome, CustomMessage('MaintCaption'),
+      CustomMessage('MaintDescription'), CustomMessage('MaintPrompt'), True, False);
+    MaintPage.Add(CustomMessage('MaintModify'));
+    MaintPage.Add(CustomMessage('MaintReinstall'));
+    MaintPage.SelectedValueIndex := 0;
+  end;
+  { Preset the service task from the machine rather than from UsePreviousTasks. The box now
+    removes the service when unchecked, so it must start out matching reality - otherwise a
+    stale "previous task" could delete a service the user still has, or offer to re-create one
+    that is already there. }
+  if ServiceExists() then
+    WizardSelectTasks('installservice')
+  else if IsInstalled() then
+    WizardSelectTasks('!installservice');
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  { A settings-only run has nothing to ask about the license or the target folder }
+  Result := IsModifying() and ((PageID = wpLicense) or (PageID = wpSelectDir));
+end;
+
+{ Stop the service before file copy so the exe is not locked on upgrade, and before deleting it
+  so the delete takes effect at once instead of being deferred. A Modify run that keeps the
+  service does neither, so it leaves the running service alone - no needless re-index. }
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Tries: Integer;
 begin
   Result := '';
+  if IsModifying() and WizardIsTaskSelected('installservice') then
+    Exit;
   if ServiceExists() then
   begin
     Exec2(ExpandConstant('{sys}\sc.exe'), 'stop {#MyServiceName}'); { 1062 = not running - fine }
@@ -165,34 +311,62 @@ begin
   end;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+procedure InstallService();
 var
   Code: Integer;
 begin
-  if (CurStep = ssPostInstall) and WizardIsTaskSelected('installservice') then
-  begin
-    { sc.exe REQUIRES the space after each option= }
+  { sc.exe REQUIRES the space after each option= }
+  Code := Exec2(ExpandConstant('{sys}\sc.exe'),
+    'create {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') +
+    '" start= auto obj= LocalSystem DisplayName= "File Search Manager MFT Service"');
+  if Code = 1073 then { ERROR_SERVICE_EXISTS - upgrade: repoint the binary }
     Code := Exec2(ExpandConstant('{sys}\sc.exe'),
-      'create {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') +
-      '" start= auto obj= LocalSystem DisplayName= "File Search Manager MFT Service"');
-    if Code = 1073 then { ERROR_SERVICE_EXISTS - upgrade: repoint the binary }
-      Code := Exec2(ExpandConstant('{sys}\sc.exe'),
-        'config {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') + '" start= auto');
-    if Code = 0 then
-    begin
-      Exec2(ExpandConstant('{sys}\sc.exe'),
-        'description {#MyServiceName} "Provides read-only NTFS MFT data to File Search Manager so it can index drives without elevation."');
-      Code := Exec2(ExpandConstant('{sys}\sc.exe'), 'start {#MyServiceName}');
-    end;
-    if Code <> 0 then
-    begin
-      { Never abort the install - the app still works via the admin prompt or the folder scan.
-        Log it as well as showing it: now that the task is on by default, most installs are
-        silent ones from winget, where /SUPPRESSMSGBOXES eats this message box and nobody would
-        ever learn the service was not created. winget passes /LOG, so this line lands in the
-        diagnostic log it prints on failure. }
-      Log('Service setup failed with code ' + IntToStr(Code) + ' - continuing without the service.');
-      MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbInformation, MB_OK);
-    end;
+      'config {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') + '" start= auto');
+  if Code = 0 then
+  begin
+    Exec2(ExpandConstant('{sys}\sc.exe'),
+      'description {#MyServiceName} "Provides read-only NTFS MFT data to File Search Manager so it can index drives without elevation."');
+    Code := Exec2(ExpandConstant('{sys}\sc.exe'), 'start {#MyServiceName}');
+    if Code = 1056 then { ERROR_SERVICE_ALREADY_RUNNING - nothing was stopped, so nothing to do }
+      Code := 0;
   end;
+  if Code <> 0 then
+  begin
+    { Never abort the install - the app still works via the admin prompt or the folder scan.
+      Log it as well as showing it: now that the task is on by default, most installs are
+      silent ones from winget, where /SUPPRESSMSGBOXES eats this message box and nobody would
+      ever learn the service was not created. winget passes /LOG, so this line lands in the
+      diagnostic log it prints on failure. }
+    Log('Service setup failed with code ' + IntToStr(Code) + ' - continuing without the service.');
+    MsgBox(FmtMessage(CustomMessage('ServiceFailed'), [IntToStr(Code)]), mbInformation, MB_OK);
+  end;
+end;
+
+{ The task was unchecked while the service is on the machine - the user is taking it away.
+  PrepareToInstall already stopped it. The service binaries stay in the app's service subfolder
+  so a later run can just switch the service back on. }
+procedure RemoveService();
+var
+  Code: Integer;
+begin
+  Code := Exec2(ExpandConstant('{sys}\sc.exe'), 'delete {#MyServiceName}');
+  if Code = 1072 then { ERROR_SERVICE_MARKED_FOR_DELETE - already on its way out }
+    Code := 0;
+  if Code = 0 then
+    Log('Service removed at the user''s request - File Search Manager will use the elevation prompt or the folder walk.')
+  else
+  begin
+    Log('Service removal failed with code ' + IntToStr(Code) + ' - it is still installed.');
+    MsgBox(FmtMessage(CustomMessage('ServiceRemoveFailed'), [IntToStr(Code)]), mbInformation, MB_OK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  if WizardIsTaskSelected('installservice') then
+    InstallService()
+  else if ServiceExists() then
+    RemoveService();
 end;

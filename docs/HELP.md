@@ -15,7 +15,7 @@ By default only NTFS drives are indexed - other file systems (network mounts, FA
 
 For NTFS drives, the fastest path is reading the NTFS Master File Table. File Search Manager can do that in one of these ways:
 
-- Windows service: no prompt at all. Selected by default in the installer.
+- Windows service: no prompt at all. Selected by default in the installer. Running the installer of the version you already have offers **Modify settings**, which adds or removes the service without reinstalling anything else.
 - Elevated helper: one UAC prompt per app run. Without the service it is offered at startup, so indexing can begin immediately. With the service it is not offered until the first action that actually needs administrator rights - the `A` key, reading admin-only files, or renaming and changing timestamps on write-protected items. The **🛡** button next to **🌐** asks at launch instead.
 - Direct elevated app: run File Search Manager as administrator.
 
