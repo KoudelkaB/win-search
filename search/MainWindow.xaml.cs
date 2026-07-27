@@ -171,6 +171,7 @@ namespace search
                     (Key.E, "Change extension", new CommandTree[] { Enter("Extension"), (Key.Delete,"Delete extension") }),
                     (Key.C, "Change creation time", timeSource),
                     (Key.W, "Change last write time", timeSource),
+                    (Key.A, "Change last access time", timeSource),
                     (Key.OemPeriod, "Add extension",Enter("Extension")),
                     (Key.Delete, "delete from name",Enter("string to delete")),
                     (Key.F, "Add as prefix",Enter("prefix")),
@@ -2845,8 +2846,8 @@ namespace search
                 case Key.W:
                 case Key.A:
                     {
-                        // Change creation or modification time
-                        Action<string, DateTime> set = e.Current switch { Key.C => File.SetCreationTime, Key.W => File.SetLastWriteTime, _ => File.SetLastAccessTime };
+                        // Change creation, last write, or last access time
+                        var which = e.Current;
                         DateTime time = DateTime.Now;
                         if (e.MoveNext())
                         {
@@ -2864,13 +2865,22 @@ namespace search
                                     break;
                             }
                         }
-                        // Set the time on all nodes
+                        // Set the time on all nodes. Failures used to be swallowed silently,
+                        // so a write-protected item looked like it had been changed.
+                        var timeErrors = new List<string>();
                         foreach (var n in nodes)
                             try
                             {
-                                set(n.FullName, time);
+                                SetNodeTime(n.FullName, which, time);
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                $"set time on '{n.FullName}' failed {ex}".Debug();
+                                timeErrors.Add(ex.Message);
+                            }
+                        Model.Status = timeErrors.Count > 0
+                            ? $"Time change failed with {timeErrors.Count} error(s): {string.Join(", ", timeErrors)}"
+                            : "Time changed.";
                         return;
                     }
             }
@@ -2915,6 +2925,37 @@ namespace search
                 if (x.FullName != dest) errors.AddRange(x.FullName.UniversalCopyOrMove(dest, overwrite, true));
             }
             Model.Status = errors.Count > 0 ? $"Rename failed with {errors.Count} errors: {string.Join(", ", errors)}" : "Rename done.";
+        }
+
+        /// <summary>
+        /// Set one timestamp, falling back to the elevated broker when Windows denies the
+        /// write. Directories need the Directory.* overloads - the File.* ones throw
+        /// FileNotFoundException when handed a directory path.
+        /// </summary>
+        static void SetNodeTime(string path, Key which, DateTime time)
+        {
+            var directory = System.IO.Directory.Exists(path);
+            Action<string, DateTime> set = (which, directory) switch
+            {
+                (Key.C, false) => File.SetCreationTime,
+                (Key.C, true) => System.IO.Directory.SetCreationTime,
+                (Key.W, false) => File.SetLastWriteTime,
+                (Key.W, true) => System.IO.Directory.SetLastWriteTime,
+                (_, false) => File.SetLastAccessTime,
+                (_, true) => System.IO.Directory.SetLastAccessTime
+            };
+            try
+            {
+                set(path, time);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                if (!Broker.EnsureStarted(Broker.ElevationWait)) throw;
+                Broker.SetTimesElevated(path,
+                    which == Key.C ? time : null,
+                    which == Key.W ? time : null,
+                    which == Key.A ? time : null);
+            }
         }
 
         void BeginInlineRename(INode node)

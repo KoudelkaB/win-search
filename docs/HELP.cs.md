@@ -16,7 +16,7 @@ Ve výchozím stavu se indexují jen disky NTFS – ostatní systémy souborů (
 U disků NTFS je nejrychlejší cestou čtení hlavní tabulky souborů (MFT). File Search Manager to zvládne jedním z těchto způsobů:
 
 - Služba Windows: žádná výzva. V instalátoru je vybraná ve výchozím stavu.
-- Elevovaný pomocník: jedna výzva UAC na spuštění aplikace. Bez služby se nabídne při startu, aby indexování mohlo začít okamžitě. Se službou se nenabídne dřív než při první akci, která práva správce skutečně potřebuje – klávesa `A` nebo čtení souborů přístupných jen správci. Tlačítko **🛡** vedle **🌐** se místo toho zeptá už při spuštění.
+- Elevovaný pomocník: jedna výzva UAC na spuštění aplikace. Bez služby se nabídne při startu, aby indexování mohlo začít okamžitě. Se službou se nenabídne dřív než při první akci, která práva správce skutečně potřebuje – klávesa `A`, čtení souborů přístupných jen správci nebo přejmenování a změna časů u položek chráněných proti zápisu. Tlačítko **🛡** vedle **🌐** se místo toho zeptá už při spuštění.
 - Přímo elevovaná aplikace: spusťte File Search Manager jako správce.
 
 Pokud není dostupné nic z toho, File Search Manager přejde na procházení složek. Aplikace funguje dál, ale úvodní načtení může být pomalejší.
@@ -237,7 +237,10 @@ Příkazy přejmenování a změn po `F2`:
 - `R`: nahradit text.
 - `C`: změnit čas vytvoření, poté `V` pro čas ze schránky nebo `C` pro aktuální čas.
 - `W`: změnit čas poslední změny se stejnou volbou `V` a `C`.
+- `A`: změnit čas posledního přístupu se stejnou volbou `V` a `C`.
 - Přidáním `O` na začátku přepíšete existující cíle, je-li to podporováno.
+
+Přejmenování a změny časů u položek chráněných proti zápisu (například cokoli pod `Program Files` nebo `Windows`) se automaticky zopakují přes elevovaného pomocníka. Pokud ještě nebyl spuštěn, právě v tu chvíli se objeví jeho výzva UAC.
 
 ## Data a řešení potíží
 

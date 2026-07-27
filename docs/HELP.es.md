@@ -16,7 +16,7 @@ De forma predeterminada solo se indexan las unidades NTFS: otros sistemas de arc
 En las unidades NTFS, la vía más rápida es leer la Master File Table de NTFS. File Search Manager puede hacerlo de una de estas maneras:
 
 - Servicio de Windows: sin ningún aviso. Seleccionado de forma predeterminada en el instalador.
-- Asistente con privilegios: un aviso de UAC por ejecución de la aplicación. Sin el servicio se ofrece al inicio, para que la indexación pueda empezar de inmediato. Con el servicio no se ofrece hasta la primera acción que realmente necesita permisos de administrador: la tecla `A` o la lectura de archivos reservados a administradores. El botón **🛡** junto a **🌐** hace que se pida al arrancar.
+- Asistente con privilegios: un aviso de UAC por ejecución de la aplicación. Sin el servicio se ofrece al inicio, para que la indexación pueda empezar de inmediato. Con el servicio no se ofrece hasta la primera acción que realmente necesita permisos de administrador: la tecla `A`, la lectura de archivos reservados a administradores, o el cambio de nombre y de fechas en elementos protegidos contra escritura. El botón **🛡** junto a **🌐** hace que se pida al arrancar.
 - Aplicación elevada directamente: ejecute File Search Manager como administrador.
 
 Si no hay nada de eso disponible, File Search Manager recurre a recorrer las carpetas. La aplicación sigue funcionando, pero la carga inicial puede ser más lenta.
@@ -237,7 +237,10 @@ Comandos de cambio de nombre y modificación tras `F2`:
 - `R`: reemplazar texto.
 - `C`: cambiar la fecha de creación y después `V` para la fecha del portapapeles o `C` para la actual.
 - `W`: cambiar la fecha de última escritura, con las mismas opciones `V` y `C`.
+- `A`: cambiar la fecha de último acceso, con las mismas opciones `V` y `C`.
 - Añada `O` al principio para sobrescribir destinos existentes cuando esté admitido.
+
+Los cambios de nombre y de fechas en elementos protegidos contra escritura (por ejemplo, todo lo que está bajo `Program Files` o `Windows`) se reintentan automáticamente a través del asistente con privilegios. Si aún no se ha iniciado, es entonces cuando aparece su aviso de UAC.
 
 ## Datos y solución de problemas
 

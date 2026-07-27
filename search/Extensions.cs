@@ -68,7 +68,7 @@ namespace search
                 // the first action that genuinely needs admin rights, so raise the offer now.
                 if (Broker.CanOffer)
                 {
-                    if (Broker.EnsureStarted(TimeSpan.FromMinutes(2)))
+                    if (Broker.EnsureStarted(Broker.ElevationWait))
                         return Broker.OpenElevated(name, args, workDir);
                     // Declining the offer declines this open too. Falling through would prompt a
                     // second time for the same action the user just refused.

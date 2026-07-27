@@ -16,7 +16,7 @@ Por padrão, apenas unidades NTFS são indexadas — outros sistemas de arquivos
 Em unidades NTFS, o caminho mais rápido é ler a Master File Table do NTFS. O File Search Manager pode fazer isso de uma destas formas:
 
 - Serviço do Windows: nenhuma solicitação. Selecionado por padrão no instalador.
-- Auxiliar com privilégios elevados: uma solicitação do UAC por execução do aplicativo. Sem o serviço, ela é oferecida na inicialização, para que a indexação comece imediatamente. Com o serviço, só é oferecida na primeira ação que realmente exige direitos de administrador: a tecla `A` ou a leitura de arquivos restritos a administradores. O botão **🛡** ao lado de **🌐** faz a solicitação já na inicialização.
+- Auxiliar com privilégios elevados: uma solicitação do UAC por execução do aplicativo. Sem o serviço, ela é oferecida na inicialização, para que a indexação comece imediatamente. Com o serviço, só é oferecida na primeira ação que realmente exige direitos de administrador: a tecla `A`, a leitura de arquivos restritos a administradores, ou a renomeação e a alteração de datas em itens protegidos contra gravação. O botão **🛡** ao lado de **🌐** faz a solicitação já na inicialização.
 - Aplicativo elevado diretamente: execute o File Search Manager como administrador.
 
 Se nada disso estiver disponível, o File Search Manager recorre à varredura de pastas. O aplicativo continua funcionando, mas o carregamento inicial pode ser mais lento.
@@ -237,7 +237,10 @@ Comandos de renomeação e alteração após `F2`:
 - `R`: substituir texto.
 - `C`: alterar a data de criação e depois `V` para a data da área de transferência ou `C` para a atual.
 - `W`: alterar a data da última gravação, com as mesmas opções `V` e `C`.
+- `A`: alterar a data do último acesso, com as mesmas opções `V` e `C`.
 - Acrescente `O` primeiro para substituir destinos existentes quando houver suporte.
+
+Renomeações e alterações de datas em itens protegidos contra gravação (por exemplo, tudo o que está em `Program Files` ou `Windows`) são repetidas automaticamente pelo auxiliar com privilégios elevados. Se ele ainda não tiver sido iniciado, é nesse momento que aparece a solicitação do UAC.
 
 ## Dados e solução de problemas
 

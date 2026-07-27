@@ -16,7 +16,7 @@ Per impostazione predefinita vengono indicizzati solo i dischi NTFS: gli altri f
 Per i dischi NTFS la via più rapida è leggere la Master File Table di NTFS. File Search Manager può farlo in uno di questi modi:
 
 - Servizio di Windows: nessuna richiesta. Selezionato per impostazione predefinita nel programma di installazione.
-- Helper con privilegi elevati: una richiesta UAC per ogni esecuzione dell’applicazione. Senza il servizio viene proposta all’avvio, così l’indicizzazione può iniziare subito. Con il servizio non viene proposta finché non arriva la prima azione che richiede davvero i diritti di amministratore: il tasto `A` o la lettura di file riservati agli amministratori. Il pulsante **🛡** accanto a **🌐** la richiede invece all’avvio.
+- Helper con privilegi elevati: una richiesta UAC per ogni esecuzione dell’applicazione. Senza il servizio viene proposta all’avvio, così l’indicizzazione può iniziare subito. Con il servizio non viene proposta finché non arriva la prima azione che richiede davvero i diritti di amministratore: il tasto `A`, la lettura di file riservati agli amministratori, oppure la rinomina e la modifica delle date su elementi protetti da scrittura. Il pulsante **🛡** accanto a **🌐** la richiede invece all’avvio.
 - Applicazione elevata direttamente: esegui File Search Manager come amministratore.
 
 Se nessuna di queste opzioni è disponibile, File Search Manager ripiega sulla scansione delle cartelle. L’applicazione funziona comunque, ma il caricamento iniziale può risultare più lento.
@@ -237,7 +237,10 @@ Comandi di rinomina e modifica dopo `F2`:
 - `R`: sostituisci testo.
 - `C`: cambia data di creazione, poi `V` per la data dagli appunti o `C` per quella corrente.
 - `W`: cambia data ultima scrittura, con le stesse scelte `V` e `C`.
+- `A`: cambia data ultimo accesso, con le stesse scelte `V` e `C`.
 - Anteponi `O` per sovrascrivere le destinazioni esistenti quando è supportato.
+
+Le rinomine e le modifiche delle date su elementi protetti da scrittura (ad esempio tutto ciò che si trova sotto `Program Files` o `Windows`) vengono ritentate automaticamente tramite l’helper con privilegi elevati. Se non è ancora stato avviato, è in quel momento che compare la sua richiesta UAC.
 
 ## Dati e risoluzione dei problemi
 

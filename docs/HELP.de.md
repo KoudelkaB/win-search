@@ -16,7 +16,7 @@ Standardmäßig werden nur NTFS-Laufwerke indiziert – andere Dateisysteme (Net
 Bei NTFS-Laufwerken ist das Lesen der NTFS-Master File Table der schnellste Weg. File Search Manager kann das auf eine dieser Arten tun:
 
 - Windows-Dienst: überhaupt keine Abfrage. Im Installationsprogramm standardmäßig ausgewählt.
-- Erhöhter Helfer: eine UAC-Abfrage pro Programmlauf. Ohne den Dienst wird sie beim Start angeboten, damit die Indizierung sofort beginnen kann. Mit dem Dienst wird sie erst bei der ersten Aktion angeboten, die tatsächlich Administratorrechte benötigt – die Taste `A` oder das Lesen von Dateien, die nur Administratoren zugänglich sind. Die Schaltfläche **🛡** neben **🌐** fragt stattdessen beim Start.
+- Erhöhter Helfer: eine UAC-Abfrage pro Programmlauf. Ohne den Dienst wird sie beim Start angeboten, damit die Indizierung sofort beginnen kann. Mit dem Dienst wird sie erst bei der ersten Aktion angeboten, die tatsächlich Administratorrechte benötigt – die Taste `A`, das Lesen von Dateien, die nur Administratoren zugänglich sind, oder das Umbenennen und Ändern von Zeitstempeln an schreibgeschützten Elementen. Die Schaltfläche **🛡** neben **🌐** fragt stattdessen beim Start.
 - Direkt erhöhte Anwendung: File Search Manager als Administrator ausführen.
 
 Ist nichts davon verfügbar, weicht File Search Manager auf das Durchlaufen der Ordner aus. Die Anwendung funktioniert weiterhin, aber der erste Ladevorgang kann langsamer sein.
@@ -237,7 +237,10 @@ Umbenennen-/Änderungsbefehle nach `F2`:
 - `R`: Text ersetzen.
 - `C`: Erstellungszeit ändern, danach `V` für die Zeit aus der Zwischenablage oder `C` für die aktuelle Zeit.
 - `W`: letzte Änderungszeit ändern, mit denselben Auswahlmöglichkeiten `V` und `C`.
+- `A`: letzte Zugriffszeit ändern, mit denselben Auswahlmöglichkeiten `V` und `C`.
 - Stellen Sie `O` voran, um vorhandene Ziele zu überschreiben, sofern unterstützt.
+
+Umbenennungen und Zeitstempeländerungen an schreibgeschützten Elementen (etwa allem unter `Program Files` oder `Windows`) werden automatisch über den erhöhten Helfer wiederholt. Wurde er noch nicht gestartet, erscheint genau dann seine UAC-Abfrage.
 
 ## Daten und Fehlerbehebung
 

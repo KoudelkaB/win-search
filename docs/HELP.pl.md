@@ -16,7 +16,7 @@ Domyślnie indeksowane są tylko dyski NTFS — inne systemy plików (zasoby sie
 W przypadku dysków NTFS najszybsza jest lektura tablicy MFT systemu NTFS. File Search Manager może to zrobić na jeden z tych sposobów:
 
 - Usługa systemu Windows: bez żadnego monitu. W instalatorze zaznaczona domyślnie.
-- Pomocnik z podwyższonymi uprawnieniami: jeden monit UAC na uruchomienie aplikacji. Bez usługi jest proponowany przy starcie, aby indeksowanie mogło ruszyć od razu. Z usługą pojawia się dopiero przy pierwszej czynności, która naprawdę wymaga uprawnień administratora — klawisz `A` lub odczyt plików dostępnych tylko dla administratorów. Przycisk **🛡** obok **🌐** sprawia, że pytanie pada już przy uruchomieniu.
+- Pomocnik z podwyższonymi uprawnieniami: jeden monit UAC na uruchomienie aplikacji. Bez usługi jest proponowany przy starcie, aby indeksowanie mogło ruszyć od razu. Z usługą pojawia się dopiero przy pierwszej czynności, która naprawdę wymaga uprawnień administratora — klawisz `A`, odczyt plików dostępnych tylko dla administratorów albo zmiana nazwy i czasów na elementach chronionych przed zapisem. Przycisk **🛡** obok **🌐** sprawia, że pytanie pada już przy uruchomieniu.
 - Aplikacja uruchomiona z podwyższonymi uprawnieniami: uruchom File Search Manager jako administrator.
 
 Jeśli nic z powyższego nie jest dostępne, File Search Manager przechodzi na przeglądanie folderów. Aplikacja nadal działa, ale początkowe wczytywanie może być wolniejsze.
@@ -237,7 +237,10 @@ Polecenia zmiany nazwy i atrybutów po `F2`:
 - `R`: zamień tekst.
 - `C`: zmień czas utworzenia, a następnie `V` dla czasu ze schowka lub `C` dla bieżącego.
 - `W`: zmień czas ostatniego zapisu, z tymi samymi opcjami `V` i `C`.
+- `A`: zmień czas ostatniego dostępu, z tymi samymi opcjami `V` i `C`.
 - Dodaj najpierw `O`, aby nadpisać istniejące cele, jeśli jest to obsługiwane.
+
+Zmiany nazw i czasów na elementach chronionych przed zapisem (na przykład wszystkim w `Program Files` lub `Windows`) są automatycznie ponawiane przez pomocnika z podwyższonymi uprawnieniami. Jeśli nie został jeszcze uruchomiony, właśnie wtedy pojawia się jego monit UAC.
 
 ## Dane i rozwiązywanie problemów
 

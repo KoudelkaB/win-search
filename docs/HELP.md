@@ -16,7 +16,7 @@ By default only NTFS drives are indexed - other file systems (network mounts, FA
 For NTFS drives, the fastest path is reading the NTFS Master File Table. File Search Manager can do that in one of these ways:
 
 - Windows service: no prompt at all. Selected by default in the installer.
-- Elevated helper: one UAC prompt per app run. Without the service it is offered at startup, so indexing can begin immediately. With the service it is not offered until the first action that actually needs administrator rights - the `A` key, or reading admin-only files. The **🛡** button next to **🌐** asks at launch instead.
+- Elevated helper: one UAC prompt per app run. Without the service it is offered at startup, so indexing can begin immediately. With the service it is not offered until the first action that actually needs administrator rights - the `A` key, reading admin-only files, or renaming and changing timestamps on write-protected items. The **🛡** button next to **🌐** asks at launch instead.
 - Direct elevated app: run File Search Manager as administrator.
 
 If none of those are available, File Search Manager falls back to walking folders. The app still works, but the initial load may be slower.
@@ -237,7 +237,10 @@ Rename/change commands after `F2`:
 - `R`: replace text.
 - `C`: change creation time, then `V` for the time from the clipboard or `C` for the current time.
 - `W`: change last write time, with the same `V` and `C` choices.
+- `A`: change last access time, with the same `V` and `C` choices.
 - Add `O` first to overwrite existing targets when supported.
+
+Renaming and timestamp changes on write-protected items (anything under `Program Files` or `Windows`, for example) are retried through the elevated helper automatically. If the helper has not been started yet, that is when its UAC prompt appears.
 
 ## Data and Troubleshooting
 

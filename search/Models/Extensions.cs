@@ -211,7 +211,7 @@ namespace search.Models
                 {
                     // Bring the helper up on demand when startup skipped it (service was serving
                     // the index); a no-op once the offer has already been answered this session.
-                    if (!Broker.Available) Broker.EnsureStarted(TimeSpan.FromMinutes(2));
+                    if (!Broker.Available) Broker.EnsureStarted(Broker.ElevationWait);
                     if (!Broker.Available)
                         throw new UnauthorizedAccessException($"Access denied to '{file}' - the elevated helper is not running (it was declined).");
                     Broker.CopyFromElevated(file, dest, overwrite, move);
@@ -264,6 +264,23 @@ namespace search.Models
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (UnauthorizedAccessException) when (move && Broker.EnsureStarted(Broker.ElevationWait))
+            {
+                // The source was readable (otherwise the GET_FILE path above would have taken
+                // over) but the rename itself is denied - typically anything under Program
+                // Files or Windows. Retrying elevated is the only way that succeeds, and a
+                // real move keeps the file reference number the live index tracks.
+                try
+                {
+                    Broker.MoveElevated(file, dest, overwrite);
+                    EchoTransferred(file, dest, move, batchEcho);
+                }
+                catch (Exception e)
+                {
+                    $"elevated move failed {e}".Debug();
+                    errors.Add(e.Message);
+                }
             }
             catch (Exception e)
             {

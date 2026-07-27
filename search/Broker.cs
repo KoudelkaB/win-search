@@ -32,8 +32,15 @@ namespace search
         enum Command : byte
         {
             READY, FILES_TO_CLIPBOARD, GET_FILE, SAVE_FILE, DELETE_FILE,
-            OPEN_FILE, READ_MFT, READ_METADATA, EXIT
+            OPEN_FILE, READ_MFT, READ_METADATA, MOVE_FILE, SET_TIMES, EXIT
         }
+
+        /// <summary>
+        /// How long an operation waits for a lazily raised elevation prompt. Long enough that
+        /// a user who looks away from the UAC dialog still gets the operation, short enough
+        /// that an unanswered prompt does not hang the app forever.
+        /// </summary>
+        public static readonly TimeSpan ElevationWait = TimeSpan.FromMinutes(2);
 
         // ------------------------------------------------------------------
         // Client side - runs in the unelevated UI process
@@ -229,6 +236,38 @@ namespace search
             => Run(Command.DELETE_FILE, s => WriteLine(s, path));
 
         /// <summary>
+        /// Rename or move a path that requires admin rights. A real move on the elevated side,
+        /// deliberately not GET_FILE+SAVE_FILE+DELETE_FILE: that would push the whole file
+        /// through the pipe just to rename it, and - worse - it would give the result a new
+        /// NTFS file reference number, so the live index would see a delete plus a create
+        /// instead of a rename.
+        /// </summary>
+        public static void MoveElevated(string source, string dest, bool overwrite)
+            => Run(Command.MOVE_FILE, s =>
+            {
+                WriteLine(s, source);
+                WriteLine(s, dest);
+                WriteLine(s, overwrite ? "1" : "0");
+            });
+
+        /// <summary>
+        /// Set timestamps on a path that requires admin rights. A null value leaves that
+        /// timestamp untouched; times travel as ticks so no format or culture is involved.
+        /// </summary>
+        public static void SetTimesElevated(string path,
+            DateTime? creation, DateTime? lastWrite, DateTime? lastAccess)
+            => Run(Command.SET_TIMES, s =>
+            {
+                WriteLine(s, path);
+                WriteLine(s, Ticks(creation));
+                WriteLine(s, Ticks(lastWrite));
+                WriteLine(s, Ticks(lastAccess));
+            });
+
+        static string Ticks(DateTime? time)
+            => time?.Ticks.ToString(CultureInfo.InvariantCulture) ?? "";
+
+        /// <summary>
         /// Put a file drop list on the clipboard from the elevated side
         /// </summary>
         public static void FilesToClipboardElevated(IEnumerable<string> files)
@@ -397,6 +436,25 @@ namespace search
                             ReadLine(server).DeletePathIfExists();
                             break;
 
+                        case Command.MOVE_FILE:
+                        {
+                            var source = ReadLine(server);
+                            var dest = ReadLine(server);
+                            var overwrite = ReadLine(server) == "1";
+                            MovePath(source, dest, overwrite);
+                            break;
+                        }
+
+                        case Command.SET_TIMES:
+                        {
+                            var path = ReadLine(server);
+                            var creation = ParseTicks(ReadLine(server));
+                            var lastWrite = ParseTicks(ReadLine(server));
+                            var lastAccess = ParseTicks(ReadLine(server));
+                            ApplyTimes(path, creation, lastWrite, lastAccess);
+                            break;
+                        }
+
                         case Command.FILES_TO_CLIPBOARD:
                             ReadLinesUntilEmpty(server).FilesToClipBoard(); // Main is [STAThread]
                             break;
@@ -431,6 +489,40 @@ namespace search
                     try { WriteLine(server, OneLine(e.Message)); } catch { return; }
                 }
             }
+        }
+
+        static void MovePath(string source, string dest, bool overwrite)
+        {
+            if (Directory.Exists(source))
+            {
+                // Directory.Move has no overwrite overload
+                if (overwrite) dest.DeletePathIfExists();
+                Directory.Move(source, dest);
+            }
+            else File.Move(source, dest, overwrite);
+        }
+
+        static DateTime? ParseTicks(string line)
+            => long.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out var ticks)
+                ? new DateTime(ticks, DateTimeKind.Local)
+                : null;
+
+        /// <summary>
+        /// The File.Set*Time overloads throw FileNotFoundException on a directory, so the
+        /// directory case needs its own set of calls.
+        /// </summary>
+        static void ApplyTimes(string path, DateTime? creation, DateTime? lastWrite, DateTime? lastAccess)
+        {
+            var directory = Directory.Exists(path);
+            if (creation.HasValue)
+                if (directory) Directory.SetCreationTime(path, creation.Value);
+                else File.SetCreationTime(path, creation.Value);
+            if (lastWrite.HasValue)
+                if (directory) Directory.SetLastWriteTime(path, lastWrite.Value);
+                else File.SetLastWriteTime(path, lastWrite.Value);
+            if (lastAccess.HasValue)
+                if (directory) Directory.SetLastAccessTime(path, lastAccess.Value);
+                else File.SetLastAccessTime(path, lastAccess.Value);
         }
 
         static void SendFile(Stream s, string path)
