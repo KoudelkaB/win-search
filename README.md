@@ -32,7 +32,7 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 The preferred installation method is Windows Package Manager:
 
 ```powershell
-winget install BohdanKoudelka.FileSearchManager
+winget install --id BohdanKoudelka.FileSearchManager --exact
 ```
 
 Alternatively, download the latest installer from [GitHub Releases](https://github.com/KoudelkaB/win-search/releases).

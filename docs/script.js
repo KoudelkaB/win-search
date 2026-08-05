@@ -7,7 +7,7 @@ copyButtons.forEach((button) => {
 
     try {
       await navigator.clipboard.writeText(button.dataset.copy);
-      label.textContent = 'Copied';
+      label.textContent = button.dataset.copySuccess || 'Copied';
     } catch {
       label.textContent = 'Select';
     }

@@ -35,7 +35,7 @@
           <a href="#features">Features</a>
           <a href="#workflow">How it works</a>
           <a href="https://github.com/KoudelkaB/win-search/blob/main/docs/HELP.md">Help</a>
-          <a class="nav-cta" href="https://github.com/KoudelkaB/win-search/releases/latest">Download</a>
+          <a class="nav-cta" href="#download">Install</a>
         </nav>
       </div>
     </header>
@@ -49,17 +49,17 @@
             <h1>Find anything.<br><em>Act instantly.</em></h1>
             <p class="hero-lead">Search millions of files as you type, look inside their contents, and manage the results without breaking your flow.</p>
             <div class="hero-actions">
-              <a class="button button-primary" href="https://github.com/KoudelkaB/win-search/releases/latest">
-                Download for Windows
-                <span aria-hidden="true">↓</span>
-              </a>
-              <a class="button button-secondary" href="https://github.com/KoudelkaB/win-search">View on GitHub <span aria-hidden="true">↗</span></a>
+              <button class="button button-primary" type="button" data-copy="winget install --id BohdanKoudelka.FileSearchManager --exact" data-copy-success="Copied — paste in Terminal" aria-label="Copy the recommended WinGet install command">
+                <span class="copy-label" aria-live="polite">Install with WinGet</span>
+                <span aria-hidden="true">›_</span>
+              </button>
+              <a class="button button-secondary" href="https://github.com/KoudelkaB/win-search/releases/latest">Download installer <span aria-hidden="true">↓</span></a>
             </div>
             <div class="install-command" aria-label="WinGet install command">
               <span class="prompt" aria-hidden="true">›</span>
-              <code>winget install BohdanKoudelka.FileSearchManager</code>
-              <button class="copy-button" type="button" data-copy="winget install BohdanKoudelka.FileSearchManager" aria-label="Copy WinGet install command">
-                <span class="copy-label">Copy</span>
+              <code>winget install --id BohdanKoudelka.FileSearchManager --exact</code>
+              <button class="copy-button" type="button" data-copy="winget install --id BohdanKoudelka.FileSearchManager --exact" aria-label="Copy WinGet install command">
+                <span class="copy-label" aria-live="polite">Copy</span>
               </button>
             </div>
             <ul class="hero-facts" aria-label="Key facts">
@@ -195,23 +195,27 @@
       <section class="section install-section" id="download">
         <div class="shell install-panel">
           <div class="install-copy">
-            <p class="eyebrow"><span></span> Ready when you are</p>
+            <p class="eyebrow"><span></span> Recommended installation</p>
             <h2>Put every file<br>within reach.</h2>
-            <p>Install with Windows Package Manager, or download the latest installer from GitHub Releases.</p>
+            <p>WinGet handles the installation and keeps future updates one command away.</p>
           </div>
           <div class="install-options">
             <div class="terminal-card">
               <div class="terminal-label"><span>Windows Terminal</span><span>PowerShell</span></div>
               <div class="terminal-command">
                 <span>PS&gt;</span>
-                <code>winget install BohdanKoudelka.FileSearchManager</code>
-                <button class="copy-button copy-button-dark" type="button" data-copy="winget install BohdanKoudelka.FileSearchManager" aria-label="Copy WinGet install command"><span class="copy-label">Copy</span></button>
+                <code>winget install --id BohdanKoudelka.FileSearchManager --exact</code>
+                <button class="copy-button copy-button-dark" type="button" data-copy="winget install --id BohdanKoudelka.FileSearchManager --exact" aria-label="Copy WinGet install command"><span class="copy-label" aria-live="polite">Copy</span></button>
               </div>
             </div>
             <div class="install-links">
-              <a class="button button-primary" href="https://github.com/KoudelkaB/win-search/releases/latest">Get the latest release <span aria-hidden="true">↓</span></a>
-              <span>No account required · MIT licensed</span>
+              <button class="button button-primary" type="button" data-copy="winget install --id BohdanKoudelka.FileSearchManager --exact" data-copy-success="Command copied" aria-label="Copy WinGet install command">
+                <span class="copy-label" aria-live="polite">Copy install command</span>
+                <span aria-hidden="true">⧉</span>
+              </button>
+              <a class="standalone-link" href="https://github.com/KoudelkaB/win-search/releases/latest">Download standalone installer <span aria-hidden="true">↗</span></a>
             </div>
+            <p class="installer-note"><strong>Standalone option:</strong> the installer is currently unsigned, so Windows may show a security warning.</p>
           </div>
         </div>
       </section>

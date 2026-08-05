@@ -242,6 +242,8 @@ a {
   padding: 12px 20px;
   border: 1px solid transparent;
   border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
   font-size: 14px;
   font-weight: 750;
   line-height: 1;
@@ -893,6 +895,36 @@ a {
   font-size: 11px;
 }
 
+.standalone-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #526176;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.standalone-link:hover {
+  color: var(--blue);
+}
+
+.standalone-link:focus-visible {
+  outline: 3px solid rgba(77, 156, 255, 0.35);
+  outline-offset: 4px;
+}
+
+.installer-note {
+  margin: 16px 0 0;
+  color: #7a6a4f;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.installer-note strong {
+  color: #5c4c32;
+}
+
 .site-footer {
   padding: 32px 0;
   color: #718095;
@@ -1136,6 +1168,10 @@ a {
   .install-links {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .standalone-link {
+    justify-content: center;
   }
 
   .footer-layout {
