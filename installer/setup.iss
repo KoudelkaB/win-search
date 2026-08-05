@@ -1,8 +1,7 @@
 ﻿; File Search Manager installer.
-; Build inputs: publish the two projects first (paths relative to this script):
-;   dotnet publish ..\search\search.csproj                 -c Release -r win-x64 --self-contained true -o ..\publish\app
-;   dotnet publish ..\search.service\search.service.csproj -c Release -r win-x64 --self-contained true -o ..\publish\service
-; Then: ISCC.exe [/DMyAppVersion=1.2.3] setup.iss
+; Build with tools\Build-Installer.ps1. It refreshes both publish directories and checks
+; that the app and service versions match before invoking ISCC. Calling ISCC directly can
+; accidentally package stale binaries left by an older build.
 ; Without /DMyAppVersion the version is read from the published File Search Manager.exe
 ; (which MinVer stamped from the git tag - the single source of truth).
 
@@ -27,6 +26,9 @@ AppPublisherURL=https://github.com/KoudelkaB/win-search
 AppSupportURL=https://github.com/KoudelkaB/win-search/issues
 AppUpdatesURL=https://github.com/KoudelkaB/win-search/releases
 DefaultDirName={autopf}\File Search Manager
+; Keep a copy of this exact installer in {app} (see [Files]) so Windows can launch
+; the existing maintenance wizard from its "Modify" button.
+AppModifyPath="{app}\FileSearchManager-Setup.exe"
 ; Admin is required once for the Program Files install (and to register the optional
 ; service); the app itself then runs unelevated
 PrivilegesRequired=admin
@@ -153,6 +155,10 @@ japanese.MaintReinstall=再インストールする - すべてのプログラ�
 korean.MaintReinstall=다시 설치 - 모든 프로그램 파일을 교체하고 다음 페이지의 옵션을 적용합니다
 
 [Files]
+; Windows' Apps & features page can only offer Modify when the registered command points
+; to an installer that remains available after the original download is gone. Do not try
+; to copy the cached installer onto itself when it is the one running maintenance.
+Source: "{srcexe}"; DestDir: "{app}"; DestName: "FileSearchManager-Setup.exe"; Flags: external ignoreversion; Check: InstallerNeedsCaching
 ; NotModifying keeps every file out of a settings-only "Modify" run: the files on disk are
 ; already this exact version (Modify is only offered then), so re-copying them would only cost
 ; time and force the app shut. Shortcuts below are still refreshed - that repairs a deleted one.
@@ -251,6 +257,14 @@ end;
 function IsModifying(): Boolean;
 begin
   Result := Assigned(MaintPage) and (MaintPage.SelectedValueIndex = 0);
+end;
+
+{ The cached setup is itself the maintenance entry point, so a maintenance or reinstall run
+  started by Windows must leave the currently executing file alone. }
+function InstallerNeedsCaching(): Boolean;
+begin
+  Result := CompareText(ExpandConstant('{srcexe}'),
+    ExpandConstant('{app}\FileSearchManager-Setup.exe')) <> 0;
 end;
 
 { Check function for [Files] }

@@ -28,18 +28,12 @@ jobs:
           $version = '${{ github.ref_name }}'.TrimStart('v')
           "VERSION=$version" >> $env:GITHUB_ENV
 
-      - name: Publish app
-        run: dotnet publish search/search.csproj -c Release -r win-x64 --self-contained true -o publish/app
-
-      - name: Publish service
-        run: dotnet publish search.service/search.service.csproj -c Release -r win-x64 --self-contained true -o publish/service
-
-      - name: Build installer
+      - name: Publish app and service and build installer
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc /DMyAppVersion=$env:VERSION installer\setup.iss
+          .\tools\Build-Installer.ps1 -Version $env:VERSION -IsccPath $iscc
 
       - name: Generate checksum
         shell: pwsh

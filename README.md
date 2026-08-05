@@ -39,7 +39,7 @@ Alternatively, download the latest installer from [GitHub Releases](https://gith
 
 The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and installs the read-only `WinSearchService` for prompt-free NTFS indexing. The service is selected by default and can be unchecked during setup; without it the app asks for administrator rights at every start, or falls back to a slower folder walk.
 
-Running the installer of the version that is already installed offers **Modify settings**: it keeps the installed files and only re-applies the options, so the service can be added or removed afterwards without reinstalling. Any other version is an upgrade, whose task page changes the service just as well.
+The **Modify** button in Windows Apps & features launches the cached installer and offers **Modify settings**: it keeps the installed files and only re-applies the options, so the service can be added or removed afterwards without reinstalling. Running the installer of the version that is already installed offers the same choice. Any other version is an upgrade, whose task page changes the service just as well.
 
 ## Quick Start
 
@@ -72,20 +72,15 @@ Build:
 dotnet build search/search.sln
 ```
 
-Publish self-contained binaries:
+Publish both self-contained binaries and build the installer in one clean step:
 
 ```powershell
-dotnet publish search/search.csproj -c Release -r win-x64 --self-contained true -o publish/app
-dotnet publish search.service/search.service.csproj -c Release -r win-x64 --self-contained true -o publish/service
+.\tools\Build-Installer.ps1
 ```
 
-The main publish output is `File Search Manager.exe`.
-
-Build the installer:
-
-```powershell
-iscc installer/setup.iss
-```
+The script clears stale generated publish inputs, rebuilds the app and service, verifies that
+their versions match, and then invokes Inno Setup. The main publish output is
+`File Search Manager.exe`; the installer is written under `installer/Output`.
 
 Release versions come from `v*` git tags. The release workflow publishes the installer and SHA-256 checksum.
 
