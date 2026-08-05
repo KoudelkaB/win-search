@@ -14,4 +14,8 @@
     <ProjectReference Include="..\search.core\search.core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="search.tests" />
+  </ItemGroup>
+
 </Project>

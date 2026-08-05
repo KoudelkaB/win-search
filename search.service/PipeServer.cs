@@ -18,44 +18,57 @@ namespace search.Service
     /// </summary>
     static class PipeServer
     {
+        //Payload writes are deliberately synchronous. An asynchronous pipe handle makes every
+        //synchronous Write go through the overlapped-I/O bridge; for multi-GB MFT streams that
+        //was measurably slower than both direct access and the broker's synchronous pipe.
+        internal const PipeOptions TransportOptions = PipeOptions.None;
+
         public static void Run(CancellationToken ct)
         {
-            try
-            {
-                AcceptLoop(ct).GetAwaiter().GetResult();
-            }
+            try { AcceptLoop(ct); }
             catch (OperationCanceledException) { }
         }
 
-        static async Task AcceptLoop(CancellationToken ct)
+        static void AcceptLoop(CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
             {
                 NamedPipeServerStream server = null;
                 try
                 {
-                    server = NamedPipeServerStreamAcl.Create(
-                        ServicePipe.PipeName, PipeDirection.InOut,
-                        NamedPipeServerStream.MaxAllowedServerInstances,
-                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous,
-                        inBufferSize: 0, outBufferSize: 0, CreatePipeSecurity());
-                    await server.WaitForConnectionAsync(ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    server?.Dispose();
-                    return;
+                    server = CreateListener();
+                    //A synchronous pipe gives the fast streaming path, so cancellation cannot
+                    //be passed to WaitForConnectionAsync. Disposing only this pending listener
+                    //unblocks WaitForConnection; connected workers own their streams separately.
+                    WaitForConnection(server, ct);
                 }
                 catch
                 {
                     server?.Dispose();
-                    await Task.Delay(1000, ct); // Do not spin on persistent errors
+                    if (ct.WaitHandle.WaitOne(1000)) return; // Do not spin on persistent errors
                     continue;
                 }
 
                 var client = server;
                 _ = Task.Run(() => HandleClient(client, ct));
             }
+        }
+
+        internal static NamedPipeServerStream CreateListener(string pipeName = ServicePipe.PipeName)
+            => NamedPipeServerStreamAcl.Create(
+                pipeName, PipeDirection.InOut,
+                NamedPipeServerStream.MaxAllowedServerInstances,
+                PipeTransmissionMode.Byte, TransportOptions,
+                inBufferSize: 0, outBufferSize: 0, CreatePipeSecurity());
+
+        internal static void WaitForConnection(NamedPipeServerStream listener,
+            CancellationToken ct)
+        {
+            using (ct.Register(static state =>
+            {
+                try { ((NamedPipeServerStream)state).Dispose(); } catch { }
+            }, listener))
+                listener.WaitForConnection();
         }
 
         static PipeSecurity CreatePipeSecurity()

@@ -27,15 +27,15 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 
 ## Install
 
-Download the latest installer from [GitHub Releases](https://github.com/KoudelkaB/win-search/releases).
-
-The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and installs the read-only `WinSearchService` for prompt-free NTFS indexing. The service is selected by default and can be unchecked during setup; without it the app asks for administrator rights at every start, or falls back to a slower folder walk.
-
-After the package is accepted into the Windows Package Manager community repository:
+The preferred installation method is Windows Package Manager:
 
 ```powershell
 winget install BohdanKoudelka.FileSearchManager
 ```
+
+Alternatively, download the latest installer from [GitHub Releases](https://github.com/KoudelkaB/win-search/releases).
+
+The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and installs the read-only `WinSearchService` for prompt-free NTFS indexing. The service is selected by default and can be unchecked during setup; without it the app asks for administrator rights at every start, or falls back to a slower folder walk.
 
 ## Quick Start
 

@@ -1,16 +1,46 @@
 using System;
 using System.IO;
+using System.IO.Pipes;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 using search.Core;
 using search.Models;
+using search.Service;
 using Xunit;
 
 namespace search.Tests
 {
     public class NtfsMetadataTests
     {
+        [Fact]
+        public void ServiceMftListenerUsesSynchronousTransport()
+        {
+            using var listener = PipeServer.CreateListener($"WinSearchMft-Test-{Guid.NewGuid():N}");
+
+            Assert.Equal(PipeOptions.None, PipeServer.TransportOptions);
+            Assert.False(listener.IsAsync);
+        }
+
+        [Fact]
+        public async Task SynchronousServiceListenerStopsWhileWaitingForAClient()
+        {
+            using var cancellation = new CancellationTokenSource();
+            using var listener = PipeServer.CreateListener(
+                $"WinSearchMft-Test-{Guid.NewGuid():N}");
+            var wait = Task.Run(() =>
+            {
+                try { PipeServer.WaitForConnection(listener, cancellation.Token); }
+                catch (ObjectDisposedException) when (cancellation.IsCancellationRequested) { }
+            });
+
+            cancellation.Cancel();
+
+            await wait.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+
         [Fact]
         public void ServiceMetadataFramingRoundTripsHitsAndMisses()
         {
