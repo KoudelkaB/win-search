@@ -8,6 +8,68 @@ using search.Core;
 
 namespace search.Models
 {
+    internal enum HardLinkBaselineAction
+    {
+        ProcessNow,
+        DeferredUntilSnapshot,
+        ScheduleWalkRescan
+    }
+
+    internal readonly record struct PendingHardLinkRepair(ulong Frn, uint Reason);
+
+    /// <summary>
+    /// Coordinates hard-link records with publication of the first drive snapshot. The USN
+    /// watcher intentionally starts before the scan, so records can arrive while its FRN map
+    /// is empty. Remember those records and replay them against an MFT baseline instead of
+    /// immediately queuing a redundant full scan. A folder-walk snapshot cannot provide that
+    /// baseline; later records request one bounded, trailing-edge retry instead.
+    /// </summary>
+    internal sealed class HardLinkBaselineGate
+    {
+        const int AwaitingSnapshot = 0;
+        const int WalkSnapshot = 1;
+        const int MftSnapshot = 2;
+
+        readonly object sync = new();
+        readonly Dictionary<ulong, uint> pending = new();
+        int state;
+
+        public bool HasMftBaseline => Volatile.Read(ref state) == MftSnapshot;
+
+        public HardLinkBaselineAction Observe(ulong frn, uint reason)
+        {
+            lock (sync)
+            {
+                if (state == MftSnapshot) return HardLinkBaselineAction.ProcessNow;
+                if (state == WalkSnapshot) return HardLinkBaselineAction.ScheduleWalkRescan;
+                pending[frn] = pending.TryGetValue(frn, out var prior)
+                    ? prior | reason : reason;
+                return HardLinkBaselineAction.DeferredUntilSnapshot;
+            }
+        }
+
+        public PendingHardLinkRepair[] Publish(bool hasMftBaseline)
+        {
+            lock (sync)
+            {
+                state = hasMftBaseline ? MftSnapshot : WalkSnapshot;
+                var result = pending.Select(pair =>
+                    new PendingHardLinkRepair(pair.Key, pair.Value)).ToArray();
+                pending.Clear();
+                return result;
+            }
+        }
+
+        public void Reset()
+        {
+            lock (sync)
+            {
+                state = AwaitingSnapshot;
+                pending.Clear();
+            }
+        }
+    }
+
     /// <summary>
     /// Watches one NTFS volume through its USN change journal and translates the records
     /// into FsEvents. Unlike FileSystemWatcher the journal is kernel-persisted - a change
@@ -28,14 +90,21 @@ namespace search.Models
         readonly Action<DriveScanReason> rescan; //Journal ambiguity => rescan this drive
         readonly Action<UsnDriveWatcher> dead;  //Journal unreadable for good => switch the drive to a watcher
         readonly FrnMap frnMap = new();
+        readonly HardLinkBaselineGate hardLinkBaseline = new();
         readonly object exactRescanLock = new();
         Timer exactRescanTimer;
+        int exactRescanRequests;
+        ulong exactRescanFirstFrn;
+        uint exactRescanReasons;
+        string exactRescanFailure;
         volatile bool stop;
-        volatile bool hasBaselineMap;
 
         //A hard-link storm can emit thousands of records. One exact rebuild after a quiet
         //window is both cheaper and more accurate than trying to rescan for every record.
         internal const int ExactRescanQuietMs = 1000;
+        //A walked snapshot has no FRN/link topology, so an immediate retry normally walks
+        //again and establishes no new repair capability. Bound that degraded-mode work.
+        internal const int WalkExactRescanQuietMs = 60_000;
 
         /// <summary>
         /// True once the journal proved unreadable. The dead callback may fire before the
@@ -51,7 +120,7 @@ namespace search.Models
         /// its visible root immediately without conservatively scanning the whole index;
         /// the journal records remove the descendants that follow.
         /// </summary>
-        public bool ReportsCompleteDirectoryDeletes => !IsDead && hasBaselineMap;
+        public bool ReportsCompleteDirectoryDeletes => !IsDead && hardLinkBaseline.HasMftBaseline;
 
         UsnDriveWatcher(UsnJournal journal, Func<FsEvent, Task> process,
             Action<DriveScanReason> rescan, Action<UsnDriveWatcher> dead)
@@ -98,7 +167,20 @@ namespace search.Models
             //Only the MFT reader supplies a complete FRN-addressable baseline. A walked
             //fallback collection contains path nodes without file references, so deleted
             //records may still need conservative parent reconciliation.
-            hasBaselineMap = nodes is IFrnNodeSource;
+            var mftBaseline = nodes is IFrnNodeSource;
+            var pending = hardLinkBaseline.Publish(mftBaseline);
+            if (pending.Length == 0) return;
+            if (mftBaseline)
+            {
+                foreach (var repair in pending) ReplayHardLinkRepair(repair);
+            }
+            else
+            {
+                RequestExactMftRescan(pending[0].Frn,
+                    pending.Aggregate(0u, (reason, repair) => reason | repair.Reason),
+                    $"no FRN baseline after folder walk; deferred={pending.Length}",
+                    WalkExactRescanQuietMs);
+            }
         }
 
         void Loop()
@@ -134,7 +216,7 @@ namespace search.Models
                 if (invalid)
                 {
                     $"USN journal on {journal.Root} lost history => rescan".Debug();
-                    hasBaselineMap = false;
+                    hardLinkBaseline.Reset();
                     frnMap.Clear(); //Stale beyond repair - the rescan repopulates it
                     try { rescan(DriveScanReason.UsnHistoryLost); } catch { }
                     continue;
@@ -193,16 +275,36 @@ namespace search.Models
             var repairedHardLinks = false;
             var hardLinkFileGone = false;
             var liveLinkCount = 0;
+            var baselineAction = (r.Reason & UsnJournal.ReasonHardLinkChange) != 0
+                ? hardLinkBaseline.Observe(r.Frn, r.Reason)
+                : HardLinkBaselineAction.ProcessNow;
+            //Even before a complete baseline, a file created after watcher startup may already
+            //have enough dynamic FRN/parent state for targeted repair. Try it now; the gate only
+            //controls the fallback. Deferred records are still replayed after publication so a
+            //scan that replaced the dynamic map cannot lose the successful repair.
             if (CanRepairHardLinkIncrementally(r.Reason, hadMultipleLinks))
             {
                 repairedHardLinks = TryQueueHardLinkUpdate(r.Frn,
-                    out liveLinkCount, out hardLinkFileGone);
+                    out liveLinkCount, out hardLinkFileGone, out var failure);
                 if (!repairedHardLinks && !hardLinkFileGone)
-                    RequestExactMftRescan();
+                {
+                    if (baselineAction == HardLinkBaselineAction.ProcessNow)
+                        RequestExactMftRescan(r.Frn, r.Reason, failure);
+                    else if (baselineAction == HardLinkBaselineAction.ScheduleWalkRescan)
+                        RequestExactMftRescan(r.Frn, r.Reason, failure,
+                            WalkExactRescanQuietMs);
+                }
             }
             if (!repairedHardLinks && !hardLinkFileGone
                 && RequiresExactMftRescan(r.Reason, hadMultipleLinks))
-                RequestExactMftRescan();
+            {
+                var failure = "canonical path change on a multi-linked file";
+                if (baselineAction == HardLinkBaselineAction.ProcessNow)
+                    RequestExactMftRescan(r.Frn, r.Reason, failure);
+                else if (baselineAction == HardLinkBaselineAction.ScheduleWalkRescan)
+                    RequestExactMftRescan(r.Frn, r.Reason, failure,
+                        WalkExactRescanQuietMs);
+            }
 
             //Hard-link reason flags can retain FILE_CREATE/FILE_DELETE from the link
             //operation. The targeted topology diff already represents that name change;
@@ -352,26 +454,50 @@ namespace search.Models
             return (reason & canonicalPath) != 0;
         }
 
+        void ReplayHardLinkRepair(PendingHardLinkRepair repair)
+        {
+            var hadMultipleLinks = frnMap.HasMultipleLinks(repair.Frn);
+            var repaired = false;
+            var fileReferenceGone = false;
+            if (CanRepairHardLinkIncrementally(repair.Reason, hadMultipleLinks))
+            {
+                repaired = TryQueueHardLinkUpdate(repair.Frn, out _,
+                    out fileReferenceGone, out var failure, trackLoopCompletion: false);
+                if (!repaired && !fileReferenceGone)
+                    RequestExactMftRescan(repair.Frn, repair.Reason,
+                        $"deferred targeted repair failed: {failure}");
+            }
+            if (!repaired && !fileReferenceGone
+                && RequiresExactMftRescan(repair.Reason, hadMultipleLinks))
+                RequestExactMftRescan(repair.Frn, repair.Reason,
+                    "deferred canonical path change on a multi-linked file");
+        }
+
         bool TryQueueHardLinkUpdate(ulong frn, out int liveLinkCount,
-            out bool fileReferenceGone)
+            out bool fileReferenceGone, out string failure,
+            bool trackLoopCompletion = true)
         {
             liveLinkCount = 0;
             fileReferenceGone = false;
+            failure = null;
             if (!frnMap.TryGetValue(frn, out var mapped) || mapped.IsDirectory)
             {
-                $"USN targeted hard-link repair on {journal.Root} failed: FRN {frn:x} is not mapped".Debug();
+                failure = $"FRN {frn:x} is not mapped";
+                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                 return false;
             }
             var path = mapped.FullName;
             var indexed = FSChangeProcessor.Lookup(path);
             if (indexed == null || indexed.IsDirectory)
             {
-                $"USN targeted hard-link repair on {journal.Root} failed: canonical path is not indexed ({path})".Debug();
+                failure = $"canonical path is not indexed ({path})";
+                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                 return false;
             }
             if (!frnMap.TryGetLinkState(frn, out var oldParentRefs, out var oldSize))
             {
-                $"USN targeted hard-link repair on {journal.Root} failed: no baseline parents for {frn:x}".Debug();
+                failure = $"no baseline parents for {frn:x}";
+                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                 return false;
             }
             if (!journal.TryGetHardLinkPaths(frn, out var currentPaths,
@@ -379,14 +505,16 @@ namespace search.Models
                 || currentPaths.Length == 0)
             {
                 if (fileReferenceGone)
-                    $"USN hard-link target on {journal.Root} vanished before enumeration: frn={frn:x}".Debug();
+                    failure = $"file reference {frn:x} vanished before enumeration";
                 else
-                    $"USN targeted hard-link repair on {journal.Root} failed: link-name enumeration for {frn:x}".Debug();
+                    failure = $"link-name enumeration for {frn:x}";
+                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                 return false;
             }
             if (!INode.TryReadMetadata(path, out var snapshot) || snapshot.IsDirectory)
             {
-                $"USN targeted hard-link repair on {journal.Root} failed: canonical metadata ({path})".Debug();
+                failure = $"canonical metadata ({path})";
+                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                 return false;
             }
 
@@ -395,7 +523,8 @@ namespace search.Models
             {
                 if (!TryResolveLinkParent(oldParentRefs[i], out var parent))
                 {
-                    $"USN targeted hard-link repair on {journal.Root} failed: old parent {oldParentRefs[i]:x}".Debug();
+                    failure = $"old parent {oldParentRefs[i]:x}";
+                    $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                     return false;
                 }
                 oldParentPaths[i] = parent.FullName;
@@ -410,7 +539,8 @@ namespace search.Models
                     ? null : FSChangeProcessor.Lookup(parentPath);
                 if (parent?.IsDirectory != true || parent.Frn == 0)
                 {
-                    $"USN targeted hard-link repair on {journal.Root} failed: current parent {parentPath}".Debug();
+                    failure = $"current parent {parentPath}";
+                    $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                     return false;
                 }
                 currentParentRefs[i] = parent.Frn;
@@ -421,7 +551,8 @@ namespace search.Models
                     oldParentRefs.Length == 1 ? indexed.Size : oldSize,
                     snapshot.Size, out var deltas))
             {
-                $"USN targeted hard-link repair on {journal.Root} failed: aggregate delta overflow".Debug();
+                failure = "aggregate delta overflow";
+                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
                 return false;
             }
 
@@ -431,7 +562,8 @@ namespace search.Models
             //waiting; the following record must diff from this state, not add the same
             //size delta again from the not-yet-updated index node.
             frnMap.SetLinkState(frn, currentParentRefs, snapshot.Size);
-            Process(FsEvent.HardLinkUpdate(path, frn, indexed, snapshot, deltas));
+            Process(FsEvent.HardLinkUpdate(path, frn, indexed, snapshot, deltas),
+                trackLoopCompletion);
             ($"USN hard-link update on {journal.Root}: frn={frn:x}, links "
                 + $"{oldParentRefs.Length}->{currentParentRefs.Length}, parents changed={deltas.Length}")
                 .Debug();
@@ -491,22 +623,46 @@ namespace search.Models
             return true;
         }
 
-        void RequestExactMftRescan()
+        void RequestExactMftRescan(ulong frn, uint reason, string failure,
+            int quietMs = ExactRescanQuietMs)
         {
             lock (exactRescanLock)
             {
                 if (stop) return;
-                exactRescanTimer ??= new Timer(_ =>
-                {
-                    if (!stop) try
-                    {
-                        $"USN hard-link changes on {journal.Root} => exact MFT size rebuild".Debug();
-                        rescan(DriveScanReason.UsnHardLinkChange);
-                    }
-                    catch { }
-                }, null, Timeout.Infinite, Timeout.Infinite);
-                exactRescanTimer.Change(ExactRescanQuietMs, Timeout.Infinite);
+                if (exactRescanRequests++ == 0) exactRescanFirstFrn = frn;
+                exactRescanReasons |= reason;
+                exactRescanFailure ??= failure;
+                exactRescanTimer ??= new Timer(_ => FireExactMftRescan(),
+                    null, Timeout.Infinite, Timeout.Infinite);
+                exactRescanTimer.Change(Math.Max(ExactRescanQuietMs, quietMs),
+                    Timeout.Infinite);
             }
+        }
+
+        void FireExactMftRescan()
+        {
+            int requests;
+            ulong firstFrn;
+            uint reasons;
+            string failure;
+            lock (exactRescanLock)
+            {
+                if (stop) return;
+                requests = exactRescanRequests;
+                firstFrn = exactRescanFirstFrn;
+                reasons = exactRescanReasons;
+                failure = exactRescanFailure;
+                exactRescanRequests = 0;
+                exactRescanFirstFrn = 0;
+                exactRescanReasons = 0;
+                exactRescanFailure = null;
+            }
+            if (requests == 0) return;
+            var detail = $"USN hard-link rescan on {journal.Root}: requests={requests}; "
+                + $"firstFrn={firstFrn:x}; reasons=0x{reasons:x}; failure={failure}";
+            StorageMaintenance.AppendDiagnostic(detail);
+            detail.Debug();
+            try { if (!stop) rescan(DriveScanReason.UsnHardLinkChange); } catch { }
         }
 
         /// <summary>
@@ -545,9 +701,14 @@ namespace search.Models
         /// batch on the last enqueued event (backpressure), never per record: at most one
         /// read buffer's worth of records is ever in flight.
         /// </summary>
-        void Process(FsEvent e)
+        void Process(FsEvent e, bool trackLoopCompletion = true)
         {
-            try { lastEnqueued = process(e); } catch { }
+            try
+            {
+                var queued = process(e);
+                if (trackLoopCompletion) lastEnqueued = queued;
+            }
+            catch { }
         }
 
         /// <summary>

@@ -128,6 +128,17 @@ namespace search
             }
         }
 
+        /// <summary>
+        /// Append one release-build diagnostic without making the caller wait for disk I/O.
+        /// Startup/source-selection decisions must remain observable in log.txt, but the
+        /// diagnostics themselves must never extend the window-show or drive-scan path.
+        /// </summary>
+        internal static void AppendDiagnostic(string text)
+        {
+            var line = $"{DateTime.Now} {Thread.CurrentThread.ManagedThreadId} {text}{Environment.NewLine}";
+            _ = Task.Run(() => AppendLogAsync("log.txt", line));
+        }
+
         internal static void TryRotateLog(string path, int incomingBytes = 0)
             => TryRotateLog(path, incomingBytes, MaxLogBytes, LogBackupCount);
 

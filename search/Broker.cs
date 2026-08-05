@@ -120,16 +120,19 @@ namespace search
                     pipe = server;
                     Run(Command.READY);
                     Available = true;
+                    StorageMaintenance.AppendDiagnostic("Broker startup: available");
                     "broker available".Debug();
                 }
                 catch (Win32Exception e) when (e.NativeErrorCode == 1223) // ERROR_CANCELLED
                 {
                     Declined = true;
+                    StorageMaintenance.AppendDiagnostic("Broker startup: elevation declined");
                     "broker elevation declined by the user".Debug();
                     server?.Dispose();
                 }
                 catch (Exception e)
                 {
+                    StorageMaintenance.AppendDiagnostic($"Broker startup failed: {e}");
                     $"broker start failed: {e.Message}".Debug();
                     server?.Dispose();
                 }

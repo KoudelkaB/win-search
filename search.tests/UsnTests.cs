@@ -245,6 +245,48 @@ namespace search.Tests
             Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonRenameNewName, true));
             Assert.False(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonBasicInfoChange, true));
             Assert.InRange(UsnDriveWatcher.ExactRescanQuietMs, 1, 1999);
+            Assert.True(UsnDriveWatcher.WalkExactRescanQuietMs >= 30_000);
+        }
+
+        [Fact]
+        public void HardLinkChangesBeforeMftPublicationAreCoalescedForReplay()
+        {
+            var gate = new HardLinkBaselineGate();
+            const ulong frn = 0x4000000000008;
+            var first = UsnJournal.ReasonHardLinkChange;
+            var second = UsnJournal.ReasonRenameNewName;
+
+            Assert.Equal(HardLinkBaselineAction.DeferredUntilSnapshot,
+                gate.Observe(frn, first));
+            Assert.Equal(HardLinkBaselineAction.DeferredUntilSnapshot,
+                gate.Observe(frn, second));
+            Assert.False(gate.HasMftBaseline);
+
+            var pending = Assert.Single(gate.Publish(hasMftBaseline: true));
+            Assert.Equal(frn, pending.Frn);
+            Assert.Equal(first | second, pending.Reason);
+            Assert.True(gate.HasMftBaseline);
+            Assert.Equal(HardLinkBaselineAction.ProcessNow,
+                gate.Observe(frn, first));
+        }
+
+        [Fact]
+        public void WalkBaselineChangesUseBoundedRescanInsteadOfImmediateReplayLoop()
+        {
+            var gate = new HardLinkBaselineGate();
+            const ulong frn = 0x3000000000007;
+            var reason = UsnJournal.ReasonHardLinkChange;
+
+            Assert.Equal(HardLinkBaselineAction.DeferredUntilSnapshot,
+                gate.Observe(frn, reason));
+            Assert.Single(gate.Publish(hasMftBaseline: false));
+            Assert.False(gate.HasMftBaseline);
+            Assert.Equal(HardLinkBaselineAction.ScheduleWalkRescan,
+                gate.Observe(frn, reason));
+
+            gate.Reset();
+            Assert.Equal(HardLinkBaselineAction.DeferredUntilSnapshot,
+                gate.Observe(frn, reason));
         }
 
         [Fact]

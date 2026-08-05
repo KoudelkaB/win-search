@@ -24,6 +24,8 @@ namespace search.Models
     /// </summary>
     internal static class MftSource
     {
+        internal static readonly TimeSpan BrokerSourceWait = TimeSpan.FromSeconds(60);
+
         public static IEnumerable<INode> TryGetNodes(DriveInfo drive, out MftOrigin origin,
             CancellationToken cancellationToken = default)
         {
@@ -73,28 +75,45 @@ namespace search.Models
             try
             {
                 origin = MftOrigin.Service;
-                var nodes = FromService(volume, cancellationToken);
+                var nodes = FromService(volume, cancellationToken, out var serviceFailure);
                 if (nodes != null) return nodes;
+                StorageMaintenance.AppendDiagnostic(
+                    $"MFT source {volume}: service unavailable ({serviceFailure}); trying broker");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception e)
             {
+                StorageMaintenance.AppendDiagnostic(
+                    $"MFT source {volume}: service failed ({e.GetType().Name}: {e.Message}); trying broker");
                 $"service MFT read of {volume} failed: {e.Message}".Debug();
             }
 
-            // No service => the broker is the last chance to avoid the slow folder walk,
-            // so now it is worth waiting out the UAC prompt
+            // No service => the broker is the last chance to avoid the slow folder walk.
+            // A successful startup pipe probe is only a point-in-time observation: the service
+            // can disappear before this connection. In that race Program deliberately skipped
+            // StartClient, so waiting for an already-started broker returns immediately and
+            // incorrectly falls through to Walk. Start it lazily when no offer has been made.
             try
             {
-                if (Broker.WaitAvailable(TimeSpan.FromSeconds(60)))
+                var canOffer = Broker.CanOffer;
+                if (BrokerAfterServiceFailure(canOffer,
+                        Broker.EnsureStarted, Broker.WaitAvailable, BrokerSourceWait))
                 {
+                    StorageMaintenance.AppendDiagnostic(
+                        $"MFT source {volume}: broker available after service fallback; started={canOffer}");
                     origin = MftOrigin.Broker;
                     return Broker.ReadMftNodes(volume, cancellationToken);
                 }
+                StorageMaintenance.AppendDiagnostic(
+                    $"MFT source {volume}: broker unavailable after service fallback; "
+                    + $"canOffer={canOffer}; declined={Broker.Declined}; using folder walk");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception e)
             {
+                StorageMaintenance.AppendDiagnostic(
+                    $"MFT source {volume}: broker fallback failed ({e.GetType().Name}: {e.Message}); "
+                    + "using folder walk");
                 $"broker MFT read of {volume} failed: {e.Message}".Debug();
             }
 
@@ -103,11 +122,27 @@ namespace search.Models
         }
 
         /// <summary>
+        /// Testable service-failure policy. If startup skipped the broker because the service
+        /// pipe looked available, raise the broker now; otherwise wait for the already pending
+        /// startup offer. Exactly one of the delegates is invoked.
+        /// </summary>
+        internal static bool BrokerAfterServiceFailure(bool canOffer,
+            Func<TimeSpan, bool> ensureStarted, Func<TimeSpan, bool> waitAvailable,
+            TimeSpan timeout)
+        {
+            if (ensureStarted == null) throw new ArgumentNullException(nameof(ensureStarted));
+            if (waitAvailable == null) throw new ArgumentNullException(nameof(waitAvailable));
+            return canOffer ? ensureStarted(timeout) : waitAvailable(timeout);
+        }
+
+        /// <summary>
         /// Request the raw $MFT from the WinSearchService and parse it as it streams in.
         /// Returns null when the service is not installed/running (fast connect timeout).
         /// </summary>
-        static IEnumerable<INode> FromService(string volume, CancellationToken cancellationToken)
+        static IEnumerable<INode> FromService(string volume,
+            CancellationToken cancellationToken, out string failure)
         {
+            failure = "none";
             using var pipe = new NamedPipeClientStream(".", ServicePipe.PipeName, PipeDirection.InOut);
             try
             {
@@ -118,6 +153,7 @@ namespace search.Models
                 // TimeoutException/IOException: service not installed or not running.
                 // UnauthorizedAccessException: the pipe ACL denies this user - treat as
                 // unavailable and fall through rather than failing the whole drive scan.
+                failure = $"{e.GetType().Name}: {e.Message}";
                 return null;
             }
 

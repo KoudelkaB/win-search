@@ -708,6 +708,56 @@ namespace search.Tests
             }, TimeSpan.FromMilliseconds(10)));
         }
 
+        [Fact]
+        public void DeferredStartupActionRunsOnceAndCanBeCancelled()
+        {
+            var runs = 0;
+            var start = new OneShotAction(() => Interlocked.Increment(ref runs));
+
+            Assert.True(start.Pending);
+            start.Run();
+            start.Run();
+            Assert.False(start.Pending);
+            Assert.Equal(1, runs);
+
+            var cancelled = new OneShotAction(() => Interlocked.Increment(ref runs));
+            cancelled.Cancel();
+            cancelled.Run();
+            Assert.Equal(1, runs);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void ServiceFailureStartsBrokerWhenStartupProbeSkippedIt(bool canOffer)
+        {
+            var ensured = 0;
+            var waited = 0;
+            var timeout = TimeSpan.FromSeconds(7);
+
+            var available = MftSource.BrokerAfterServiceFailure(canOffer,
+                observed =>
+                {
+                    Assert.Equal(timeout, observed);
+                    ensured++;
+                    return true;
+                },
+                observed =>
+                {
+                    Assert.Equal(timeout, observed);
+                    waited++;
+                    return false;
+                }, timeout);
+
+            Assert.Equal(canOffer, available);
+            Assert.Equal(canOffer ? 1 : 0, ensured);
+            Assert.Equal(canOffer ? 0 : 1, waited);
+        }
+
+        [Fact]
+        public void StartupServiceProbeHasAnExplicitMillisecondBound()
+            => Assert.Equal(1, ServiceProbe.ProbeTimeoutMs);
+
         [Theory]
         [InlineData(DriveType.Fixed, "NTFS", true)]
         [InlineData(DriveType.Network, "NTFS", false)]

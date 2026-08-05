@@ -72,6 +72,25 @@ namespace search.Models
         }
     }
 
+    /// <summary>
+    /// Thread-safe one-shot action used to release startup work after the first rendered frame.
+    /// Dispose can cancel it before the dispatcher callback runs, and duplicate window events
+    /// can never start filesystem processing twice.
+    /// </summary>
+    internal sealed class OneShotAction
+    {
+        Action action;
+
+        public OneShotAction(Action action)
+            => this.action = action ?? throw new ArgumentNullException(nameof(action));
+
+        public bool Pending => Volatile.Read(ref action) != null;
+
+        public void Run() => Interlocked.Exchange(ref action, null)?.Invoke();
+
+        public void Cancel() => Interlocked.Exchange(ref action, null);
+    }
+
     class SearchModel : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler PropertyChanged;
@@ -813,6 +832,7 @@ namespace search.Models
         public void Dispose()
         {
             Interlocked.Exchange(ref modelDisposed, 1);
+            fileSystemStart?.Cancel();
             metadataRefreshQueue.CompleteAdding();
             metadataSource.Dispose();
             DriveSelectionStore.SelectionChanged -= DriveSelectionChanged;
@@ -2177,7 +2197,9 @@ namespace search.Models
             }
         }
 
-        public SearchModel()
+        OneShotAction fileSystemStart;
+
+        public SearchModel(bool startFileSystem = true)
         {
             DriveSelectionStore.SelectionChanged += DriveSelectionChanged;
             health = new LiveUpdateHealthMonitor(Dispatcher,
@@ -2190,7 +2212,7 @@ namespace search.Models
             FSChangeProcessor.Lookup = FindByPath;
             FSChangeProcessor.ReconcileDirs = ReconcileDirectories;
             StartMetadataRefreshWorkers();
-            FSChangeProcessor.Run(
+            fileSystemStart = new OneShotAction(() => FSChangeProcessor.Run(
                 (drive, reason) => { _ = InitFromNTFS(drive, reason); },
                 async events =>
             {
@@ -2332,6 +2354,13 @@ namespace search.Models
                                         //A manual/startup scan may have replaced the shard
                                         //between the topology read and this ordered event.
                                         //Its baseline cannot safely accept the old deltas.
+                                        var failure = current == null ? "canonical path missing"
+                                            : !ReferenceEquals(current, e.MetadataNode)
+                                                ? "canonical identity replaced"
+                                                : "hard-link parent delta could not be applied";
+                                        StorageMaintenance.AppendDiagnostic(
+                                            $"USN hard-link apply on {Path.GetPathRoot(e.FullPath)} "
+                                            + $"=> rescan: frn={e.Frn:x}; path={e.FullPath}; failure={failure}");
                                         _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
                                             DriveScanReason.UsnHardLinkChange);
                                         break;
@@ -2443,7 +2472,19 @@ namespace search.Models
                     await UpdateSmall(structural.Concat(metadata), metadataSet.Cast<INode>());
                 }
                 catch (Exception ex) { await Log($"FS change batch failed: {ex}"); }
-            });
+            }));
+            if (startFileSystem) StartFileSystemProcessing();
+        }
+
+        /// <summary>
+        /// Start watchers and initial drive scans exactly once. MainWindow calls this at
+        /// ApplicationIdle after ContentRendered so WPF's first layout/render cannot be
+        /// starved by MFT parsing, watcher replay, or initial grid publication.
+        /// </summary>
+        internal void StartFileSystemProcessing()
+        {
+            if (Volatile.Read(ref modelDisposed) != 0) return;
+            fileSystemStart?.Run();
         }
 
         /// <summary>

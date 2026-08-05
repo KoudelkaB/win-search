@@ -128,7 +128,11 @@ namespace search
                 Model?.Dispose();
             };
 
-            DataContext = new Models.SearchModel();
+            //Let WPF finish its first layout/render before watchers start replaying events and
+            //the C: MFT begins allocating. The health log showed the initial render handler,
+            //not grid application, owning the startup red interval.
+            DataContext = new Models.SearchModel(startFileSystem: false);
+            ContentRendered += StartFileSystemAfterFirstRender;
             ShowSortIndicator(Models.SearchModel.DefaultSort);
             filterTextBox.SuggestionList = () => Keyboard.Modifiers == ModifierKeys.Control ? filters.LastUsed : filters.MostUsed;
             filterTextBox.TextSelected += t => filters.Add2History(filterTextBox.Text);
@@ -382,6 +386,13 @@ namespace search
                 //Off-screen rows need nothing: virtualization binds them when realized.
                 foreach (var row in rows.ToArray()) RefreshRow(row, inlineRenameNode);
             });
+        }
+
+        void StartFileSystemAfterFirstRender(object sender, EventArgs e)
+        {
+            ContentRendered -= StartFileSystemAfterFirstRender;
+            Dispatcher.BeginInvoke(() => Model?.StartFileSystemProcessing(),
+                DispatcherPriority.ApplicationIdle);
         }
 
         internal static int SelectionContinuationIndex(int firstSelectedIndex, int remainingCount)

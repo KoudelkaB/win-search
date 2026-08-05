@@ -6,12 +6,12 @@ namespace search
 {
     /// <summary>
     /// Cheapest possible "is WinSearchService serving right now" test: a single WaitNamedPipe
-    /// call with NMPWAIT_NOWAIT, which returns on the spot instead of connecting. This runs on
+    /// call with a one-millisecond timeout, which returns on the spot instead of connecting. This runs on
     /// the startup path before the window exists, so it must not cost measurable time - opening
     /// the SCM (ServiceController) or actually connecting the pipe both do.
     ///
-    /// NMPWAIT_NOWAIT is 1, not 0: a zero timeout means "use the server's own default", which
-    /// is exactly the blocking wait this probe exists to avoid.
+    /// WaitNamedPipe has no NMPWAIT_NOWAIT sentinel: positive values are milliseconds, while
+    /// zero means "use the server's default". Keep the explicit one-millisecond bound.
     ///
     /// A false negative is harmless by design. Every way this can be wrong (service still
     /// starting during boot, all pipe instances momentarily busy) makes the caller spawn the
@@ -19,7 +19,7 @@ namespace search
     /// </summary>
     internal static class ServiceProbe
     {
-        const int NMPWAIT_NOWAIT = 1;
+        internal const int ProbeTimeoutMs = 1;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool WaitNamedPipeW(string name, int timeoutMilliseconds);
@@ -28,10 +28,16 @@ namespace search
         {
             try
             {
-                return WaitNamedPipeW($@"\\.\pipe\{ServicePipe.PipeName}", NMPWAIT_NOWAIT);
+                var serving = WaitNamedPipeW(
+                    $@"\\.\pipe\{ServicePipe.PipeName}", ProbeTimeoutMs);
+                var error = serving ? 0 : Marshal.GetLastWin32Error();
+                StorageMaintenance.AppendDiagnostic(
+                    $"Service probe: serving={serving}; timeout={ProbeTimeoutMs}ms; win32={error}");
+                return serving;
             }
             catch (Exception e)
             {
+                StorageMaintenance.AppendDiagnostic($"Service probe failed: {e}");
                 $"service probe failed: {e.Message}".Debug();
                 return false;
             }
