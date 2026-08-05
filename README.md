@@ -37,6 +37,8 @@ Alternatively, download the latest installer from [GitHub Releases](https://gith
 
 The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `File Search Manager.exe` under `Program Files`, creates Start Menu shortcuts, and installs the read-only `WinSearchService` for prompt-free NTFS indexing. The service is selected by default and can be unchecked during setup; without it the app asks for administrator rights at every start, or falls back to a slower folder walk.
 
+Running the installer of the version that is already installed offers **Modify settings**: it keeps the installed files and only re-applies the options, so the service can be added or removed afterwards without reinstalling. Any other version is an upgrade, whose task page changes the service just as well.
+
 ## Quick Start
 
 1. Start **File Search Manager**.

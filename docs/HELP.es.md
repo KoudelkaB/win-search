@@ -15,7 +15,7 @@ De forma predeterminada solo se indexan las unidades NTFS: otros sistemas de arc
 
 En las unidades NTFS, la vía más rápida es leer la Master File Table de NTFS. File Search Manager puede hacerlo de una de estas maneras:
 
-- Servicio de Windows: sin ningún aviso. Seleccionado de forma predeterminada en el instalador.
+- Servicio de Windows: sin ningún aviso. Seleccionado de forma predeterminada en el instalador. Ejecutar el instalador de la versión ya instalada ofrece **Modificar la configuración**, que agrega o quita el servicio sin reinstalar nada más.
 - Asistente con privilegios: un aviso de UAC por ejecución de la aplicación. Sin el servicio se ofrece al inicio, para que la indexación pueda empezar de inmediato. Con el servicio no se ofrece hasta la primera acción que realmente necesita permisos de administrador: la tecla `A`, la lectura de archivos reservados a administradores, o el cambio de nombre y de fechas en elementos protegidos contra escritura. El botón **🛡** junto a **🌐** hace que se pida al arrancar.
 - Aplicación elevada directamente: ejecute File Search Manager como administrador.
 

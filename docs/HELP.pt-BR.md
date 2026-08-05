@@ -15,7 +15,7 @@ Por padrão, apenas unidades NTFS são indexadas — outros sistemas de arquivos
 
 Em unidades NTFS, o caminho mais rápido é ler a Master File Table do NTFS. O File Search Manager pode fazer isso de uma destas formas:
 
-- Serviço do Windows: nenhuma solicitação. Selecionado por padrão no instalador.
+- Serviço do Windows: nenhuma solicitação. Selecionado por padrão no instalador. Executar o instalador da versão já instalada oferece **Modificar as configurações**, que adiciona ou remove o serviço sem reinstalar o restante.
 - Auxiliar com privilégios elevados: uma solicitação do UAC por execução do aplicativo. Sem o serviço, ela é oferecida na inicialização, para que a indexação comece imediatamente. Com o serviço, só é oferecida na primeira ação que realmente exige direitos de administrador: a tecla `A`, a leitura de arquivos restritos a administradores, ou a renomeação e a alteração de datas em itens protegidos contra gravação. O botão **🛡** ao lado de **🌐** faz a solicitação já na inicialização.
 - Aplicativo elevado diretamente: execute o File Search Manager como administrador.
 

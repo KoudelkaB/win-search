@@ -15,7 +15,7 @@ Par défaut, seuls les lecteurs NTFS sont indexés : les autres systèmes de fic
 
 Pour les lecteurs NTFS, la voie la plus rapide est la lecture de la Master File Table NTFS. File Search Manager peut le faire de l’une de ces manières :
 
-- Service Windows : aucune demande. Sélectionné par défaut dans le programme d’installation.
+- Service Windows : aucune demande. Sélectionné par défaut dans le programme d’installation. Lancer le programme d’installation de la version déjà installée propose **Modifier les paramètres**, qui ajoute ou supprime le service sans réinstaller le reste.
 - Assistant élevé : une demande UAC par exécution de l’application. Sans le service, elle est proposée au démarrage afin que l’indexation puisse commencer immédiatement. Avec le service, elle n’est proposée qu’à la première action nécessitant réellement des droits administrateur : la touche `A`, la lecture de fichiers réservés aux administrateurs, ou le renommage et le changement de dates sur des éléments protégés en écriture. Le bouton **🛡** situé à côté de **🌐** la demande au lancement à la place.
 - Application élevée directement : exécutez File Search Manager en tant qu’administrateur.
 
