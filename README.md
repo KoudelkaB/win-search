@@ -1,5 +1,7 @@
 # File Search Manager
 
+[Product website](https://koudelkab.github.io/win-search/) · [Latest release](https://github.com/KoudelkaB/win-search/releases/latest) · [Help](docs/HELP.md)
+
 File Search Manager is a fast Windows desktop search and file-management application. It indexes local drives, filters millions of file-system entries as you type, searches file contents, and performs common file operations directly from the result list.
 
 The WPF desktop app can read the NTFS Master File Table through an optional Windows service or an elevated helper. When neither is available, it falls back to a normal directory walk.

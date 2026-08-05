@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07111f">
+    <meta name="description" content="File Search Manager is a fast Windows desktop app for NTFS file indexing, instant filtering, content search, and advanced file management.">
+    <meta name="keywords" content="Windows file search, NTFS search, MFT search, file manager, content search, WPF">
+    <meta name="author" content="Bohdan Koudelka">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="File Search Manager — Find anything. Act instantly.">
+    <meta property="og:description" content="Search millions of Windows files as you type, inspect contents, and manage results without breaking your flow.">
+    <meta property="og:url" content="https://koudelkab.github.io/win-search/">
+    <meta property="og:image" content="https://koudelkab.github.io/win-search/assets/og.png">
+    <meta property="og:image:alt" content="File Search Manager — Find anything. Act instantly.">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="File Search Manager — Find anything. Act instantly.">
+    <meta name="twitter:description" content="Instant NTFS search and practical file management for Windows.">
+    <meta name="twitter:image" content="https://koudelkab.github.io/win-search/assets/og.png">
+    <link rel="canonical" href="https://koudelkab.github.io/win-search/">
+    <link rel="icon" href="assets/favicon.ico" sizes="any">
+    <link rel="stylesheet" href="styles.css">
+    <title>File Search Manager — Fast Windows File Search</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="shell nav-shell">
+        <a class="brand" href="#top" aria-label="File Search Manager home">
+          <img src="assets/favicon.ico" alt="" width="28" height="28">
+          <span>File Search Manager</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary navigation">
+          <a href="#features">Features</a>
+          <a href="#workflow">How it works</a>
+          <a href="https://github.com/KoudelkaB/win-search/blob/main/docs/HELP.md">Help</a>
+          <a class="nav-cta" href="https://github.com/KoudelkaB/win-search/releases/latest">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="shell hero-layout">
+          <div class="hero-copy">
+            <p class="eyebrow"><span></span> Native Windows desktop utility</p>
+            <h1>Find anything.<br><em>Act instantly.</em></h1>
+            <p class="hero-lead">Search millions of files as you type, look inside their contents, and manage the results without breaking your flow.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="https://github.com/KoudelkaB/win-search/releases/latest">
+                Download for Windows
+                <span aria-hidden="true">↓</span>
+              </a>
+              <a class="button button-secondary" href="https://github.com/KoudelkaB/win-search">View on GitHub <span aria-hidden="true">↗</span></a>
+            </div>
+            <div class="install-command" aria-label="WinGet install command">
+              <span class="prompt" aria-hidden="true">›</span>
+              <code>winget install BohdanKoudelka.FileSearchManager</code>
+              <button class="copy-button" type="button" data-copy="winget install BohdanKoudelka.FileSearchManager" aria-label="Copy WinGet install command">
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <ul class="hero-facts" aria-label="Key facts">
+              <li><strong>Free</strong> and open source</li>
+              <li><strong>MIT</strong> licensed</li>
+              <li><strong>Windows</strong> 10 &amp; 11</li>
+            </ul>
+          </div>
+
+          <div class="product-stage">
+            <div class="stage-orbit orbit-one" aria-hidden="true"></div>
+            <div class="stage-orbit orbit-two" aria-hidden="true"></div>
+            <div class="screenshot-frame">
+              <div class="window-bar" aria-hidden="true">
+                <div class="window-dots"><span></span><span></span><span></span></div>
+                <div class="window-title">File Search Manager</div>
+                <div class="live-pill"><i></i> Indexed</div>
+              </div>
+              <img src="assets/app-screenshot.png" alt="File Search Manager displaying instant search results on Windows" width="1366" height="694">
+            </div>
+            <div class="speed-card speed-card-top" aria-hidden="true">
+              <span class="speed-icon">⌁</span>
+              <div><strong>1.8M files</strong><small>ready to filter</small></div>
+            </div>
+            <div class="speed-card speed-card-bottom" aria-hidden="true">
+              <span class="speed-icon">⚡</span>
+              <div><strong>As-you-type</strong><small>instant results</small></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="signal-strip" aria-label="Product capabilities">
+        <div class="shell signal-grid">
+          <span>NTFS MFT indexing</span>
+          <i aria-hidden="true"></i>
+          <span>Live file updates</span>
+          <i aria-hidden="true"></i>
+          <span>Content search</span>
+          <i aria-hidden="true"></i>
+          <span>Keyboard first</span>
+        </div>
+      </section>
+
+      <section class="section features-section" id="features">
+        <div class="shell">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow"><span></span> Built for real file systems</p>
+              <h2>Search is only the beginning.</h2>
+            </div>
+            <p>Filter, inspect, organize, transfer, archive, and open files from one focused workspace.</p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card feature-wide feature-index">
+              <div class="feature-number">01</div>
+              <div class="feature-copy">
+                <p class="card-kicker">Search engine</p>
+                <h3>Millions of paths.<br>Zero waiting around.</h3>
+                <p>Read the NTFS Master File Table for a fast initial index, follow changes live, and fall back safely to a normal directory scan when needed.</p>
+              </div>
+              <div class="index-visual" aria-hidden="true">
+                <div class="index-stat"><strong>1,843,989</strong><span>entries indexed</span></div>
+                <div class="index-line"><span style="--w: 92%"></span></div>
+                <div class="index-line"><span style="--w: 68%"></span></div>
+                <div class="index-line"><span style="--w: 81%"></span></div>
+                <div class="index-line"><span style="--w: 55%"></span></div>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-number">02</div>
+              <p class="card-kicker">Content search</p>
+              <h3>Look inside, not just at names.</h3>
+              <p>Search UTF-8, UTF-16, case-insensitive text, or hexadecimal content within the files you already filtered.</p>
+              <div class="code-chips" aria-hidden="true"><span>UTF-8</span><span>UTF-16</span><span>HEX</span></div>
+            </article>
+
+            <article class="feature-card feature-accent">
+              <div class="feature-number">03</div>
+              <p class="card-kicker">File operations</p>
+              <h3>Turn results into action.</h3>
+              <p>Copy, move, link, recycle, drag, drop, extract, archive, and open with compatible applications—directly from your result list.</p>
+              <div class="action-row" aria-hidden="true"><span>Copy</span><span>Move</span><span>Link</span><span>Archive</span></div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-number">04</div>
+              <p class="card-kicker">Reusable workflows</p>
+              <h3>Keep frequent searches one click away.</h3>
+              <p>Pin named filters, save a target basket, and export everything as one portable settings file.</p>
+              <div class="pin-list" aria-hidden="true"><span>● Source files</span><span>● Recent logs</span><span>● Large archives</span></div>
+            </article>
+
+            <article class="feature-card feature-wide feature-keyboard">
+              <div class="feature-number">05</div>
+              <div class="feature-copy">
+                <p class="card-kicker">Keyboard &amp; mouse</p>
+                <h3>Stay fast from first query to final action.</h3>
+                <p>Rich selection controls, always-available shortcuts, sortable columns, and a complete help view keep advanced workflows discoverable.</p>
+              </div>
+              <div class="key-cluster" aria-hidden="true">
+                <kbd>Ctrl</kbd><kbd>C</kbd><span>Copy</span>
+                <kbd>F12</kbd><span>Refresh index</span>
+                <kbd>F1</kbd><span>Open help</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section workflow-section" id="workflow">
+        <div class="shell">
+          <div class="workflow-copy">
+            <p class="eyebrow eyebrow-light"><span></span> From disk to done</p>
+            <h2>Three steps.<br>No detours.</h2>
+            <p>The interface stays deliberately dense where it matters and gets out of your way everywhere else.</p>
+            <a class="text-link" href="https://github.com/KoudelkaB/win-search/blob/main/docs/HELP.md">Read the complete guide <span aria-hidden="true">→</span></a>
+          </div>
+          <ol class="workflow-steps">
+            <li>
+              <span class="step-number">01</span>
+              <div><h3>Index</h3><p>Load local drives through the optional read-only Windows service, elevated helper, or standard folder walk.</p></div>
+            </li>
+            <li>
+              <span class="step-number">02</span>
+              <div><h3>Filter</h3><p>Type to narrow by name, parent folder, full path, exact directory, or file content.</p></div>
+            </li>
+            <li>
+              <span class="step-number">03</span>
+              <div><h3>Act</h3><p>Select the right results and handle them using familiar shortcuts, context menus, or drag and drop.</p></div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section install-section" id="download">
+        <div class="shell install-panel">
+          <div class="install-copy">
+            <p class="eyebrow"><span></span> Ready when you are</p>
+            <h2>Put every file<br>within reach.</h2>
+            <p>Install with Windows Package Manager, or download the latest signed installer from GitHub Releases.</p>
+          </div>
+          <div class="install-options">
+            <div class="terminal-card">
+              <div class="terminal-label"><span>Windows Terminal</span><span>PowerShell</span></div>
+              <div class="terminal-command">
+                <span>PS&gt;</span>
+                <code>winget install BohdanKoudelka.FileSearchManager</code>
+                <button class="copy-button copy-button-dark" type="button" data-copy="winget install BohdanKoudelka.FileSearchManager" aria-label="Copy WinGet install command"><span class="copy-label">Copy</span></button>
+              </div>
+            </div>
+            <div class="install-links">
+              <a class="button button-primary" href="https://github.com/KoudelkaB/win-search/releases/latest">Get the latest release <span aria-hidden="true">↓</span></a>
+              <span>No account required · MIT licensed</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-layout">
+        <div class="brand footer-brand">
+          <img src="assets/favicon.ico" alt="" width="26" height="26">
+          <span>File Search Manager</span>
+        </div>
+        <p>Built for Windows by <a href="https://github.com/KoudelkaB">Bohdan Koudelka</a>.</p>
+        <div class="footer-links">
+          <a href="https://github.com/KoudelkaB/win-search">Source</a>
+          <a href="https://github.com/KoudelkaB/win-search/issues">Issues</a>
+          <a href="https://github.com/KoudelkaB/win-search/blob/main/LICENSE">MIT License</a>
+        </div>
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
