@@ -253,3 +253,5 @@ El estado del usuario se guarda en:
 Si la carga de NTFS es lenta, instale el servicio desde el instalador —está seleccionado de forma predeterminada— o acepte el aviso de elevación. La barra de estado indica si cada unidad usó el servicio, el acceso directo, el asistente de administrador o el recorrido de carpetas.
 
 Si una unidad asignada o externa no está disponible, File Search Manager la omite tras una breve comprobación de disponibilidad para que el inicio no se detenga en almacenamiento inaccesible.
+
+Los elementos modificados desde la carga de NTFS muestran siempre la hora actual en **Modificado** y el **Tamaño** actual, incluso mientras la aplicación que escribe mantiene el archivo abierto; eso es lo que hace fiable observar dónde escribe una aplicación. El Explorador puede mostrar valores más antiguos del mismo archivo: NTFS solo los publica en el directorio alrededor de un segundo después de una escritura, o únicamente cuando el archivo se cierra, lo que en un registro de eventos o una base de datos puede tardar días. `F12` vuelve a cargar todo desde NTFS, por lo que esos elementos regresan a los valores publicados hasta que cambien de nuevo.

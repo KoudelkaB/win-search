@@ -18,6 +18,21 @@ namespace search.Core
     /// the file system's current view, reports the exact EOF for files whose $DATA
     /// lives in an extension record, and can use backup privilege for ACL-protected
     /// entries when hosted by the service/elevated broker.
+    ///
+    /// That current view is the point of this reader, not a side note. Every entry the app
+    /// refreshes after a drive scan - anything the journal or the watcher reports as
+    /// changed - therefore shows the time and size the file has right now, even while the
+    /// writing application still holds it open. "Watch where an application writes" (HELP)
+    /// is built on exactly that: the user sorts by change time, starts the application, and
+    /// the files it writes rise in the grid immediately instead of waiting for it to exit.
+    ///
+    /// NTFS carries both values in two places - the open file, where a write lands at once,
+    /// and the on-disk record with its directory entry, which follow about a second later
+    /// or only when the file is closed (for an event log, a database or a VM disk that can
+    /// mean days). A directory read, Explorer and the $MFT scan see nothing but that
+    /// second, published copy, so F12 pulls such an entry back to the older values until
+    /// the file changes again. Reading the published copy here to match them would look
+    /// consistent and would silently disable the use case above.
     /// </summary>
     public sealed class NtfsFileMetadataReader : IDisposable
     {

@@ -253,3 +253,5 @@ Lo stato utente è salvato in:
 Se il caricamento NTFS è lento, installa il servizio dal programma di installazione — è selezionato per impostazione predefinita — oppure approva la richiesta di elevazione. La barra di stato indica se ogni disco ha usato il servizio, l’accesso diretto, l’helper amministratore o la scansione delle cartelle.
 
 Se un disco mappato o esterno non è disponibile, File Search Manager lo salta dopo un breve controllo di prontezza, così l’avvio non si blocca su un’unità irraggiungibile.
+
+Gli elementi modificati dopo il caricamento da NTFS mostrano sempre l’ora attuale in **Modificato** e la **Dimensione** attuale, anche mentre l’applicazione che scrive tiene ancora aperto il file: è questo che rende affidabile il controllo di dove scrive un’applicazione. Esplora file può mostrare valori più vecchi per lo stesso file: NTFS li pubblica nella directory solo circa un secondo dopo una scrittura, oppure soltanto alla chiusura del file, il che per un registro eventi o un database può richiedere giorni. `F12` ricarica tutto da NTFS, quindi tali elementi tornano ai valori pubblicati finché non cambiano di nuovo.

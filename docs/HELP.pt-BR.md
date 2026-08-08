@@ -253,3 +253,5 @@ O estado do usuário é armazenado em:
 Se o carregamento do NTFS estiver lento, instale o serviço pelo instalador — ele vem selecionado por padrão — ou aprove a solicitação de elevação. A barra de status informa se cada unidade usou o serviço, o acesso direto, o auxiliar de administrador ou a varredura de pastas.
 
 Se uma unidade mapeada ou externa estiver indisponível, o File Search Manager a ignora após uma breve verificação de prontidão, para que a inicialização não trave em um armazenamento inacessível.
+
+Os itens alterados desde o carregamento do NTFS sempre mostram a hora atual em **Alterado** e o **Tamanho** atual, mesmo enquanto o aplicativo que grava ainda mantém o arquivo aberto — é isso que torna confiável observar onde um aplicativo grava. O Explorador de Arquivos pode mostrar valores mais antigos do mesmo arquivo: o NTFS só os publica no diretório cerca de um segundo após uma gravação, ou apenas quando o arquivo é fechado, o que em um log de eventos ou banco de dados pode levar dias. `F12` recarrega tudo do NTFS, portanto esses itens voltam aos valores publicados até mudarem novamente.

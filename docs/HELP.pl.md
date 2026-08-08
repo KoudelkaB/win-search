@@ -253,3 +253,5 @@ Stan użytkownika jest przechowywany w:
 Jeśli wczytywanie NTFS jest wolne, zainstaluj usługę z instalatora — jest zaznaczona domyślnie — albo zatwierdź monit o podwyższenie uprawnień. Pasek stanu informuje, czy dany dysk użył usługi, dostępu bezpośredniego, pomocnika administratora czy przeglądania folderów.
 
 Jeśli dysk zmapowany lub zewnętrzny jest niedostępny, File Search Manager pomija go po krótkim sprawdzeniu gotowości, aby uruchamianie nie zatrzymało się na nieosiągalnym magazynie.
+
+Elementy zmienione od wczytania z NTFS zawsze pokazują aktualny czas w kolumnie **Zmieniono** i aktualny **Rozmiar**, nawet gdy zapisująca aplikacja wciąż trzyma plik otwarty — dzięki temu obserwowanie, gdzie aplikacja zapisuje dane, jest wiarygodne. Eksplorator może dla tego samego pliku pokazywać starsze wartości: NTFS publikuje je w katalogu dopiero około sekundy po zapisie albo dopiero przy zamknięciu pliku, co w dzienniku zdarzeń lub bazie danych może potrwać całe dni. `F12` wczytuje wszystko ponownie z NTFS, więc takie elementy wracają do opublikowanych wartości do czasu kolejnej zmiany.

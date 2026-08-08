@@ -129,6 +129,74 @@ namespace search.Tests
             }
         }
 
+        [Fact]
+        public void LiveMetadataOfAFileStillHeldByItsWriterIsTheCurrentOne()
+        {
+            var directory = Path.Combine(Path.GetTempPath(),
+                $"search-open-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var root = Path.GetPathRoot(directory);
+                if (!string.Equals(new DriveInfo(root).DriveFormat, "NTFS",
+                    StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                //One file per route: any read of a file lets NTFS publish its pending
+                //values, which would hide the divergence from the route tested after it.
+                var byReference = Path.Combine(directory, "reference.log");
+                var byPath = Path.Combine(directory, "path.log");
+                File.WriteAllBytes(byReference, new byte[10]);
+                File.WriteAllBytes(byPath, new byte[10]);
+                var beforeTheWrite = DateTime.Now.AddDays(-3);
+                File.SetLastWriteTime(byReference, beforeTheWrite); //Its close publishes it
+                File.SetLastWriteTime(byPath, beforeTheWrite);
+
+                using var referenceWriter = new FileStream(byReference, FileMode.Open,
+                    FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                using var pathWriter = new FileStream(byPath, FileMode.Open,
+                    FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                Assert.True(GetFileInformationByHandle(referenceWriter.SafeFileHandle,
+                    out var info));
+                var frn = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;
+                using var reader = NtfsFileMetadataReader.TryOpen(root);
+                Assert.NotNull(reader);
+
+                //"Watch where an application writes": the writer is still holding the file,
+                //so the directory entry - and with it Explorer, a directory walk and the
+                //$MFT scan - still shows the state before this write. What the app displays
+                //must be the state after it, otherwise the file the user is watching does
+                //not move in the grid until its writer exits.
+                var written = DateTime.Now;
+                referenceWriter.Write(new byte[4096]);
+                referenceWriter.Flush();
+                Assert.Equal(beforeTheWrite, new DirectoryInfo(directory)
+                    .GetFileSystemInfos("reference.log")[0].LastWriteTime,
+                    TimeSpan.FromSeconds(1)); //The published entry, still the old one
+                Assert.True(reader.TryRead(frn, out var metadata));
+                Assert.Equal(written,
+                    DateTime.FromFileTime(metadata.LastWriteFileTimeUtc),
+                    TimeSpan.FromSeconds(5));
+                Assert.Equal((ulong)4096, metadata.Size);
+
+                //Same answer where no file reference is available (a FileSystemWatcher
+                //drive, no helper): one file must not have two change times.
+                written = DateTime.Now;
+                pathWriter.Write(new byte[4096]);
+                pathWriter.Flush();
+                Assert.Equal(beforeTheWrite, new DirectoryInfo(directory)
+                    .GetFileSystemInfos("path.log")[0].LastWriteTime,
+                    TimeSpan.FromSeconds(1));
+                Assert.True(INode.TryReadMetadata(byPath, out var snapshot));
+                Assert.Equal(written, snapshot.LastChangeTime, TimeSpan.FromSeconds(5));
+                Assert.Equal((ulong)4096, snapshot.Size);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         struct BY_HANDLE_FILE_INFORMATION
         {

@@ -253,3 +253,5 @@ Uživatelský stav se ukládá do:
 Pokud je načítání NTFS pomalé, nainstalujte službu z instalátoru – ve výchozím stavu je vybraná – nebo potvrďte výzvu k elevaci. Stavový řádek hlásí, zda daný disk použil službu, přímý přístup, elevovaného pomocníka, nebo procházení složek.
 
 Pokud je připojený nebo externí disk nedostupný, File Search Manager jej po krátké kontrole připravenosti přeskočí, aby se start nezasekl na nedosažitelném úložišti.
+
+Položky změněné od načtení z NTFS vždy ukazují aktuální čas ve sloupci **Změněno** i aktuální **Velikost**, a to i tehdy, když zapisující aplikace soubor stále drží otevřený – díky tomu je sledování, kam aplikace zapisuje, spolehlivé. Průzkumník může u téhož souboru ukazovat starší hodnoty: NTFS je do adresáře publikuje až zhruba sekundu po zápisu, nebo teprve při zavření souboru, což u protokolu událostí nebo databáze může trvat dny. `F12` načte vše znovu z NTFS, takže se takové položky vrátí na publikované hodnoty, dokud se znovu nezmění.

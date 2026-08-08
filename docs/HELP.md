@@ -253,3 +253,5 @@ User state is stored under:
 If NTFS loading is slow, install the service from the installer - it is selected by default - or approve the elevation prompt. The status bar reports whether each drive used the service, direct access, admin helper, or folder walk.
 
 If a mapped or external drive is unavailable, File Search Manager skips it after a short readiness check so startup does not stall on unreachable storage.
+
+Items changed since the load from NTFS always show the current **Changed** time and **Size**, even while the writing application still holds the file open - that is what makes watching where an application writes reliable. Explorer can show older values for the same file: NTFS publishes them into the directory only about a second after a write, or not until the file is closed, which for an event log or a database can take days. `F12` reloads everything from NTFS, so such items fall back to the published values until they change again.
