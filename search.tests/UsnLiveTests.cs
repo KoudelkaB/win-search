@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using search.Core;
 using search.Models;
@@ -76,6 +77,13 @@ namespace search.Tests
             var reconcile = FSChangeProcessor.ReconcileDirs;
             FSChangeProcessor.Lookup = _ => null; //Empty index - deletes cannot resolve through the map
             FSChangeProcessor.ReconcileDirs = dirs => { foreach (var d in dirs) reconciled.Enqueue(d); return Task.CompletedTask; };
+            var dir = Path.Combine(Path.GetTempPath(), $"usn-live-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+            //Written before the journal is positioned, so no record ever puts this file's
+            //reference into the map: its delete is the genuinely unresolvable one that has
+            //to fall back to reconciling the parent directory.
+            var unknown = Path.Combine(dir, "unknown.txt");
+            File.WriteAllText(unknown, "x");
             var watcher = UsnDriveWatcher.TryStart(root,
                 e => { events.Enqueue(e); return Task.CompletedTask; }, _ => { }, _ => { });
             if (watcher == null)
@@ -87,8 +95,6 @@ namespace search.Tests
             }
             try
             {
-                var dir = Path.Combine(Path.GetTempPath(), $"usn-live-{Guid.NewGuid():N}");
-                Directory.CreateDirectory(dir);
                 try
                 {
                     var file = Path.Combine(dir, "created.txt");
@@ -97,18 +103,27 @@ namespace search.Tests
                             e.ChangeType == WatcherChangeTypes.Created && string.Equals(e.FullPath, file, StringComparison.OrdinalIgnoreCase))),
                         $"no Created event for {file}; got: {string.Join("; ", events)}");
 
-                    //A rename resolves its new path by file id even though the journal record has no name.
-                    //The old path comes from the FRN map, which is empty here => reported as Created(new).
+                    //A rename resolves its new path by file id even though the journal record
+                    //has no name. The old path comes from the map entry this watcher wrote for
+                    //its own Created - the index apply is asynchronous and must not be required.
                     var renamed = Path.Combine(dir, "renamed.txt");
                     File.Move(file, renamed);
                     Assert.True(await WaitFor(() => events.Any(e =>
-                            (e.ChangeType == WatcherChangeTypes.Renamed || e.ChangeType == WatcherChangeTypes.Created)
+                            e.ChangeType == WatcherChangeTypes.Renamed
+                            && string.Equals(e.FullPath, renamed, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(e.OldFullPath, file, StringComparison.OrdinalIgnoreCase))),
+                        $"no Renamed event {file} -> {renamed}; got: {string.Join("; ", events)}");
+
+                    //The watcher named this one itself, so its delete is exact - no reconcile
+                    File.Delete(renamed);
+                    Assert.True(await WaitFor(() => events.Any(e =>
+                            e.ChangeType == WatcherChangeTypes.Deleted
                             && string.Equals(e.FullPath, renamed, StringComparison.OrdinalIgnoreCase))),
-                        $"no Renamed/Created event for {renamed}; got: {string.Join("; ", events)}");
+                        $"no exact Deleted event for {renamed}; got: {string.Join("; ", events)}");
 
                     //A delete of a file the map does not know cannot be named (unprivileged
                     //records are nameless) - the watcher must reconcile the parent directory
-                    File.Delete(renamed);
+                    File.Delete(unknown);
                     Assert.True(await WaitFor(() => reconciled.Any(d => string.Equals(d, dir, StringComparison.OrdinalIgnoreCase))),
                         $"parent {dir} was not reconciled; reconciled: {string.Join("; ", reconciled)}; events: {string.Join("; ", events)}");
                 }
@@ -167,6 +182,88 @@ namespace search.Tests
                         e.ChangeType == WatcherChangeTypes.Deleted
                         && string.Equals(e.FullPath, target, StringComparison.OrdinalIgnoreCase))),
                     $"no exact Deleted event for {target}; got: {string.Join("; ", events)}");
+            }
+            finally
+            {
+                watcher?.Dispose();
+                FSChangeProcessor.Lookup = lookup;
+                if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// "Write foo.tmp, rename it over foo" is how editors, compilers and CLI tools save
+        /// a file. Both records normally land in ONE journal read batch, so the temp file's
+        /// Created is still waiting in the ordered drive queue when the rename is translated
+        /// - the index cannot confirm the old path yet. The watcher must still report the
+        /// rename; otherwise the queued create lands afterwards and the temp name stays in
+        /// the grid forever, for a file that no longer exists under that name.
+        /// </summary>
+        [Fact]
+        public async Task AtomicSaveRenameSurvivesAnIndexApplyThatLagsBehindTheJournal()
+        {
+            const int saves = 10;
+            var root = Path.GetPathRoot(Path.GetTempPath());
+            var events = new ConcurrentQueue<FsEvent>();
+            var indexed = new ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
+            var lookup = FSChangeProcessor.Lookup;
+            var dir = Path.Combine(Path.GetTempPath(), $"usn-atomic-save-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+            UsnDriveWatcher watcher = null;
+            //The real drive queue is FIFO with a single consumer and coalesces for 200-500 ms
+            //before applying anything. Model exactly that: ordered, but never synchronous.
+            var applyGate = new object();
+            var apply = Task.CompletedTask;
+            try
+            {
+                FSChangeProcessor.Lookup = path => indexed.TryGetValue(path, out var node) ? node : null;
+                watcher = UsnDriveWatcher.TryStart(root, e =>
+                {
+                    events.Enqueue(e);
+                    lock (applyGate)
+                        return apply = apply.ContinueWith(previous =>
+                        {
+                            Thread.Sleep(50); //The coalescing window the index apply waits out
+                            switch (e.ChangeType)
+                            {
+                                case WatcherChangeTypes.Created:
+                                    indexed[e.FullPath] = new FileNode(e.FullPath);
+                                    break;
+                                case WatcherChangeTypes.Renamed:
+                                    indexed.TryRemove(e.OldFullPath, out _);
+                                    indexed[e.FullPath] = new FileNode(e.FullPath);
+                                    break;
+                                case WatcherChangeTypes.Deleted:
+                                    indexed.TryRemove(e.FullPath, out _);
+                                    break;
+                            }
+                        }, TaskScheduler.Default);
+                }, _ => { }, _ => { });
+                if (watcher == null)
+                {
+                    Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
+                        $"USN journal failed to open on NTFS volume {root}");
+                    return;
+                }
+
+                var targets = new string[saves];
+                var temps = new string[saves];
+                for (var i = 0; i < saves; i++)
+                {
+                    targets[i] = Path.Combine(dir, $"page{i}.html");
+                    temps[i] = Path.Combine(dir, $"page{i}.html.tmp.{Environment.ProcessId}.{i:x8}");
+                    File.WriteAllText(temps[i], "<html/>");
+                    File.Move(temps[i], targets[i], overwrite: true);
+                }
+
+                Assert.True(await WaitFor(() => targets.All(indexed.ContainsKey)),
+                    $"saved files never reached the index; indexed: {string.Join("; ", indexed.Keys)}"
+                    + $"; events: {string.Join("; ", events)}");
+                //Nothing may remain indexed under a name that is not on disk any more
+                Assert.True(await WaitFor(() => !temps.Any(indexed.ContainsKey)),
+                    $"temp names of an atomic save stayed indexed: "
+                    + $"{string.Join("; ", temps.Where(indexed.ContainsKey))}"
+                    + $"; events: {string.Join("; ", events)}");
             }
             finally
             {

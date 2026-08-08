@@ -208,6 +208,42 @@ namespace search.Tests
             Assert.Equal(0x20u, result[0].NtfsAttributes);
         }
 
+        /// <summary>
+        /// "explorer /select,X" opens Explorer's default page when X does not exist, so a
+        /// row whose file was renamed or deleted meanwhile has to fall back to the closest
+        /// folder that is still there instead of looking like a no-op.
+        /// </summary>
+        [Fact]
+        public void RevealFallsBackToTheNearestExistingFolder()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), $"reveal-{Guid.NewGuid():N}");
+            var nested = Path.Combine(dir, "sub", "deeper");
+            Directory.CreateDirectory(nested);
+            try
+            {
+                //A file that never existed still lands the user in its parent
+                Assert.Equal(nested,
+                    Path.Combine(nested, "gone.txt").NearestExistingFolder(), ignoreCase: true);
+                //Whole subtrees can be gone - keep walking up
+                Assert.Equal(dir,
+                    Path.Combine(dir, "removed", "tree", "gone.txt").NearestExistingFolder(),
+                    ignoreCase: true);
+                //A directory node carries a trailing separator - it must not make the
+                //vanished folder itself look like the answer
+                Assert.Equal(nested,
+                    (Path.Combine(nested, "gone") + Path.DirectorySeparatorChar)
+                        .NearestExistingFolder(), ignoreCase: true);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            //Everything below the deleted root is gone; the drive root is still there
+            Assert.Equal(Path.GetPathRoot(dir), Path.Combine(Path.GetPathRoot(dir),
+                $"missing-{Guid.NewGuid():N}", "x.txt").NearestExistingFolder(), ignoreCase: true);
+            Assert.Null(((string)null).NearestExistingFolder());
+        }
+
         [Fact]
         public void FilesystemEventsDefaultToConservativeDirectoryDeletion()
         {

@@ -1693,7 +1693,7 @@ namespace search
                 {
                     CancelMouseDrag();
                     filters.Used(filterTextBox.Text);
-                    Apps.Explorer.Open($"/select,\"{n.GetFileOrTempPath()}\"");
+                    n.GetFileOrTempPath().Reveal();
                     e.Handled = true;
                 }
             }
@@ -1982,7 +1982,7 @@ namespace search
         void ContextOpenFolder_Click(object sender, RoutedEventArgs e)
         {
             foreach (var node in ContextNodes())
-                Apps.Explorer.Open($"/select,\"{node.GetFileOrTempPath()}\"");
+                node.GetFileOrTempPath().Reveal();
         }
 
         void ContextCopy_Click(object sender, RoutedEventArgs e)
@@ -2616,11 +2616,19 @@ namespace search
                 return;
             }
             var a = arg.FirstOrDefault();
+            if (a == Key.B)
+            {
+                //File browser: one Explorer window per node. "/select," takes a single
+                //path anyway, and Reveal falls back to the nearest existing folder for
+                //a node that is no longer on disk.
+                var reveal = nodes.ToArray();
+                await WaitFor(() => reveal.ForEach(n => n.GetFileOrTempPath().Reveal(asAdmin)));
+                return;
+            }
             if (a == Key.T) nodes = Model.ToTextNodes(nodes.ToArray());
             await Open(a switch
             {
                 Key.T => Apps.TextViever,
-                Key.B => Apps.Explorer + "\0/select,", // File browser
                 Key.W => Apps.WebBrowser,
                 Key.E => Apps.Edge,
                 Key.C => Apps.Chrome,
