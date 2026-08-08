@@ -108,6 +108,54 @@ namespace search
         }
 
         /// <summary>
+        /// Show the path in Windows Explorer, selected in its folder.
+        /// "explorer /select,X" silently opens Explorer's default page (Quick access /
+        /// This PC) when X does not exist - which is exactly what a stale grid row or a
+        /// file renamed away meanwhile hits, and it looks like the app did nothing.
+        /// Fall back to the nearest ancestor folder that does exist, so the user still
+        /// lands where the item was.
+        /// </summary>
+        /// <param name="path">File or folder to reveal</param>
+        /// <param name="elevated">Run Explorer elevated - the user asked to open as admin</param>
+        /// <returns>The started Explorer process, or null when nothing could be shown</returns>
+        public static Process Reveal(this string path, bool elevated = false)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            if (File.Exists(path) || Directory.Exists(path))
+                return Apps.Explorer.Open($"/select,\"{path}\"", elevated: elevated);
+            var folder = NearestExistingFolder(path);
+            //No ancestor left (the whole drive is gone) - opening the default page would
+            //only pretend that something was shown
+            return folder == null ? null
+                : Apps.Explorer.Open($"\"{folder}\"", elevated: elevated);
+        }
+
+        /// <summary>
+        /// Closest existing ancestor directory of the path, or null when even the drive
+        /// root is unavailable. The path itself is never returned - the caller already
+        /// established that it does not exist.
+        /// </summary>
+        public static string NearestExistingFolder(this string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            try
+            {
+                var folder = Path.GetDirectoryName(path.TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                while (!string.IsNullOrEmpty(folder))
+                {
+                    if (Directory.Exists(folder)) return folder;
+                    var parent = Path.GetDirectoryName(folder);
+                    if (string.Equals(parent, folder, StringComparison.OrdinalIgnoreCase))
+                        return null; //Root of a drive that is not mounted
+                    folder = parent;
+                }
+            }
+            catch { } //Malformed path (invalid characters, too long) - nothing to show
+            return null;
+        }
+
+        /// <summary>
         /// Returns Visual parent control of events sender
         /// </summary>
         /// <param name="o"></param>

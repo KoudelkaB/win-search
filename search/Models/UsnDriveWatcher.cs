@@ -189,7 +189,7 @@ namespace search.Models
             //with the old path (null = unknown), waiting for its RENAME_NEW_NAME
             var pendingRenames = new Dictionary<ulong, string>();
             //Parents of records that could not be resolved - reconciled against the disk
-            var unresolvedParents = new HashSet<ulong>();
+            var unresolvedParents = new UnresolvedParents();
             //FRNs whose create/rename never resolved to a path: nothing was ever indexed
             //for them, so their later delete has nothing to prune - dropping it silently
             //saves the parent reconcile a short-lived temp file would otherwise cost
@@ -268,7 +268,7 @@ namespace search.Models
         }
 
         void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames,
-            HashSet<ulong> unresolvedParents, HashSet<ulong> changedSeen,
+            UnresolvedParents unresolvedParents, HashSet<ulong> changedSeen,
             HashSet<ulong> createdSeen, HashSet<ulong> ghosts)
         {
             var hadMultipleLinks = frnMap.HasMultipleLinks(r.Frn);
@@ -357,6 +357,13 @@ namespace search.Models
                     //Already gone again - its delete record follows (a ghost when nothing
                     //was indexed under the old path either: that delete then drops silently)
                     if (oldPath == null) ghosts.Add(r.Frn);
+                    //Something IS indexed under the old name. A terminal delete record
+                    //normally follows and prunes it, but a resolve that failed for any
+                    //other reason never produces one - reconcile the directory the stale
+                    //name sits in so it cannot survive in the grid forever. That is the
+                    //OLD parent: this record's ParentFrn is where the file moved TO, and
+                    //a cross-directory move leaves nothing stale there.
+                    else unresolvedParents.Add(Path.GetDirectoryName(oldPath));
                     return;
                 }
                 if (UsnJournal.IsNtfsDeletedPath(journal.Root, newPath))
@@ -400,6 +407,13 @@ namespace search.Models
                     ghosts.Add(r.Frn); //Vanished before we read - nothing was indexed
                     return;
                 }
+                //The create bits of a write-then-rename save (foo.tmp -> foo) are still set
+                //on records written before the rename, and the path above is resolved LIVE -
+                //so the second create record of one session commonly resolves to the name
+                //the file has after the rename. Report the move instead of a second create,
+                //otherwise the temp name this watcher already reported stays in the index
+                //(and the rename records that follow compare equal and are swallowed).
+                if (ReportMove(r, path, pendingRenames, ghosts)) return;
                 //USN reason flags are cumulative for an open-close session. Several records
                 //for the same new file can therefore all carry FILE_CREATE; the first queued
                 //event observes the final on-disk metadata when the serialized handler runs.
@@ -413,7 +427,15 @@ namespace search.Models
             //Data/attribute change
             if (repairedHardLinks) return; //Snapshot + every link parent were updated together.
             if (!changedSeen.Add(r.Frn)) return;
-            var changed = MapPath(r.Frn);
+            //A change record written before a rename can be read after it too - MapPath then
+            //heals to the new path and reports what name it left behind
+            var changed = MapPath(r.Frn, heal: true, out var movedFrom);
+            if (movedFrom != null)
+            {
+                pendingRenames.Remove(r.Frn);
+                Process(new FsEvent(WatcherChangeTypes.Renamed, changed, movedFrom,
+                    frn: r.Frn, ntfsAttributes: r.Attributes));
+            }
             if (changed == null && journal.TryResolvePath(r.Frn) is { } live)
             {
                 //Map the resolved path - a hot file (growing log, download) must not pay
@@ -425,6 +447,32 @@ namespace search.Models
             changed ??= PathFromRecord(r);
             if (changed != null) Process(new FsEvent(WatcherChangeTypes.Changed, changed,
                 frn: r.Frn, ntfsAttributes: r.Attributes));
+        }
+
+        /// <summary>
+        /// Report that a file reference this watcher already named moved to a different
+        /// path, when no rename record produced that transition. USN reason bits accumulate
+        /// over a whole open-close session while the paths are resolved live, so a record
+        /// can arrive with stale reasons and a current - already renamed - path. Leaving the
+        /// previously reported name in place would keep it in the grid forever for a file
+        /// that no longer has it. Returns false (and reports nothing) when the reference is
+        /// still known under exactly this path.
+        /// </summary>
+        bool ReportMove(UsnRecord r, string path, Dictionary<ulong, string> pendingRenames,
+            HashSet<ulong> ghosts)
+        {
+            var reported = MapPath(r.Frn, heal: false);
+            if (reported == null
+                || string.Equals(reported, path, StringComparison.OrdinalIgnoreCase))
+                return false;
+            //The rename records of this same transition may still follow; they resolve the
+            //old name from the map, which now holds the new path, and are then swallowed.
+            pendingRenames.Remove(r.Frn);
+            ghosts.Remove(r.Frn);
+            Process(new FsEvent(WatcherChangeTypes.Renamed, path, reported,
+                frn: r.Frn, ntfsAttributes: r.Attributes));
+            Remap(r.Frn, path);
+            return true;
         }
 
         /// <summary>
@@ -719,19 +767,41 @@ namespace search.Models
         /// heal=false skips the live-disk repair - a RENAME record's OLD path must never
         /// resolve from the disk, where the file already sits under its NEW path (the
         /// rename would compare equal and be swallowed).
+        /// A placeholder entry is trusted without the index check: it means this watcher
+        /// already enqueued a Created/Renamed for that exact path and the ordered drive
+        /// queue (FIFO, single consumer) has not applied it yet. Whatever we enqueue now
+        /// is applied after it, so the path is as good as indexed. Treating it as unknown
+        /// is what left a file that was created and immediately renamed away (atomic
+        /// "write temp, rename over the target" saves) or deleted indexed forever under a
+        /// name that no longer exists on disk.
         /// </summary>
-        string MapPath(ulong frn, bool heal = true)
+        string MapPath(ulong frn, bool heal = true) => MapPath(frn, heal, out _);
+
+        /// <summary>
+        /// <inheritdoc cref="MapPath(ulong, bool)"/>
+        /// movedFrom is the name this watcher had already reported when healing found the
+        /// file somewhere else - the caller must report that move, nothing else will.
+        /// </summary>
+        string MapPath(ulong frn, bool heal, out string movedFrom)
         {
+            movedFrom = null;
             if (!frnMap.TryGetValue(frn, out var node)) return null;
             var path = node.FullName;
             if (FSChangeProcessor.Lookup(path) != null) return path; //Still indexed under that path
-            if (!heal) return null;
+            var queued = node is PathNode; //Our own event for this path is still in flight
+            if (!heal) return queued ? path : null;
             var live = journal.TryResolvePath(frn);
             if (live == null)
             {
+                //Gone from disk - but a queued create still needs its exact prune event
+                if (queued) return path;
                 frnMap.Remove(frn);
                 return null;
             }
+            //A path this watcher reported itself is not "staled by a parent rename" - the
+            //queued event will put it into the index, so the move has to be reported.
+            if (queued && !string.Equals(path, live, StringComparison.OrdinalIgnoreCase))
+                movedFrom = path;
             Remap(frn, live);
             return live;
         }
@@ -1025,16 +1095,48 @@ namespace search.Models
         }
 
         /// <summary>
+        /// Directories the watcher must diff against the disk because it could not account
+        /// for their content from the records alone. Most records name only a parent FRN,
+        /// which stays unresolved until the reconcile actually runs - deduplicating first
+        /// costs one OpenFileById per distinct directory instead of one per record in a
+        /// storm. A caller that already holds the directory path (a rename whose old name
+        /// is known but whose record's ParentFrn points at the move's destination) adds it
+        /// directly; the two sets deduplicate against each other in the model's diff.
+        /// </summary>
+        sealed class UnresolvedParents
+        {
+            readonly HashSet<ulong> frns = new();
+            readonly HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
+
+            public int Count => frns.Count + paths.Count;
+
+            public void Add(ulong parentFrn) => frns.Add(parentFrn);
+
+            public void Add(string directory)
+            {
+                if (!string.IsNullOrEmpty(directory)) paths.Add(directory);
+            }
+
+            /// <summary>Resolve and take everything collected so far, leaving this empty</summary>
+            public string[] Drain(Func<ulong, string> resolve)
+            {
+                var dirs = frns.Select(resolve).Where(p => p != null).Concat(paths)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                frns.Clear();
+                paths.Clear();
+                return dirs;
+            }
+        }
+
+        /// <summary>
         /// Records whose FRN the map does not know (walked drive, staled entry) name at
         /// least their parent - resolve it and let the model diff that directory against
         /// the disk. Batched: one reconcile pass covers a whole storm's worth of misses.
         /// </summary>
-        void Reconcile(HashSet<ulong> unresolvedParents)
+        void Reconcile(UnresolvedParents unresolvedParents)
         {
             if (unresolvedParents.Count == 0) return;
-            var dirs = unresolvedParents.Select(journal.TryResolvePath).Where(p => p != null)
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            unresolvedParents.Clear();
+            var dirs = unresolvedParents.Drain(journal.TryResolvePath);
             if (dirs.Length == 0) return;
             try { FSChangeProcessor.ReconcileDirs(dirs).Wait(); } catch { }
         }
