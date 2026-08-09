@@ -474,7 +474,7 @@
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
-                    <GridViewColumn Header="{local:Loc Key=Changed}" DisplayMemberBinding="{Binding LastChangeTime, StringFormat={}{0:g}}" Width="Auto" local:GridViewSort.SortKey="LastChangeTime"/>
+                    <GridViewColumn Header="{local:Loc Key=Changed}" DisplayMemberBinding="{Binding LastChangeTime, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="Auto" local:GridViewSort.SortKey="LastChangeTime"/>
                     <GridViewColumn Header="{local:Loc Key=Folder}" Width="Auto" local:GridViewSort.SortKey="Folder">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
