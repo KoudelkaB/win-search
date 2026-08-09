@@ -52,17 +52,24 @@ jobs:
 
   # Opens the manifest-update PR against microsoft/winget-pkgs. This only works once the
   # package already exists there - the very first version has to be submitted by hand
-  # (see docs/WINGET.md). Until WINGET_TOKEN is set the step is skipped, so the release
-  # itself never goes red because of winget.
+  # (see docs/WINGET.md). WINGET_TOKEN is required; fail clearly when it is missing so a
+  # successful release cannot be mistaken for a successful WinGet submission.
   winget:
     needs: release
     runs-on: ubuntu-latest
     if: ${{ !contains(github.ref_name, '-') }} # skip prereleases like v0.2.0-rc1
-    env:
-      HAS_TOKEN: ${{ secrets.WINGET_TOKEN != '' }}
     steps:
+      - name: Verify WinGet credentials
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [[ -z "$WINGET_TOKEN" ]]; then
+            echo "::error title=Missing WINGET_TOKEN::Add a classic GitHub PAT with public_repo and workflow scopes as the WINGET_TOKEN repository secret."
+            exit 1
+          fi
+
       - name: Submit manifest to winget-pkgs
-        if: env.HAS_TOKEN == 'true'
         uses: vedantmgoyal9/winget-releaser@main
         with:
           identifier: BohdanKoudelka.FileSearchManager
