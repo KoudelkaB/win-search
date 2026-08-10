@@ -56,13 +56,15 @@ Prereleases (tags containing `-`, e.g. `v0.2.0-rc1`) skip the winget job.
 
 1. Fork `microsoft/winget-pkgs` to the `KoudelkaB` account and keep the fork.
 
-2. Create a **classic** personal access token with the `public_repo` scope. Fine-grained tokens are
-   not supported by the action.
+2. Create a **classic** personal access token with the `public_repo` and `workflow` scopes.
+   `workflow` is needed when syncing upstream changes that include files under
+   `.github/workflows`. Fine-grained tokens are not supported by the action.
 
 3. Add it to this repository as the secret `WINGET_TOKEN`
    (Settings -> Secrets and variables -> Actions).
 
-   Until this secret exists the winget job is skipped, so the release still succeeds without it.
+   Stable-release workflows fail at `Verify WinGet credentials` until this secret exists. This is
+   intentional: a green release workflow should mean that the WinGet submission was attempted.
 
 4. Do the first manual submission described below.
 
