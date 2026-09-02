@@ -3421,7 +3421,13 @@ namespace search
                         var collision = collisionForAll;
                         if (collision == null)
                         {
-                            var dialog = new FileCollisionDialog(destination) { Owner = progress };
+                            var dialog = new FileCollisionDialog(destination)
+                            {
+                                // Fast transfers keep the delayed progress window hidden. WPF
+                                // rejects a never-shown Window as an owner, so use the main window
+                                // until progress has actually appeared.
+                                Owner = CollisionDialogOwner(progress, this)
+                            };
                             bool? dialogResult;
                             progress.PauseTiming();
                             try
@@ -3546,6 +3552,9 @@ namespace search
                 : SizeAsWork(destinationSize, emptyIsOne: false);
             return Math.Max(parentGrowth, destinationGrowth);
         }
+
+        internal static Window CollisionDialogOwner(Window progress, Window fallback) =>
+            progress?.IsVisible == true ? progress : fallback;
 
         internal static long PositiveSizeGrowth(ulong current, ulong initial) =>
             current <= initial ? 0 : SizeAsWork(current - initial, emptyIsOne: false);

@@ -122,6 +122,9 @@ namespace search.Models
         /// </summary>
         public bool ReportsCompleteDirectoryDeletes => !IsDead && hardLinkBaseline.HasMftBaseline;
 
+        /// <summary>Live FRN-map watermark paired with a drive-scan start.</summary>
+        internal long FrnMutationVersion => frnMap.MutationVersion;
+
         UsnDriveWatcher(UsnJournal journal, Func<FsEvent, Task> process,
             Action<DriveScanReason> rescan, Action<UsnDriveWatcher> dead)
         {
@@ -161,9 +164,10 @@ namespace search.Models
         /// FRN; walked FileNodes do not (map stays empty and every record degrades to the
         /// resolve-or-reconcile path, still correct).
         /// </summary>
-        public void Populate(IEnumerable<INode> nodes)
+        public void Populate(IEnumerable<INode> nodes,
+            long preserveMutationsAfter = long.MaxValue)
         {
-            frnMap.Populate(nodes);
+            frnMap.Populate(nodes, preserveMutationsAfter);
             //Only the MFT reader supplies a complete FRN-addressable baseline. A walked
             //fallback collection contains path nodes without file references, so deleted
             //records may still need conservative parent reconciliation.
@@ -188,6 +192,10 @@ namespace search.Models
             //Half-delivered renames within one batch: FRN whose RENAME_OLD_NAME was seen,
             //with the old path (null = unknown), waiting for its RENAME_NEW_NAME
             var pendingRenames = new Dictionary<ulong, string>();
+            //A hard-link record can be translated before the create/rename events already
+            //ahead of it have reached the serialized model queue. Retry once after that
+            //queue catches up; a transient lookup miss must not become a 20-second rescan.
+            var delayedHardLinkRepairs = new Dictionary<ulong, uint>();
             //Parents of records that could not be resolved - reconciled against the disk
             var unresolvedParents = new UnresolvedParents();
             //FRNs whose create/rename never resolved to a path: nothing was ever indexed
@@ -240,7 +248,8 @@ namespace search.Models
                     foreach (var r in batch)
                     {
                         if (stop) return;
-                        Translate(r, pendingRenames, unresolvedParents, changedSeen, createdSeen, ghosts);
+                        Translate(r, pendingRenames, unresolvedParents, changedSeen,
+                            createdSeen, ghosts, delayedHardLinkRepairs);
                     }
                     //Wait for the batch's last event only: the drive queue is FIFO with a single
                     //consumer, so journal order is preserved without waiting between events, and
@@ -250,6 +259,13 @@ namespace search.Models
                     //behind on a busy volume and let the journal wrap past our position, which
                     //costs a full drive rescan every time.
                     var last = lastEnqueued;
+                    lastEnqueued = null;
+                    if (last != null) try { last.Wait(); } catch { }
+                    RetryDelayedHardLinkRepairs(delayedHardLinkRepairs);
+                    //A successful retry enqueued one absolute snapshot/delta after all of
+                    //the structural events it depended on. Apply it before reading another
+                    //journal batch so its optimistic link baseline cannot run ahead again.
+                    last = lastEnqueued;
                     lastEnqueued = null;
                     if (last != null) try { last.Wait(); } catch { }
                     //A RENAME_OLD whose NEW half falls into the next batch is rare (batch
@@ -269,7 +285,8 @@ namespace search.Models
 
         void Translate(UsnRecord r, Dictionary<ulong, string> pendingRenames,
             UnresolvedParents unresolvedParents, HashSet<ulong> changedSeen,
-            HashSet<ulong> createdSeen, HashSet<ulong> ghosts)
+            HashSet<ulong> createdSeen, HashSet<ulong> ghosts,
+            Dictionary<ulong, uint> delayedHardLinkRepairs)
         {
             var hadMultipleLinks = frnMap.HasMultipleLinks(r.Frn);
             var repairedHardLinks = false;
@@ -289,7 +306,9 @@ namespace search.Models
                 if (!repairedHardLinks && !hardLinkFileGone)
                 {
                     if (baselineAction == HardLinkBaselineAction.ProcessNow)
-                        RequestExactMftRescan(r.Frn, r.Reason, failure);
+                        delayedHardLinkRepairs[r.Frn] =
+                            delayedHardLinkRepairs.TryGetValue(r.Frn, out var prior)
+                                ? prior | r.Reason : r.Reason;
                     else if (baselineAction == HardLinkBaselineAction.ScheduleWalkRescan)
                         RequestExactMftRescan(r.Frn, r.Reason, failure,
                             WalkExactRescanQuietMs);
@@ -447,6 +466,23 @@ namespace search.Models
             changed ??= PathFromRecord(r);
             if (changed != null) Process(new FsEvent(WatcherChangeTypes.Changed, changed,
                 frn: r.Frn, ntfsAttributes: r.Attributes));
+        }
+
+        void RetryDelayedHardLinkRepairs(Dictionary<ulong, uint> repairs)
+        {
+            if (repairs.Count == 0) return;
+            var pending = repairs.Select(pair =>
+                new PendingHardLinkRepair(pair.Key, pair.Value)).ToArray();
+            repairs.Clear();
+            foreach (var repair in pending)
+            {
+                if (!CanRepairHardLinkIncrementally(repair.Reason,
+                        frnMap.HasMultipleLinks(repair.Frn))) continue;
+                if (!TryQueueHardLinkUpdate(repair.Frn, out _, out var gone,
+                        out var failure) && !gone)
+                    RequestExactMftRescan(repair.Frn, repair.Reason,
+                        $"targeted repair still failed after queue catch-up: {failure}");
+            }
         }
 
         /// <summary>
@@ -865,7 +901,13 @@ namespace search.Models
             {
                 public readonly ulong Frn;
                 public readonly INode Node; //null = tombstone hiding the immutable scan slot
-                public SourceOverride(ulong frn, INode node) { Frn = frn; Node = node; }
+                public readonly long Version;
+                public SourceOverride(ulong frn, INode node, long version)
+                {
+                    Frn = frn;
+                    Node = node;
+                    Version = version;
+                }
             }
 
             sealed class LinkOverride
@@ -873,30 +915,43 @@ namespace search.Models
                 public readonly ulong Frn;
                 public readonly ulong[] Parents;
                 public readonly ulong Size;
-                public LinkOverride(ulong frn, ulong[] parents, ulong size)
+                public readonly long Version;
+                public LinkOverride(ulong frn, ulong[] parents, ulong size, long version)
                 {
                     Frn = frn;
                     Parents = parents;
                     Size = size;
+                    Version = version;
                 }
             }
 
             readonly object mutationLock = new();
             volatile PageTable pageTable = PageTable.Empty();
+            long mutationVersion;
+
+            public long MutationVersion => Interlocked.Read(ref mutationVersion);
 
             public bool TryGetValue(ulong frn, out INode node)
             {
                 var entry = frn & EntryMask;
                 var table = pageTable;
-                if (table.Source != null)
+                if (!table.Overrides.IsEmpty && table.Overrides.TryGetValue(entry, out var changed))
                 {
-                    if (!table.Overrides.IsEmpty && table.Overrides.TryGetValue(entry, out var changed))
+                    if (changed.Frn == frn)
                     {
-                        node = changed.Frn == frn ? changed.Node : null;
+                        node = changed.Node;
                         return node != null;
                     }
-                    return table.Source.TryGetByFrn(frn, out node);
+                    //A live override owns this reused slot and hides the older scanned
+                    //sequence. A tombstone for an older sequence, preserved across a later
+                    //scan, does not hide the new source owner.
+                    if (changed.Node != null)
+                    {
+                        node = null;
+                        return false;
+                    }
                 }
+                if (table.Source != null) return table.Source.TryGetByFrn(frn, out node);
                 if (table.Pages.TryGetValue(entry >> PageBits, out var page))
                 {
                     var slot = (int)(entry & PageMask);
@@ -911,6 +966,7 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     var entry = frn & EntryMask;
+                    var version = ++mutationVersion;
                     if (pageTable.Source != null)
                     {
                         //Metadata-only events keep the original MFT node in the live index.
@@ -921,18 +977,13 @@ namespace search.Models
                             pageTable.Overrides.TryRemove(entry, out _);
                             return;
                         }
-                        pageTable.Overrides[entry] = new SourceOverride(frn, node);
+                        pageTable.Overrides[entry] = new SourceOverride(frn, node, version);
                         return;
                     }
-                    if (!pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
-                    {
-                        pageTable.Sparse[frn] = node;
-                        return;
-                    }
-                    var slot = (int)(entry & PageMask);
-                    page.Nodes[slot] = node;
-                    page.Frns[slot] = frn;
-                    pageTable.Sparse.TryRemove(frn, out _);
+                    //Keep dynamic entries in the same versioned overlay used by an MFT
+                    //source. A later Populate can then retain everything newer than the
+                    //scan's watermark, including startup creates before the first baseline.
+                    pageTable.Overrides[entry] = new SourceOverride(frn, node, version);
                 }
             }
 
@@ -941,30 +992,14 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     var entry = frn & EntryMask;
-                    if (pageTable.Source != null)
+                    var version = ++mutationVersion;
+                    //A stale delete must not hide a newer owner of the same MFT slot.
+                    if (TryGetValue(frn, out _))
                     {
-                        //A stale delete must not hide a newer owner of the same MFT slot.
-                        if (TryGetValue(frn, out _))
-                        {
-                            pageTable.Overrides[entry] = new SourceOverride(frn, null);
-                            pageTable.LinkOverrides[entry] =
-                                new LinkOverride(frn, Array.Empty<ulong>(), 0);
-                        }
-                        return;
+                        pageTable.Overrides[entry] = new SourceOverride(frn, null, version);
+                        pageTable.LinkOverrides[entry] =
+                            new LinkOverride(frn, Array.Empty<ulong>(), 0, version);
                     }
-                    if (pageTable.Pages.TryGetValue(entry >> PageBits, out var page))
-                    {
-                        var slot = (int)(entry & PageMask);
-                        if (page.Frns[slot] == frn) //Another sequence may own the slot by now
-                        {
-                            page.Frns[slot] = 0;
-                            page.Nodes[slot] = null;
-                        }
-                    }
-                    pageTable.Sparse.TryRemove(frn, out _);
-                    if (pageTable.LinkOverrides.TryGetValue(entry, out var links)
-                        && links.Frn == frn)
-                        pageTable.LinkOverrides.TryRemove(entry, out _);
                 }
             }
 
@@ -973,6 +1008,7 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     pageTable = PageTable.Empty();
+                    ++mutationVersion;
                 }
             }
 
@@ -1022,8 +1058,9 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     var entry = frn & EntryMask;
+                    var version = ++mutationVersion;
                     pageTable.LinkOverrides[entry] =
-                        new LinkOverride(frn, parents, size);
+                        new LinkOverride(frn, parents, size, version);
                 }
             }
 
@@ -1031,52 +1068,70 @@ namespace search.Models
             /// (Re)fill from a drive scan in one pass. Only pages containing live records
             /// are allocated, bounding memory independently of the highest record number.
             /// </summary>
-            public void Populate(IEnumerable<INode> nodes)
+            public void Populate(IEnumerable<INode> nodes,
+                long preserveMutationsAfter = long.MaxValue)
             {
                 lock (mutationLock)
                 {
+                    var old = pageTable;
+                    PageTable populated;
                     if (nodes is IFrnNodeSource source)
                     {
                         //The source owns both the record table and dense enumeration; retaining
                         //it replaces the old 16-byte-per-slot Frns[] + Nodes[] page pair.
-                        pageTable = new PageTable(source, new Dictionary<ulong, Page>(),
+                        populated = new PageTable(source, new Dictionary<ulong, Page>(),
                             new(), new(), new());
-                        return;
                     }
-                    var pages = new Dictionary<ulong, Page>();
-                    var sparse = new NonBlocking.ConcurrentDictionary<ulong, INode>();
-                    //At most ~64 MiB of dense pages. The count-derived limit requires a
-                    //page to average at least 25% occupancy; excess sparse ranges retain
-                    //dictionary storage instead of amplifying one record into a 64 KiB page.
-                    var pageLimit = 1024;
-                    if (nodes.TryGetNonEnumeratedCount(out var nodeCount))
+                    else
                     {
-                        var densePages = Math.Max(1L, ((long)nodeCount + PageSize - 1) / PageSize);
-                        pageLimit = (int)Math.Min(1024, densePages * 4);
-                    }
-                    foreach (var n in nodes)
-                    {
-                        var frn = n.Frn;
-                        if (frn == 0) continue;
-                        var entry = frn & EntryMask;
-                        var pageIndex = entry >> PageBits;
-                        if (!pages.TryGetValue(pageIndex, out var page))
+                        var pages = new Dictionary<ulong, Page>();
+                        var sparse = new NonBlocking.ConcurrentDictionary<ulong, INode>();
+                        //At most ~64 MiB of dense pages. The count-derived limit requires a
+                        //page to average at least 25% occupancy; excess sparse ranges retain
+                        //dictionary storage instead of amplifying one record into a 64 KiB page.
+                        var pageLimit = 1024;
+                        if (nodes.TryGetNonEnumeratedCount(out var nodeCount))
                         {
-                            if (pages.Count >= pageLimit)
-                            {
-                                sparse[frn] = n;
-                                continue;
-                            }
-                            pages.Add(pageIndex, page = new Page());
+                            var densePages = Math.Max(1L, ((long)nodeCount + PageSize - 1) / PageSize);
+                            pageLimit = (int)Math.Min(1024, densePages * 4);
                         }
-                        var slot = (int)(entry & PageMask);
-                        page.Nodes[slot] = n;
-                        page.Frns[slot] = frn;
+                        foreach (var n in nodes)
+                        {
+                            var frn = n.Frn;
+                            if (frn == 0) continue;
+                            var entry = frn & EntryMask;
+                            var pageIndex = entry >> PageBits;
+                            if (!pages.TryGetValue(pageIndex, out var page))
+                            {
+                                if (pages.Count >= pageLimit)
+                                {
+                                    sparse[frn] = n;
+                                    continue;
+                                }
+                                pages.Add(pageIndex, page = new Page());
+                            }
+                            var slot = (int)(entry & PageMask);
+                            page.Nodes[slot] = n;
+                            page.Frns[slot] = frn;
+                        }
+                        populated = pages.Count == 0 && sparse.IsEmpty
+                            ? PageTable.Empty() : new PageTable(null, pages, sparse,
+                                new(), new());
+                    }
+
+                    if (preserveMutationsAfter != long.MaxValue)
+                    {
+                        foreach (var pair in old.Overrides)
+                            if (pair.Value.Version > preserveMutationsAfter)
+                                populated.Overrides[pair.Key] = pair.Value;
+                        foreach (var pair in old.LinkOverrides)
+                            if (pair.Value.Version > preserveMutationsAfter)
+                                populated.LinkOverrides[pair.Key] = pair.Value;
                     }
                     //Set/Remove wait on mutationLock and therefore apply after this fresh
-                    //table is visible. No event delta from the population window is lost.
-                    pageTable = pages.Count == 0 && sparse.IsEmpty
-                        ? PageTable.Empty() : new PageTable(null, pages, sparse, new(), new());
+                    //table is visible. Earlier changes newer than the scan watermark were
+                    //copied above; changes arriving now will apply to the new table.
+                    pageTable = populated;
                 }
             }
         }

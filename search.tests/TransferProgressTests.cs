@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Threading;
+using System.Windows;
 using search.Models;
 using Xunit;
 
@@ -161,6 +162,43 @@ namespace search.Tests
                     window.Complete();
 
                     Assert.False(window.IsVisible);
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            if (failure != null)
+                throw failure;
+        }
+
+        [Fact]
+        public void CollisionDialogDoesNotUseProgressWindowBeforeItIsShown()
+        {
+            Exception failure = null;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    var main = new Window();
+                    var progress = new TransferProgressWindow("Test operation");
+                    main.Show();
+
+                    var collision = new Window
+                    {
+                        Owner = MainWindow.CollisionDialogOwner(progress, main)
+                    };
+                    Assert.Same(main, collision.Owner);
+                    collision.Show();
+                    collision.Close();
+
+                    progress.Show();
+                    Assert.Same(progress, MainWindow.CollisionDialogOwner(progress, main));
+                    progress.Complete();
+                    main.Close();
                 }
                 catch (Exception ex)
                 {

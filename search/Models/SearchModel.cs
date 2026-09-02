@@ -1796,6 +1796,7 @@ namespace search.Models
                 //rare flip between file and directory
                 var oldSize = n.IsDirectory ? 0L : (long)n.Size;
                 n.Refresh();
+                files.Touch(n, n);
                 PropagateSizeDelta(n, (n.IsDirectory ? 0L : (long)n.Size) - oldSize);
                 return n;
             }
@@ -1851,7 +1852,11 @@ namespace search.Models
             if (node?.PathParent != null)
             {
                 changed = ApplyAggregateDeltaToParentChain(node, sizeDelta, countDelta,
-                    dir => pendingAggregateRows[dir] = generation) != 0;
+                    dir =>
+                    {
+                        files.Touch(dir, dir);
+                        pendingAggregateRows[dir] = generation;
+                    }) != 0;
             }
             else
             {
@@ -1861,6 +1866,7 @@ namespace search.Models
                     {
                         if (sizeDelta != 0) d.AddSizeDelta(sizeDelta);
                         if (countDelta != 0) d.AddCountDelta(countDelta);
+                        files.Touch(d, d);
                         pendingAggregateRows[d] = generation;
                         changed = true;
                     }
@@ -1883,7 +1889,15 @@ namespace search.Models
             for (var i = 0; i < deltas.Count; i++)
                 if (!files.TryGetValue(deltas[i].ParentPath, out roots[i])
                     || !roots[i].IsDirectory)
-                    return false;
+                {
+                    //Package replacement commonly removes an old hard-link parent while
+                    //its already queued topology update is waiting. The directory's own
+                    //removal discarded that complete aggregate, so its negative delta is
+                    //obsolete and must not force a drive-wide rebuild. An existing but
+                    //temporarily unindexed parent remains ambiguous and still fails safely.
+                    if (!Directory.Exists(deltas[i].ParentPath)) roots[i] = null;
+                    else return false;
+                }
 
             var generation = Interlocked.Increment(ref aggregateChangeGeneration);
             var changed = false;
@@ -1891,6 +1905,7 @@ namespace search.Models
             {
                 var delta = deltas[i];
                 var root = roots[i];
+                if (root == null) continue;
                 if (root.PathParent != null || IsDriveRoot(root.FullName))
                 {
                     var depth = 0;
@@ -1899,6 +1914,7 @@ namespace search.Models
                         if (!dir.IsDirectory) continue;
                         if (delta.SizeDelta != 0) dir.AddSizeDelta(delta.SizeDelta);
                         if (delta.CountDelta != 0) dir.AddCountDelta(delta.CountDelta);
+                        files.Touch(dir, dir);
                         pendingAggregateRows[dir] = generation;
                         changed = true;
                     }
@@ -1911,6 +1927,7 @@ namespace search.Models
                         {
                             if (delta.SizeDelta != 0) dir.AddSizeDelta(delta.SizeDelta);
                             if (delta.CountDelta != 0) dir.AddCountDelta(delta.CountDelta);
+                            files.Touch(dir, dir);
                             pendingAggregateRows[dir] = generation;
                             changed = true;
                         }
@@ -2303,10 +2320,17 @@ namespace search.Models
                     FlushDeletes();
                 }
 
-                foreach (var e in events)
+                var changeFailures = new List<(FsEvent Event, Exception Error)>();
+                Exception batchMutationFailure = null;
+                //A scan publication and one ordered watcher batch are indivisible. The
+                //drive-index mutation watermark still preserves batches completed while
+                //the scan was reading; this lock only closes the tiny replacement race.
+                lock (publishLock)
                 {
-                    try
+                    foreach (var e in events)
                     {
+                        try
+                        {
                         //Status = $"WATCHED {++watched}. changes => last {DateTime.Now.TimeOfDay} {e.FullPath}";
                         FSChangeProcessor.ReportActiveStage(e, e.ChangeType switch
                         {
@@ -2330,7 +2354,7 @@ namespace search.Models
                                         (FileAttributes)e.NtfsAttributes, 0,
                                         DateTime.MinValue)
                                     : (NodeMetadataSnapshot?)null;
-                                var node = GetOrAddNew(e.FullPath, createHint);
+                                var node = GetOrAddNew(e.FullPath, createHint, e.Frn);
                                 if (e.Frn != 0)
                                     QueueMetadataRefresh(e.FullPath, e.Frn);
                                 RecordStructuralNode(node);
@@ -2366,6 +2390,7 @@ namespace search.Models
                                         break;
                                     }
                                     current.ApplyMetadata(e.MetadataSnapshot.Value);
+                                    files.Touch(current, current);
                                     RecordMetadata(current);
                                     break;
                                 }
@@ -2386,6 +2411,7 @@ namespace search.Models
                                     {
                                         var oldSize = current.IsDirectory ? 0L : (long)current.Size;
                                         current.ApplyMetadata(snapshot);
+                                        files.Touch(current, current);
                                         PropagateSizeDelta(current,
                                             (current.IsDirectory ? 0L : (long)current.Size) - oldSize);
                                         RecordMetadata(current);
@@ -2410,10 +2436,11 @@ namespace search.Models
                                 }
                                 var oldRoot = files.TryGetValue(e.OldFullPath, out var indexedOld) ? indexedOld : null;
                                 var renameFrn = e.Frn != 0 ? e.Frn : oldRoot?.Frn ?? 0;
-                                //USN keeps supplying the exact FRN on every later event.
-                                //Only a path-only FileSystemWatcher rename needs the new
-                                //path-backed nodes themselves to retain old MFT identities.
-                                var storedRenameFrn = e.Frn == 0 ? renameFrn : 0;
+                                //Keep the root identity for both watcher kinds. In particular,
+                                //a newly created/renamed USN directory can immediately become
+                                //the parent of hard links; targeted repair needs its FRN before
+                                //the next MFT scan. Descendants remain compact below.
+                                var storedRenameFrn = renameFrn;
                                 var renameHint = oldRoot != null
                                     ? NodeMetadataSnapshot.From(oldRoot)
                                     : e.Frn != 0
@@ -2457,16 +2484,22 @@ namespace search.Models
                                 pendingDeleteEvent ??= e;
                                 break;
                         }
+                        }
+                        catch (Exception ex)
+                        {
+                            changeFailures.Add((e, ex));
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        System.Windows.MessageBox.Show(ex.ToString(), $"FS change {e.FullPath} failed");
-                        await Log($"FS change {e} failed: {ex}");
-                    }
+                    try { FlushDeletes(); }
+                    catch (Exception ex) { batchMutationFailure = ex; }
                 }
+
+                foreach (var failure in changeFailures)
+                    await Log($"FS change {failure.Event} failed: {failure.Error}");
+                if (batchMutationFailure != null)
+                    await Log($"FS change batch mutation failed: {batchMutationFailure}");
                 try
                 {
-                    FlushDeletes();
                     if (events.Length > 0)
                         FSChangeProcessor.ReportActiveStage(events[0], "grid-publish");
                     await UpdateSmall(structural.Concat(metadata), metadataSet.Cast<INode>());
@@ -2837,6 +2870,8 @@ namespace search.Models
                         MftOrigin? timingOrigin = null;
                         MftLoadTiming? mftTiming = null;
                         var timingNodes = 0;
+                        var liveMutationWatermark = long.MaxValue;
+                        var frnMutationWatermark = long.MaxValue;
                         long sourceMs = 0, indexMs = 0, publishMs = 0, gridMs = 0;
                         try
                         {
@@ -2878,6 +2913,12 @@ namespace search.Models
                                 CancelDriveRetry(root);
                                 unavailableDrives.TryRemove(key, out _);
                                 var phase = Stopwatch.StartNew();
+                                //Pair both live overlays with the instant before the disk
+                                //snapshot starts. Any later create/rename/delete/metadata
+                                //mutation may be newer than the scan and must survive it.
+                                liveMutationWatermark = files.MutationVersion;
+                                frnMutationWatermark =
+                                    FSChangeProcessor.CaptureFrnMutationVersion(root);
                                 var sourceTask = Task.Run(() => DriveEntries(drive, scanToken));
                                 DriveEntryResult source;
                                 try { source = await sourceTask.WaitAsync(scanToken); }
@@ -2901,8 +2942,14 @@ namespace search.Models
                                 indexMs = phase.ElapsedMilliseconds;
                                 origins[key] = origin;
                                 scanToken.ThrowIfCancellationRequested();
+                                //Drain the events that were already translated. The short
+                                //publish lock below then makes each concurrent batch land
+                                //entirely before or after the shard replacement.
+                                await FSChangeProcessor.DrainQueuedChanges(root)
+                                    .WaitAsync(scanToken);
                                 phase.Restart();
-                                drivePublished = PublishDrive(root, prepared, streamed, frnNodes);
+                                drivePublished = PublishDrive(root, prepared, streamed, frnNodes,
+                                    liveMutationWatermark, frnMutationWatermark);
                                 publishMs = phase.ElapsedMilliseconds;
                                 timingNodes = prepared.Count;
                                 ReportDriveState(root, $"loaded {prepared.Count} entries via {origin}");
@@ -3111,7 +3158,9 @@ namespace search.Models
         /// drive shows immediately - a fast MFT drive never waits on the slowest drive's walk.
         /// </summary>
         bool PublishDrive(string root, DriveNodeIndex.PreparedDrive prepared,
-            long streamed = 0, IEnumerable<INode> frnNodes = null)
+            long streamed = 0, IEnumerable<INode> frnNodes = null,
+            long preserveMutationsAfter = long.MaxValue,
+            long preserveFrnMutationsAfter = long.MaxValue)
         {
             //Nothing new and nothing indexed under the drive => skip the subtree swap
             //(the common case for skipped/deselected drives on every refresh)
@@ -3127,7 +3176,7 @@ namespace search.Models
                 {
                     //The completed immutable set was prepared outside the publication lock.
                     //Publish it by replacing one shard; live changes start in a fresh overlay.
-                    files.ReplaceDrive(root, prepared);
+                    files.ReplaceDrive(root, prepared, preserveMutationsAfter);
                     //files counts the streamed nodes from this very moment => deduct them from the
                     //streaming counter in the same breath, or the loading status double-counts them
                     //for as long as the archive re-add and exe recompute below take
@@ -3140,6 +3189,12 @@ namespace search.Models
                       {
                           if (files.TryGetValue(x, out var n)) AddArchive(n);
                       });
+
+                    //The FRN resolver is a second view of the same snapshot. Preserve its
+                    //post-watermark path/link overrides in the same atomic publication so
+                    //a create followed by a quick rename cannot lose its old path here.
+                    FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? prepared.Values,
+                        preserveFrnMutationsAfter);
                 }
                 finally
                 {
@@ -3151,9 +3206,6 @@ namespace search.Models
             }
             exes = files.Values.AsParallel()
                 .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
-            //MFT nodes carry their file reference numbers - hand them to the drive's USN
-            //watcher so deleted/renamed files resolve to paths (journal records have no names)
-            FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? prepared.Values);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
             return true;
         }

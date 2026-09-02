@@ -336,10 +336,18 @@ namespace search.Tests
 
                 while (updates.TryDequeue(out _)) { }
                 File.WriteAllBytes(file, new byte[8192]);
-                Assert.True(await WaitFor(() => updates.Any(e =>
-                        e.HardLinkParentDeltas.Any(d =>
-                            d.SizeDelta == 8192 && d.CountDelta == 0))),
-                    $"no targeted multi-link resize; got: {string.Join("; ", updates)}");
+                //File.WriteAllBytes truncates and then extends. The journal can expose the
+                //intermediate zero length as two exact topology snapshots, or coalesce it
+                //into one final snapshot. Either delivery is correct when the parent deltas
+                //net to two links * 4096 added bytes.
+                long ResizeDelta() => updates.SelectMany(e => e.HardLinkParentDeltas)
+                    .Where(d => d.CountDelta == 0
+                        && string.Equals(d.ParentPath, dir,
+                            StringComparison.OrdinalIgnoreCase))
+                    .Sum(d => d.SizeDelta);
+                Assert.True(await WaitFor(() => ResizeDelta() == 8192),
+                    $"targeted multi-link resize did not net to 8192 (got {ResizeDelta()}); "
+                    + $"events: {string.Join("; ", updates.SelectMany(e => e.HardLinkParentDeltas))}");
 
                 while (updates.TryDequeue(out _)) { }
                 File.Delete(link);

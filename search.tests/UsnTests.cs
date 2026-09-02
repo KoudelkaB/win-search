@@ -366,6 +366,54 @@ namespace search.Tests
         }
 
         [Fact]
+        public void FrnMapPublicationPreservesPostWatermarkPathsDeletesAndLinkState()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var removed = ((ulong)1 << 48) | 5;
+            var changedBeforeScan = ((ulong)2 << 48) | 6;
+            var createdDuringScan = ((ulong)3 << 48) | 7;
+            var oldBeforeScan = new FrnNode(changedBeforeScan);
+            map.Populate(new INode[] { new FrnNode(removed) });
+            map.Set(changedBeforeScan, oldBeforeScan);
+            var watermark = map.MutationVersion;
+
+            map.Remove(removed);
+            var liveCreated = new FrnNode(createdDuringScan);
+            map.Set(createdDuringScan, liveCreated);
+            map.SetLinkState(createdDuringScan, new ulong[] { 20, 21 }, 125);
+
+            var freshBeforeScan = new FrnNode(changedBeforeScan);
+            map.Populate(new INode[] { new FrnNode(removed), freshBeforeScan }, watermark);
+
+            Assert.False(map.TryGetValue(removed, out _));
+            Assert.True(map.TryGetValue(createdDuringScan, out var created));
+            Assert.Same(liveCreated, created);
+            Assert.True(map.TryGetValue(changedBeforeScan, out var prior));
+            Assert.Same(freshBeforeScan, prior); //pre-watermark overlay was intentionally dropped
+            Assert.True(map.TryGetLinkState(createdDuringScan, out var parents, out var size));
+            Assert.Equal(new ulong[] { 20, 21 }, parents);
+            Assert.Equal(125UL, size);
+        }
+
+        [Fact]
+        public void PreservedDeleteDoesNotHideAReusedMftSlotFromTheNewScan()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var oldFrn = ((ulong)4 << 48) | 8;
+            var reusedFrn = ((ulong)5 << 48) | 8;
+            map.Populate(new INode[] { new FrnNode(oldFrn) });
+            var watermark = map.MutationVersion;
+            map.Remove(oldFrn);
+
+            var reused = new FrnNode(reusedFrn);
+            map.Populate(new INode[] { reused }, watermark);
+
+            Assert.False(map.TryGetValue(oldFrn, out _));
+            Assert.True(map.TryGetValue(reusedFrn, out var current));
+            Assert.Same(reused, current);
+        }
+
+        [Fact]
         public void FsEventCarriesRenamesAcrossDirectories()
         {
             var moved = new FsEvent(WatcherChangeTypes.Renamed, @"C:\b\file.txt", @"C:\a\file.txt");

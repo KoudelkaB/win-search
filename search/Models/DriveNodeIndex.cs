@@ -19,7 +19,12 @@ namespace search.Models
         internal readonly struct DeltaEntry
         {
             public readonly INode Node; //null = tombstone hiding an immutable base entry
-            public DeltaEntry(INode node) => Node = node;
+            public readonly long Version;
+            public DeltaEntry(INode node, long version)
+            {
+                Node = node;
+                Version = version;
+            }
         }
 
         /// <summary>
@@ -219,29 +224,47 @@ namespace search.Models
             }
 
             /// <summary>Set under DriveNodeIndex.mutationLock.</summary>
-            public void Set(object key, INode value)
+            public void Set(object key, INode value, long version, bool forceDelta = false)
             {
                 ArgumentNullException.ThrowIfNull(value);
                 var existed = TryGetValue(key, out _);
                 //Restore the immutable value without retaining a redundant delta.
-                if (Base.TryGetValue(key, out var stored) && ReferenceEquals(stored, value))
+                if (!forceDelta && Base.TryGetValue(key, out var stored)
+                    && ReferenceEquals(stored, value))
                     Delta.TryRemove(key, out _);
                 else
-                    Delta[key] = new DeltaEntry(value);
+                    Delta[key] = new DeltaEntry(value, version);
                 if (!existed) Volatile.Write(ref count, count + 1);
             }
 
             /// <summary>Remove under DriveNodeIndex.mutationLock.</summary>
-            public bool TryRemove(object key, Action<INode> beforeRemove, out INode node)
+            public bool TryRemove(object key, Action<INode> beforeRemove, long version,
+                out INode node)
             {
                 if (!TryGetValue(key, out node)) return false;
                 beforeRemove?.Invoke(node);
                 if (Base.Contains(key))
-                    Delta[key] = new DeltaEntry(null);
+                    Delta[key] = new DeltaEntry(null, version);
                 else
                     Delta.TryRemove(key, out _);
                 Volatile.Write(ref count, count - 1);
                 return true;
+            }
+
+            /// <summary>
+            /// Replay a mutation made after a scan started onto its freshly prepared base.
+            /// The old live node is intentional: it contains the event's final metadata and
+            /// aggregate values, while the scan may have observed the disk just before it.
+            /// </summary>
+            public void ApplyPreserved(object key, DeltaEntry entry)
+            {
+                if (entry.Node != null)
+                {
+                    Set(key, entry.Node, entry.Version, forceDelta: true);
+                    return;
+                }
+                if (TryGetValue(key, out _))
+                    TryRemove(key, null, entry.Version, out _);
             }
 
             public IEnumerable<KeyValuePair<object, INode>> Entries()
@@ -265,6 +288,13 @@ namespace search.Models
 
         readonly object mutationLock = new();
         volatile Shard[] shards = Array.Empty<Shard>();
+        long mutationVersion;
+
+        /// <summary>
+        /// Watermark used by a drive scan. Mutations newer than this value are changes the
+        /// immutable scan may have missed and must survive publication of its replacement.
+        /// </summary>
+        public long MutationVersion => Interlocked.Read(ref mutationVersion);
 
         /// <summary>Build the immutable drive base before taking the short publication lock.</summary>
         public static PreparedDrive PrepareDrive(IEnumerable<INode> nodes,
@@ -346,7 +376,7 @@ namespace search.Models
                 lock (mutationLock)
                 {
                     var shard = GetOrCreateShardLocked(RootOf(key));
-                    shard.Set(key, value);
+                    shard.Set(key, value, ++mutationVersion);
                 }
             }
         }
@@ -357,7 +387,7 @@ namespace search.Models
             {
                 var shard = GetOrCreateShardLocked(RootOf(key));
                 if (shard.TryGetValue(key, out var current)) return current;
-                shard.Set(key, value);
+                shard.Set(key, value, ++mutationVersion);
                 return value;
             }
         }
@@ -371,8 +401,26 @@ namespace search.Models
                 var result = shard.TryGetValue(key, out var current)
                     ? update(key, current)
                     : add(key);
-                shard.Set(key, result);
+                shard.Set(key, result, ++mutationVersion);
                 return result;
+            }
+        }
+
+        /// <summary>
+        /// Mark an in-place metadata/aggregate mutation. Base nodes are normally not placed
+        /// in the structural overlay; forcing this delta lets a concurrent scan preserve the
+        /// changed identity and values if its disk snapshot predates the mutation.
+        /// </summary>
+        public bool Touch(object key, INode expected)
+        {
+            if (key == null || expected == null) return false;
+            lock (mutationLock)
+            {
+                var routed = Find(shards, RootOf(key));
+                if (routed == null || !routed.TryGetValue(key, out var current)
+                    || !ReferenceEquals(current, expected)) return false;
+                routed.Set(key, current, ++mutationVersion, forceDelta: true);
+                return true;
             }
         }
 
@@ -390,11 +438,12 @@ namespace search.Models
             lock (mutationLock)
             {
                 var routed = Find(shards, RootOf(key));
-                if (routed != null && routed.TryRemove(key, beforeRemove, out node))
+                var version = ++mutationVersion;
+                if (routed != null && routed.TryRemove(key, beforeRemove, version, out node))
                     return true;
                 foreach (var shard in shards)
                     if (!ReferenceEquals(shard, routed)
-                        && shard.TryRemove(key, beforeRemove, out node))
+                        && shard.TryRemove(key, beforeRemove, version, out node))
                         return true;
                 node = null;
                 return false;
@@ -402,7 +451,8 @@ namespace search.Models
         }
 
         /// <summary>Atomically replace one drive while every other drive keeps its shard.</summary>
-        public void ReplaceDrive(string root, PreparedDrive replacement)
+        public void ReplaceDrive(string root, PreparedDrive replacement,
+            long preserveMutationsAfter = long.MaxValue)
         {
             ArgumentNullException.ThrowIfNull(replacement);
             root = NormalizeRoot(root);
@@ -410,14 +460,27 @@ namespace search.Models
             {
                 var current = shards;
                 var at = Array.FindIndex(current, x => string.Equals(x.Root, root, StringComparison.OrdinalIgnoreCase));
+                var preserved = at < 0 || preserveMutationsAfter == long.MaxValue
+                    ? Array.Empty<KeyValuePair<object, DeltaEntry>>()
+                    : current[at].Delta.Where(pair => pair.Value.Version > preserveMutationsAfter)
+                        .OrderBy(pair => pair.Value.Version).ToArray();
                 if (replacement.IsEmpty)
                 {
-                    if (at < 0) return;
-                    var reduced = new Shard[current.Length - 1];
-                    if (at > 0) Array.Copy(current, 0, reduced, 0, at);
-                    if (at + 1 < current.Length) Array.Copy(current, at + 1, reduced, at, current.Length - at - 1);
-                    shards = reduced;
-                    return;
+                    if (at < 0 && preserved.Length == 0) return;
+                    if (preserved.Length != 0)
+                    {
+                        replacement = EmptyPrepared;
+                    }
+                    else
+                    {
+                        var reduced = new Shard[current.Length - 1];
+                        if (at > 0) Array.Copy(current, 0, reduced, 0, at);
+                        if (at + 1 < current.Length)
+                            Array.Copy(current, at + 1, reduced, at,
+                                current.Length - at - 1);
+                        shards = reduced;
+                        return;
+                    }
                 }
 
                 var next = at < 0 ? new Shard[current.Length + 1] : (Shard[])current.Clone();
@@ -426,7 +489,9 @@ namespace search.Models
                     Array.Copy(current, next, current.Length);
                     at = current.Length;
                 }
-                next[at] = new Shard(root, replacement);
+                var published = new Shard(root, replacement);
+                foreach (var pair in preserved) published.ApplyPreserved(pair.Key, pair.Value);
+                next[at] = published;
                 shards = next;
             }
         }

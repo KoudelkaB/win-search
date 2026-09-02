@@ -211,5 +211,39 @@ namespace search.Tests
             Assert.False(index.TryGetValue(file.FullName, out _));
             Assert.True(index.TryGetValue(parent.FullName, out _));
         }
+
+        [Fact]
+        public void ScanPublicationPreservesOnlyLiveMutationsNewerThanItsWatermark()
+        {
+            var root = new TestNode(@"C:\");
+            var renamedOld = new TestNode(@"C:\draft.tmp");
+            var changedBeforeScan = new TestNode(@"C:\already-live.txt");
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"C:\", Map(root, renamedOld));
+            index[changedBeforeScan.FullName] = changedBeforeScan;
+            var watermark = index.MutationVersion;
+
+            //These are the create + rename mutations delivered while the immutable MFT
+            //snapshot is being built. Its stale result still contains draft.tmp and an
+            //older identity for already-live.txt, but does not contain final.txt.
+            Assert.True(index.TryRemove(renamedOld.FullName, out _));
+            var final = new TestNode(@"C:\final.txt");
+            index[final.FullName] = final;
+            Assert.True(index.Touch(root, root));
+            var scannedRoot = new TestNode(root.FullName);
+            var staleDraft = new TestNode(renamedOld.FullName);
+            var freshAlreadyLive = new TestNode(changedBeforeScan.FullName);
+
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(
+                new INode[] { scannedRoot, staleDraft, freshAlreadyLive }), watermark);
+
+            Assert.False(index.TryGetValue(renamedOld.FullName, out _));
+            Assert.True(index.TryGetValue(final.FullName, out var publishedFinal));
+            Assert.Same(final, publishedFinal);
+            Assert.True(index.TryGetValue(root.FullName, out var publishedRoot));
+            Assert.Same(root, publishedRoot); //the in-place post-watermark touch survived
+            Assert.True(index.TryGetValue(changedBeforeScan.FullName, out var publishedPrior));
+            Assert.Same(freshAlreadyLive, publishedPrior); //an older delta did not shadow the scan
+        }
     }
 }

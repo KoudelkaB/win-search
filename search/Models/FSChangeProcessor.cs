@@ -478,13 +478,30 @@ namespace search.Models
             => PostBatched(e);
 
         /// <summary>
+        /// FIFO barrier used immediately before publishing a drive snapshot. Every normal
+        /// watcher event already queued for this root completes before the returned task;
+        /// later events either join the live-mutation overlay or apply to the new snapshot.
+        /// </summary>
+        internal static Task DrainQueuedChanges(string root)
+            => Changed == null || string.IsNullOrWhiteSpace(root)
+                ? Task.CompletedTask
+                : QueueFor(root).Enqueue(null);
+
+        /// <summary>Capture the FRN overlay position paired with a drive scan.</summary>
+        internal static long CaptureFrnMutationVersion(string root)
+            => sources.TryGetValue(root, out var source) && source is UsnDriveWatcher usn
+                ? usn.FrnMutationVersion : long.MaxValue;
+
+        /// <summary>
         /// Hand one drive's freshly published scan to its USN watcher - fills the file
         /// reference map that resolves the paths of deleted/renamed-away files (the
         /// unprivileged journal read carries no names).
         /// </summary>
-        public static void PopulateFrnMap(string root, IEnumerable<INode> nodes)
+        public static void PopulateFrnMap(string root, IEnumerable<INode> nodes,
+            long preserveMutationsAfter = long.MaxValue)
         {
-            if (sources.TryGetValue(root, out var s) && s is UsnDriveWatcher usn) usn.Populate(nodes);
+            if (sources.TryGetValue(root, out var s) && s is UsnDriveWatcher usn)
+                usn.Populate(nodes, preserveMutationsAfter);
         }
 
         /// <summary>
