@@ -230,9 +230,39 @@ namespace search.Core
         /// file is gone or inaccessible - deleted files must resolve through the FRN map instead.
         /// </summary>
         public string TryResolvePath(ulong frn)
-            => TryResolvePath(frn, out _);
+            => ResolvePath(frn, out _);
 
-        string TryResolvePath(ulong frn, out int error)
+        /// <summary>
+        /// <inheritdoc cref="TryResolvePath(ulong)"/>
+        /// fileReferenceGone distinguishes "no such file any more" from "exists but this
+        /// process may not open it" - only the former may retire a map entry.
+        /// </summary>
+        public string TryResolvePath(ulong frn, out bool fileReferenceGone)
+        {
+            var path = ResolvePath(frn, out var error);
+            fileReferenceGone = path == null && IsGoneError(error);
+            return path;
+        }
+
+        /// <summary>
+        /// NTFS file reference of a path on this volume (directories included) - keys a
+        /// parent resolved by name into the FRN-addressed link topology. False when the
+        /// path is gone or inaccessible.
+        /// </summary>
+        public bool TryGetFileReference(string path, out ulong frn)
+        {
+            frn = 0;
+            if (string.IsNullOrEmpty(path)) return false;
+            var name = path.Length >= 248 && !path.StartsWith(@"\\", StringComparison.Ordinal)
+                ? @"\\?\" + path : path;
+            using var handle = CreateFile(name, FILE_READ_ATTRIBUTES, SHARE_ALL, IntPtr.Zero,
+                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+            if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info)) return false;
+            frn = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;
+            return frn != 0;
+        }
+
+        string ResolvePath(ulong frn, out int error)
         {
             error = 0;
             var id = new FILE_ID_DESCRIPTOR { dwSize = Marshal.SizeOf<FILE_ID_DESCRIPTOR>(), Type = 0, FileId = (long)frn };
@@ -265,7 +295,7 @@ namespace search.Core
         {
             paths = null;
             fileReferenceGone = false;
-            var canonicalPath = TryResolvePath(frn, out var resolveError);
+            var canonicalPath = ResolvePath(frn, out var resolveError);
             if (canonicalPath == null)
             {
                 fileReferenceGone = IsGoneError(resolveError);
@@ -373,6 +403,23 @@ namespace search.Core
 
         [StructLayout(LayoutKind.Sequential)]
         struct FILE_ID_DESCRIPTOR { public int dwSize; public int Type; public long FileId; long pad; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct BY_HANDLE_FILE_INFORMATION
+        {
+            public uint FileAttributes;
+            public uint CreationTimeLow, CreationTimeHigh;
+            public uint LastAccessTimeLow, LastAccessTimeHigh;
+            public uint LastWriteTimeLow, LastWriteTimeHigh;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh, FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh, FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetFileInformationByHandle(SafeFileHandle hFile,
+            out BY_HANDLE_FILE_INFORMATION lpFileInformation);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode,

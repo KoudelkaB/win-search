@@ -245,5 +245,108 @@ namespace search.Tests
             Assert.True(index.TryGetValue(changedBeforeScan.FullName, out var publishedPrior));
             Assert.Same(freshAlreadyLive, publishedPrior); //an older delta did not shadow the scan
         }
+
+        /// <summary>
+        /// A temp file written before a scan and renamed away while the scan reads the
+        /// disk: its record may already have been read under the old name. The removal of
+        /// an entry the current base never held leaves no trace by default; while a
+        /// snapshot is pending it must leave a tombstone, or the stale scan resurrects the
+        /// name as a phantom row.
+        /// </summary>
+        [Fact]
+        public void RemovalWhileASnapshotIsPendingKeepsAStaleScanFromResurrectingTheEntry()
+        {
+            var root = new TestNode(@"C:\");
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"C:\", Map(root));
+            var temp = new TestNode(@"C:\save.tmp");
+            index[temp.FullName] = temp;
+
+            var watermark = index.BeginSnapshot(@"C:\");
+            Assert.True(index.TryRemove(temp.FullName, out _)); //renamed away mid-scan
+            var final = new TestNode(@"C:\save.txt");
+            index[final.FullName] = final;
+            Assert.False(index.TryGetValue(temp.FullName, out _));
+
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(new INode[]
+                { new TestNode(root.FullName), new TestNode(temp.FullName) }), watermark,
+                _ => true); //the disk is not even asked: the removal is newer than the scan
+
+            Assert.False(index.TryGetValue(temp.FullName, out _));
+            Assert.True(index.TryGetValue(final.FullName, out var published));
+            Assert.Same(final, published);
+
+            //No snapshot pending => a transient add/remove pair leaves nothing behind, as
+            //before: the zero-copy dense snapshot of a clean publication survives it
+            var clean = new INode[] { new TestNode(root.FullName) };
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(clean, clean));
+            Assert.True(index.TryGetDenseSnapshot(out _));
+            index[final.FullName] = final;
+            Assert.True(index.TryRemove(final.FullName, out _));
+            Assert.True(index.TryGetDenseSnapshot(out _));
+        }
+
+        [Fact]
+        public void SkippedSnapshotReleasesItsMarkAndLeavesNoEmptyShardBehind()
+        {
+            var index = new DriveNodeIndex();
+            index.BeginSnapshot(@"D:\");
+            Assert.True(index.IsEmpty);
+            index.EndSnapshot(@"D:\");
+            Assert.True(index.TryGetDenseSnapshot(out var nodes));
+            Assert.Empty(nodes);
+
+            var kept = new TestNode(@"D:\kept.txt");
+            index[kept.FullName] = kept;
+            index.BeginSnapshot(@"D:\");
+            index.EndSnapshot(@"D:\");
+            Assert.True(index.TryGetValue(kept.FullName, out _)); //a used shard stays
+        }
+
+        /// <summary>
+        /// Changes the journal reported before the scan started normally lose to the scan.
+        /// Where the scan disagrees with such a change - a path it lacks that the live
+        /// pipeline added, a path it still holds that the live pipeline removed - the disk
+        /// decides, and the live pipeline wins when the disk cannot say.
+        /// </summary>
+        [Fact]
+        public void ScanPublicationLetsTheDiskArbitratePreWatermarkDisagreements()
+        {
+            var root = new TestNode(@"C:\");
+            var stale = new TestNode(@"C:\gone.txt");
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"C:\", Map(root, stale));
+            var unseen = new TestNode(@"C:\unseen.txt");
+            var vanished = new TestNode(@"C:\vanished.txt");
+            var protectedAdd = new TestNode(@"C:\protected.txt");
+            index[unseen.FullName] = unseen;
+            index[vanished.FullName] = vanished;
+            index[protectedAdd.FullName] = protectedAdd;
+            Assert.True(index.TryRemove(stale.FullName, out _));
+            var watermark = index.MutationVersion; //All of the above predates the scan
+
+            var onDisk = new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [unseen.FullName] = true,      //exists but the scan missed it => kept
+                [vanished.FullName] = false,   //really gone => the scan wins
+                [protectedAdd.FullName] = null, //cannot tell => the live pipeline wins
+                [stale.FullName] = false        //the scan still lists it => stays removed
+            };
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(new INode[]
+                { new TestNode(root.FullName), new TestNode(stale.FullName) }), watermark,
+                path => onDisk.TryGetValue(path, out var exists) ? exists : false);
+
+            Assert.True(index.TryGetValue(unseen.FullName, out var keptUnseen));
+            Assert.Same(unseen, keptUnseen);
+            Assert.False(index.TryGetValue(vanished.FullName, out _));
+            Assert.True(index.TryGetValue(protectedAdd.FullName, out var keptProtected));
+            Assert.Same(protectedAdd, keptProtected);
+            Assert.False(index.TryGetValue(stale.FullName, out _));
+
+            //Without a disk oracle the scan is authoritative for everything before the watermark
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(new INode[]
+                { new TestNode(root.FullName) }), index.MutationVersion + 1);
+            Assert.False(index.TryGetValue(unseen.FullName, out _));
+        }
     }
 }

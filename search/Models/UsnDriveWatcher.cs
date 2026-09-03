@@ -12,7 +12,12 @@ namespace search.Models
     {
         ProcessNow,
         DeferredUntilSnapshot,
-        ScheduleWalkRescan
+        /// <summary>
+        /// The drive was folder-walked: there is no FRN/link topology to diff against, so
+        /// a record that cannot be repaired from dynamic state is reported and its
+        /// directory aggregates drift until the next refresh from NTFS.
+        /// </summary>
+        NoBaseline
     }
 
     internal readonly record struct PendingHardLinkRepair(ulong Frn, uint Reason);
@@ -22,7 +27,8 @@ namespace search.Models
     /// watcher intentionally starts before the scan, so records can arrive while its FRN map
     /// is empty. Remember those records and replay them against an MFT baseline instead of
     /// immediately queuing a redundant full scan. A folder-walk snapshot cannot provide that
-    /// baseline; later records request one bounded, trailing-edge retry instead.
+    /// baseline; its records are repaired from dynamic state where possible and otherwise
+    /// only reported - never answered with a drive reload.
     /// </summary>
     internal sealed class HardLinkBaselineGate
     {
@@ -41,7 +47,7 @@ namespace search.Models
             lock (sync)
             {
                 if (state == MftSnapshot) return HardLinkBaselineAction.ProcessNow;
-                if (state == WalkSnapshot) return HardLinkBaselineAction.ScheduleWalkRescan;
+                if (state == WalkSnapshot) return HardLinkBaselineAction.NoBaseline;
                 pending[frn] = pending.TryGetValue(frn, out var prior)
                     ? prior | reason : reason;
                 return HardLinkBaselineAction.DeferredUntilSnapshot;
@@ -91,20 +97,28 @@ namespace search.Models
         readonly Action<UsnDriveWatcher> dead;  //Journal unreadable for good => switch the drive to a watcher
         readonly FrnMap frnMap = new();
         readonly HardLinkBaselineGate hardLinkBaseline = new();
-        readonly object exactRescanLock = new();
-        Timer exactRescanTimer;
-        int exactRescanRequests;
-        ulong exactRescanFirstFrn;
-        uint exactRescanReasons;
-        string exactRescanFailure;
+        readonly object hardLinkReportLock = new();
+        Timer hardLinkReportTimer;
+        int hardLinkFailures;
+        ulong hardLinkFirstFrn;
+        uint hardLinkReasons;
+        string hardLinkFirstFailure;
         volatile bool stop;
+        //Set once a drive scan has handed its nodes over. Until then the index holds nothing
+        //for this drive, so a parent reconcile would find nothing to diff - records that
+        //could not be resolved wait and are reconciled right after the first publication.
+        //A scan that never publishes (a drive kept at its last good index while it is
+        //unavailable) must not hold them forever: after a minute they reconcile anyway.
+        volatile bool populated;
+        readonly long started = Environment.TickCount64;
+        bool CanReconcile => populated || Environment.TickCount64 - started > 60_000;
 
-        //A hard-link storm can emit thousands of records. One exact rebuild after a quiet
-        //window is both cheaper and more accurate than trying to rescan for every record.
-        internal const int ExactRescanQuietMs = 1000;
-        //A walked snapshot has no FRN/link topology, so an immediate retry normally walks
-        //again and establishes no new repair capability. Bound that degraded-mode work.
-        internal const int WalkExactRescanQuietMs = 60_000;
+        //A hard-link storm (an MSIX package update links thousands of files) can fail
+        //targeted repair thousands of times in a second. Failures are coalesced into one
+        //diagnostic line per quiet window; they never reload the drive - a reload every
+        //few seconds was far worse for the user than a directory size drifting until the
+        //next refresh from NTFS.
+        internal const int HardLinkReportQuietMs = 5000;
 
         /// <summary>
         /// True once the journal proved unreadable. The dead callback may fire before the
@@ -173,6 +187,7 @@ namespace search.Models
             //records may still need conservative parent reconciliation.
             var mftBaseline = nodes is IFrnNodeSource;
             var pending = hardLinkBaseline.Publish(mftBaseline);
+            populated = true;
             if (pending.Length == 0) return;
             if (mftBaseline)
             {
@@ -180,10 +195,9 @@ namespace search.Models
             }
             else
             {
-                RequestExactMftRescan(pending[0].Frn,
+                ReportHardLinkRepairFailure(pending[0].Frn,
                     pending.Aggregate(0u, (reason, repair) => reason | repair.Reason),
-                    $"no FRN baseline after folder walk; deferred={pending.Length}",
-                    WalkExactRescanQuietMs);
+                    $"no FRN baseline after folder walk; deferred={pending.Length}");
             }
         }
 
@@ -226,13 +240,14 @@ namespace search.Models
                     $"USN journal on {journal.Root} lost history => rescan".Debug();
                     hardLinkBaseline.Reset();
                     frnMap.Clear(); //Stale beyond repair - the rescan repopulates it
+                    populated = false;
                     try { rescan(DriveScanReason.UsnHistoryLost); } catch { }
                     continue;
                 }
                 if (batch.Count == 0)
                 {
                     //Quiet moment - flush what the reconcile throttle held back in the storm
-                    if (unresolvedParents.Count > 0)
+                    if (CanReconcile && unresolvedParents.Count > 0)
                     {
                         Reconcile(unresolvedParents);
                         lastReconcile = Environment.TickCount64;
@@ -273,7 +288,8 @@ namespace search.Models
                     //A reconcile is a full-index pass - during sustained activity run at
                     //most one per interval and let the parents accumulate in between (the
                     //quiet-timeout flush above covers the tail after the storm ends).
-                    if (unresolvedParents.Count > 0 && Environment.TickCount64 - lastReconcile >= 5000)
+                    if (CanReconcile && unresolvedParents.Count > 0
+                        && Environment.TickCount64 - lastReconcile >= 5000)
                     {
                         Reconcile(unresolvedParents);
                         lastReconcile = Environment.TickCount64;
@@ -309,20 +325,9 @@ namespace search.Models
                         delayedHardLinkRepairs[r.Frn] =
                             delayedHardLinkRepairs.TryGetValue(r.Frn, out var prior)
                                 ? prior | r.Reason : r.Reason;
-                    else if (baselineAction == HardLinkBaselineAction.ScheduleWalkRescan)
-                        RequestExactMftRescan(r.Frn, r.Reason, failure,
-                            WalkExactRescanQuietMs);
+                    else if (baselineAction == HardLinkBaselineAction.NoBaseline)
+                        ReportHardLinkRepairFailure(r.Frn, r.Reason, failure);
                 }
-            }
-            if (!repairedHardLinks && !hardLinkFileGone
-                && RequiresExactMftRescan(r.Reason, hadMultipleLinks))
-            {
-                var failure = "canonical path change on a multi-linked file";
-                if (baselineAction == HardLinkBaselineAction.ProcessNow)
-                    RequestExactMftRescan(r.Frn, r.Reason, failure);
-                else if (baselineAction == HardLinkBaselineAction.ScheduleWalkRescan)
-                    RequestExactMftRescan(r.Frn, r.Reason, failure,
-                        WalkExactRescanQuietMs);
             }
 
             //Hard-link reason flags can retain FILE_CREATE/FILE_DELETE from the link
@@ -399,12 +404,26 @@ namespace search.Models
                     return;
                 }
                 ghosts.Remove(r.Frn);
+                var alreadyReported = oldPath != null
+                    && string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase);
                 if (oldPath == null) Process(new FsEvent(WatcherChangeTypes.Created,
                     newPath, frn: r.Frn, ntfsAttributes: r.Attributes)); //Moved in from an unindexed place
-                else if (!string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+                else if (!alreadyReported)
                     Process(new FsEvent(WatcherChangeTypes.Renamed, newPath, oldPath,
                         frn: r.Frn, ntfsAttributes: r.Attributes));
                 Remap(r.Frn, newPath);
+                //The retained link topology of a multi-linked file still names the parent
+                //its canonical name just left; a later targeted repair would diff against
+                //it and adjust the wrong directories.
+                if (!alreadyReported && RequiresLinkStateRefresh(r.Reason, hadMultipleLinks)
+                    && !repairedHardLinks)
+                    RefreshLinkState(r.Frn, newPath);
+                //Records written after the rename in the same open-close session keep the
+                //rename bits while carrying new data changes (a file created and renamed
+                //through one handle, then written). Once the name is already reported,
+                //such a record is a plain change - swallowing it left the size stale.
+                if (alreadyReported && (r.Reason & DataChangeReasons) != 0)
+                    TranslateChange(r, pendingRenames, changedSeen, ghosts, repairedHardLinks);
                 return;
             }
             if ((r.Reason & UsnJournal.ReasonRenameOldName) != 0)
@@ -443,7 +462,18 @@ namespace search.Models
                 Remap(r.Frn, path);
                 return;
             }
-            //Data/attribute change
+            TranslateChange(r, pendingRenames, changedSeen, ghosts, repairedHardLinks);
+        }
+
+        /// <summary>USN reasons that change what the index shows for an existing name.</summary>
+        const uint DataChangeReasons = UsnJournal.ReasonDataOverwrite | UsnJournal.ReasonDataExtend
+            | UsnJournal.ReasonDataTruncation | UsnJournal.ReasonBasicInfoChange
+            | UsnJournal.ReasonCompressionChange | UsnJournal.ReasonEncryptionChange;
+
+        /// <summary>Data/attribute change of a file that keeps its name.</summary>
+        void TranslateChange(UsnRecord r, Dictionary<ulong, string> pendingRenames,
+            HashSet<ulong> changedSeen, HashSet<ulong> ghosts, bool repairedHardLinks)
+        {
             if (repairedHardLinks) return; //Snapshot + every link parent were updated together.
             if (!changedSeen.Add(r.Frn)) return;
             //A change record written before a rename can be read after it too - MapPath then
@@ -480,7 +510,7 @@ namespace search.Models
                         frnMap.HasMultipleLinks(repair.Frn))) continue;
                 if (!TryQueueHardLinkUpdate(repair.Frn, out _, out var gone,
                         out var failure) && !gone)
-                    RequestExactMftRescan(repair.Frn, repair.Reason,
+                    ReportHardLinkRepairFailure(repair.Frn, repair.Reason,
                         $"targeted repair still failed after queue catch-up: {failure}");
             }
         }
@@ -508,7 +538,44 @@ namespace search.Models
             Process(new FsEvent(WatcherChangeTypes.Renamed, path, reported,
                 frn: r.Frn, ntfsAttributes: r.Attributes));
             Remap(r.Frn, path);
+            if (frnMap.HasMultipleLinks(r.Frn)) RefreshLinkState(r.Frn, path);
             return true;
+        }
+
+        /// <summary>
+        /// Re-read the live link names of a multi-linked file whose canonical name moved,
+        /// so the retained topology names the parents it has now. Parents the index does
+        /// not know by reference are keyed straight from the disk. A name that cannot be
+        /// read leaves the old topology in place - the next refresh from NTFS restores it.
+        /// </summary>
+        void RefreshLinkState(ulong frn, string canonicalPath)
+        {
+            if (!journal.TryGetHardLinkPaths(frn, out var paths, out _)) return;
+            var parents = new ulong[paths.Length];
+            for (var i = 0; i < paths.Length; i++)
+                if (!TryGetParentReference(paths[i], out parents[i], out _)) return;
+            var size = INode.TryReadMetadata(canonicalPath, out var snapshot)
+                ? snapshot.Size : FSChangeProcessor.Lookup(canonicalPath)?.Size ?? 0;
+            frnMap.SetLinkState(frn, parents, size);
+        }
+
+        /// <summary>
+        /// File reference of a link name's parent directory: from the index when it holds
+        /// the directory by reference, otherwise from the directory itself on disk (a
+        /// parent re-indexed by path after a rename or a reconcile carries no reference).
+        /// </summary>
+        bool TryGetParentReference(string linkPath, out ulong frn, out string parentPath)
+        {
+            frn = 0;
+            parentPath = Path.GetDirectoryName(linkPath);
+            if (string.IsNullOrEmpty(parentPath)) return false;
+            var parent = FSChangeProcessor.Lookup(parentPath);
+            if (parent?.IsDirectory == true && parent.Frn != 0)
+            {
+                frn = parent.Frn;
+                return true;
+            }
+            return journal.TryGetFileReference(parentPath, out frn);
         }
 
         /// <summary>
@@ -526,35 +593,27 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Renaming/deleting a canonical name of a multi-linked record still needs the rare
-        /// fallback: the compact index intentionally stores one searchable row per FRN, and
-        /// changing which name owns that row is separate from adjusting link-parent aggregates.
+        /// Renaming the canonical name of a multi-linked record moves the row like any
+        /// rename, but the retained link topology (parents per link) still names the old
+        /// parent and must be re-read. A delete of the last name clears the topology with
+        /// the map entry, so it needs nothing extra. Neither ever reloads the drive.
         /// </summary>
-        internal static bool RequiresExactMftRescan(uint reason, bool hasMultipleLinks)
+        internal static bool RequiresLinkStateRefresh(uint reason, bool hasMultipleLinks)
         {
             if (!hasMultipleLinks) return false;
-            const uint canonicalPath = UsnJournal.ReasonFileDelete
-                | UsnJournal.ReasonRenameOldName | UsnJournal.ReasonRenameNewName;
-            return (reason & canonicalPath) != 0;
+            const uint canonicalRename = UsnJournal.ReasonRenameOldName
+                | UsnJournal.ReasonRenameNewName;
+            return (reason & canonicalRename) != 0;
         }
 
         void ReplayHardLinkRepair(PendingHardLinkRepair repair)
         {
             var hadMultipleLinks = frnMap.HasMultipleLinks(repair.Frn);
-            var repaired = false;
-            var fileReferenceGone = false;
-            if (CanRepairHardLinkIncrementally(repair.Reason, hadMultipleLinks))
-            {
-                repaired = TryQueueHardLinkUpdate(repair.Frn, out _,
-                    out fileReferenceGone, out var failure, trackLoopCompletion: false);
-                if (!repaired && !fileReferenceGone)
-                    RequestExactMftRescan(repair.Frn, repair.Reason,
-                        $"deferred targeted repair failed: {failure}");
-            }
-            if (!repaired && !fileReferenceGone
-                && RequiresExactMftRescan(repair.Reason, hadMultipleLinks))
-                RequestExactMftRescan(repair.Frn, repair.Reason,
-                    "deferred canonical path change on a multi-linked file");
+            if (!CanRepairHardLinkIncrementally(repair.Reason, hadMultipleLinks)) return;
+            if (!TryQueueHardLinkUpdate(repair.Frn, out _, out var fileReferenceGone,
+                    out var failure, trackLoopCompletion: false) && !fileReferenceGone)
+                ReportHardLinkRepairFailure(repair.Frn, repair.Reason,
+                    $"deferred targeted repair failed: {failure}");
         }
 
         bool TryQueueHardLinkUpdate(ulong frn, out int liveLinkCount,
@@ -565,52 +624,43 @@ namespace search.Models
             fileReferenceGone = false;
             failure = null;
             if (!frnMap.TryGetValue(frn, out var mapped) || mapped.IsDirectory)
-            {
-                failure = $"FRN {frn:x} is not mapped";
-                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                return false;
-            }
+                return Failed(out failure, $"FRN {frn:x} is not mapped");
             var path = mapped.FullName;
             var indexed = FSChangeProcessor.Lookup(path);
             if (indexed == null || indexed.IsDirectory)
-            {
-                failure = $"canonical path is not indexed ({path})";
-                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                return false;
-            }
+                return Failed(out failure, $"canonical path is not indexed ({path})");
             if (!frnMap.TryGetLinkState(frn, out var oldParentRefs, out var oldSize))
             {
-                failure = $"no baseline parents for {frn:x}";
-                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                return false;
+                //A file created after the scan is indexed by path only, without a parent
+                //reference. Until its first topology change it has exactly one link, in
+                //the directory of its canonical name - the user's own "paste as hard
+                //link" on a fresh file must repair exactly, not just be reported.
+                if (!TryGetParentReference(path, out var soleParent, out _))
+                    return Failed(out failure, $"no baseline parents for {frn:x}");
+                oldParentRefs = new[] { soleParent };
+                oldSize = indexed.Size;
             }
             if (!journal.TryGetHardLinkPaths(frn, out var currentPaths,
                     out fileReferenceGone)
                 || currentPaths.Length == 0)
-            {
-                if (fileReferenceGone)
-                    failure = $"file reference {frn:x} vanished before enumeration";
-                else
-                    failure = $"link-name enumeration for {frn:x}";
-                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                return false;
-            }
-            if (!INode.TryReadMetadata(path, out var snapshot) || snapshot.IsDirectory)
-            {
-                failure = $"canonical metadata ({path})";
-                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                return false;
-            }
+                return Failed(out failure, fileReferenceGone
+                    ? $"file reference {frn:x} vanished before enumeration"
+                    : $"link-name enumeration for {frn:x}");
+            //The indexed (canonical) name may itself be the link that was removed: the
+            //file lives on under another of its names, so the row moves there instead of
+            //staying a phantom of a path that no longer exists.
+            var canonical = currentPaths.FirstOrDefault(p =>
+                    string.Equals(p, path, StringComparison.OrdinalIgnoreCase))
+                ?? currentPaths[0];
+            var moved = !string.Equals(canonical, path, StringComparison.OrdinalIgnoreCase);
+            if (!INode.TryReadMetadata(canonical, out var snapshot) || snapshot.IsDirectory)
+                return Failed(out failure, $"canonical metadata ({canonical})");
 
             var oldParentPaths = new string[oldParentRefs.Length];
             for (var i = 0; i < oldParentRefs.Length; i++)
             {
                 if (!TryResolveLinkParent(oldParentRefs[i], out var parent))
-                {
-                    failure = $"old parent {oldParentRefs[i]:x}";
-                    $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                    return false;
-                }
+                    return Failed(out failure, $"old parent {oldParentRefs[i]:x}");
                 oldParentPaths[i] = parent.FullName;
             }
 
@@ -618,27 +668,30 @@ namespace search.Models
             var currentParentPaths = new string[currentPaths.Length];
             for (var i = 0; i < currentPaths.Length; i++)
             {
-                var parentPath = Path.GetDirectoryName(currentPaths[i]);
-                var parent = string.IsNullOrEmpty(parentPath)
-                    ? null : FSChangeProcessor.Lookup(parentPath);
-                if (parent?.IsDirectory != true || parent.Frn == 0)
-                {
-                    failure = $"current parent {parentPath}";
-                    $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                    return false;
-                }
-                currentParentRefs[i] = parent.Frn;
-                currentParentPaths[i] = parent.FullName;
+                //A parent the index knows only by path (re-indexed after a rename or by
+                //a reconcile) or not yet at all (its create still queued) is keyed from
+                //the disk; the model indexes a missing parent when it applies the delta.
+                if (!TryGetParentReference(currentPaths[i], out currentParentRefs[i],
+                        out var parentPath))
+                    return Failed(out failure, $"current parent {parentPath}");
+                currentParentPaths[i] = parentPath;
             }
 
+            if (moved)
+            {
+                //The rename reported below moves the canonical link's own contribution
+                //from its old parent to its new one; the deltas cover only the rest of
+                //the topology change (an old parent that lost its link, a size change).
+                var oldCanonicalParent = Path.GetDirectoryName(path);
+                var newCanonicalParent = Path.GetDirectoryName(canonical);
+                var at = Array.FindIndex(oldParentPaths, p =>
+                    string.Equals(p, oldCanonicalParent, StringComparison.OrdinalIgnoreCase));
+                if (at >= 0) oldParentPaths[at] = newCanonicalParent;
+            }
             if (!TryCalculateHardLinkParentDeltas(oldParentPaths, currentParentPaths,
                     oldParentRefs.Length == 1 ? indexed.Size : oldSize,
                     snapshot.Size, out var deltas))
-            {
-                failure = "aggregate delta overflow";
-                $"USN targeted hard-link repair on {journal.Root} failed: {failure}".Debug();
-                return false;
-            }
+                return Failed(out failure, "aggregate delta overflow");
 
             liveLinkCount = currentParentRefs.Length;
             //Publish the queried state before enqueueing. Several records for one open
@@ -646,12 +699,28 @@ namespace search.Models
             //waiting; the following record must diff from this state, not add the same
             //size delta again from the not-yet-updated index node.
             frnMap.SetLinkState(frn, currentParentRefs, snapshot.Size);
-            Process(FsEvent.HardLinkUpdate(path, frn, indexed, snapshot, deltas),
-                trackLoopCompletion);
+            if (moved)
+            {
+                Process(new FsEvent(WatcherChangeTypes.Renamed, canonical, path, frn: frn,
+                    ntfsAttributes: (uint)snapshot.Attributes), trackLoopCompletion);
+                Remap(frn, canonical);
+            }
+            //After a move the row is a new identity the handler creates from the rename;
+            //it is matched by file reference instead of by instance.
+            Process(FsEvent.HardLinkUpdate(canonical, frn, moved ? null : indexed, snapshot,
+                deltas), trackLoopCompletion);
             ($"USN hard-link update on {journal.Root}: frn={frn:x}, links "
-                + $"{oldParentRefs.Length}->{currentParentRefs.Length}, parents changed={deltas.Length}")
+                + $"{oldParentRefs.Length}->{currentParentRefs.Length}, parents changed={deltas.Length}"
+                + (moved ? $", canonical name moved to {canonical}" : ""))
                 .Debug();
             return true;
+        }
+
+        bool Failed(out string failure, string reason)
+        {
+            failure = reason;
+            $"USN targeted hard-link repair on {journal.Root} failed: {reason}".Debug();
+            return false;
         }
 
         bool TryResolveLinkParent(ulong parentId, out INode parent)
@@ -707,46 +776,51 @@ namespace search.Models
             return true;
         }
 
-        void RequestExactMftRescan(ulong frn, uint reason, string failure,
-            int quietMs = ExactRescanQuietMs)
+        /// <summary>
+        /// A targeted hard-link repair could not be completed. The affected directory
+        /// aggregates drift by at most that file's size until the next refresh from NTFS;
+        /// the rows themselves are kept right by the ordinary create/rename/delete
+        /// translation. Failures are coalesced into one diagnostic per quiet window - a
+        /// package update fails thousands of them in seconds - and never reload the drive.
+        /// </summary>
+        void ReportHardLinkRepairFailure(ulong frn, uint reason, string failure)
         {
-            lock (exactRescanLock)
+            lock (hardLinkReportLock)
             {
                 if (stop) return;
-                if (exactRescanRequests++ == 0) exactRescanFirstFrn = frn;
-                exactRescanReasons |= reason;
-                exactRescanFailure ??= failure;
-                exactRescanTimer ??= new Timer(_ => FireExactMftRescan(),
+                if (hardLinkFailures++ == 0) hardLinkFirstFrn = frn;
+                hardLinkReasons |= reason;
+                hardLinkFirstFailure ??= failure;
+                hardLinkReportTimer ??= new Timer(_ => FlushHardLinkReport(),
                     null, Timeout.Infinite, Timeout.Infinite);
-                exactRescanTimer.Change(Math.Max(ExactRescanQuietMs, quietMs),
-                    Timeout.Infinite);
+                hardLinkReportTimer.Change(HardLinkReportQuietMs, Timeout.Infinite);
             }
         }
 
-        void FireExactMftRescan()
+        void FlushHardLinkReport()
         {
-            int requests;
+            int failures;
             ulong firstFrn;
             uint reasons;
             string failure;
-            lock (exactRescanLock)
+            lock (hardLinkReportLock)
             {
                 if (stop) return;
-                requests = exactRescanRequests;
-                firstFrn = exactRescanFirstFrn;
-                reasons = exactRescanReasons;
-                failure = exactRescanFailure;
-                exactRescanRequests = 0;
-                exactRescanFirstFrn = 0;
-                exactRescanReasons = 0;
-                exactRescanFailure = null;
+                failures = hardLinkFailures;
+                firstFrn = hardLinkFirstFrn;
+                reasons = hardLinkReasons;
+                failure = hardLinkFirstFailure;
+                hardLinkFailures = 0;
+                hardLinkFirstFrn = 0;
+                hardLinkReasons = 0;
+                hardLinkFirstFailure = null;
             }
-            if (requests == 0) return;
-            var detail = $"USN hard-link rescan on {journal.Root}: requests={requests}; "
-                + $"firstFrn={firstFrn:x}; reasons=0x{reasons:x}; failure={failure}";
+            if (failures == 0) return;
+            var detail = $"USN hard-link repair skipped on {journal.Root}: failures={failures}; "
+                + $"firstFrn={firstFrn:x}; reasons=0x{reasons:x}; first failure={failure}; "
+                + "directory sizes may drift until the next refresh from NTFS";
             StorageMaintenance.AppendDiagnostic(detail);
             detail.Debug();
-            try { if (!stop) rescan(DriveScanReason.UsnHardLinkChange); } catch { }
         }
 
         /// <summary>
@@ -826,12 +900,15 @@ namespace search.Models
             if (FSChangeProcessor.Lookup(path) != null) return path; //Still indexed under that path
             var queued = node is PathNode; //Our own event for this path is still in flight
             if (!heal) return queued ? path : null;
-            var live = journal.TryResolvePath(frn);
+            var live = journal.TryResolvePath(frn, out var gone);
             if (live == null)
             {
                 //Gone from disk - but a queued create still needs its exact prune event
                 if (queued) return path;
-                frnMap.Remove(frn);
+                //Only a reference that no longer exists retires the entry. One this
+                //process may not open (moved into a protected directory) keeps the path
+                //the scan gave it - dropping it would make its later records unnameable.
+                if (gone) frnMap.Remove(frn);
                 return null;
             }
             //A path this watcher reported itself is not "staled by a parent rename" - the
@@ -930,6 +1007,17 @@ namespace search.Models
             long mutationVersion;
 
             public long MutationVersion => Interlocked.Read(ref mutationVersion);
+
+            /// <summary>Whether the scan behind this table (ignoring overrides) knows the exact reference</summary>
+            static bool ScanHas(PageTable table, ulong frn)
+            {
+                if (table.Source != null) return table.Source.TryGetByFrn(frn, out _);
+                var entry = frn & EntryMask;
+                if (table.Pages.TryGetValue(entry >> PageBits, out var page)
+                    && page.Frns[(int)(entry & PageMask)] == frn)
+                    return true;
+                return table.Sparse.ContainsKey(frn);
+            }
 
             public bool TryGetValue(ulong frn, out INode node)
             {
@@ -1122,10 +1210,22 @@ namespace search.Models
                     if (preserveMutationsAfter != long.MaxValue)
                     {
                         foreach (var pair in old.Overrides)
-                            if (pair.Value.Version > preserveMutationsAfter)
-                                populated.Overrides[pair.Key] = pair.Value;
+                        {
+                            var change = pair.Value;
+                            //An older change survives only where the fresh scan disagrees
+                            //with it: a reference the scan never saw stays mapped (MapPath
+                            //verifies the path against the index or the disk before it
+                            //trusts it), a reference the scan still lists although the
+                            //journal already reported its delete stays hidden. A scan is
+                            //not guaranteed to see the newest records of a busy volume.
+                            var keep = change.Version > preserveMutationsAfter
+                                || ScanHas(populated, change.Frn) == (change.Node == null);
+                            if (keep) populated.Overrides[pair.Key] = change;
+                        }
                         foreach (var pair in old.LinkOverrides)
-                            if (pair.Value.Version > preserveMutationsAfter)
+                            if (pair.Value.Version > preserveMutationsAfter
+                                || (populated.Overrides.TryGetValue(pair.Key, out var kept)
+                                    && kept.Frn == pair.Value.Frn && kept.Node != null))
                                 populated.LinkOverrides[pair.Key] = pair.Value;
                     }
                     //Set/Remove wait on mutationLock and therefore apply after this fresh
@@ -1165,11 +1265,19 @@ namespace search.Models
 
             public int Count => frns.Count + paths.Count;
 
-            public void Add(ulong parentFrn) => frns.Add(parentFrn);
+            //Bounded: before the first drive publication nothing can be reconciled, and a
+            //storm in that window must not grow the set without limit (a few directories
+            //then heal only with the next refresh from NTFS)
+            const int Limit = 1 << 15;
+
+            public void Add(ulong parentFrn)
+            {
+                if (frns.Count < Limit) frns.Add(parentFrn);
+            }
 
             public void Add(string directory)
             {
-                if (!string.IsNullOrEmpty(directory)) paths.Add(directory);
+                if (!string.IsNullOrEmpty(directory) && paths.Count < Limit) paths.Add(directory);
             }
 
             /// <summary>Resolve and take everything collected so far, leaving this empty</summary>
@@ -1199,10 +1307,10 @@ namespace search.Models
         public void Dispose()
         {
             stop = true;
-            lock (exactRescanLock)
+            lock (hardLinkReportLock)
             {
-                exactRescanTimer?.Dispose();
-                exactRescanTimer = null;
+                hardLinkReportTimer?.Dispose();
+                hardLinkReportTimer = null;
             }
             journal.Dispose(); //The blocked read wakes within its finite timeout
         }

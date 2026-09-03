@@ -19,6 +19,11 @@ namespace search.Models
         DriveSelection,
         Retry,
         UsnHistoryLost,
+        /// <summary>
+        /// No longer requested: a hard-link repair that fails is reported and its
+        /// directory aggregates drift until the next refresh. Kept so older logs and the
+        /// request accumulator's reason set stay readable.
+        /// </summary>
         UsnHardLinkChange,
         UsnFallback,
         WatcherOverflow,

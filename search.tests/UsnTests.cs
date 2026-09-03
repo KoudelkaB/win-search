@@ -237,15 +237,18 @@ namespace search.Tests
             Assert.False(UsnDriveWatcher.CanRepairHardLinkIncrementally(
                 UsnJournal.ReasonBasicInfoChange, true));
 
-            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(
+            //Only a rename of the canonical name leaves the retained link topology stale;
+            //a delete of the last name clears it with the map entry. Nothing here may
+            //ever reload the drive.
+            Assert.False(UsnDriveWatcher.RequiresLinkStateRefresh(
                 UsnJournal.ReasonHardLinkChange, false));
-            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(
+            Assert.False(UsnDriveWatcher.RequiresLinkStateRefresh(
                 UsnJournal.ReasonDataExtend, true));
-            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonFileDelete, true));
-            Assert.True(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonRenameNewName, true));
-            Assert.False(UsnDriveWatcher.RequiresExactMftRescan(UsnJournal.ReasonBasicInfoChange, true));
-            Assert.InRange(UsnDriveWatcher.ExactRescanQuietMs, 1, 1999);
-            Assert.True(UsnDriveWatcher.WalkExactRescanQuietMs >= 30_000);
+            Assert.False(UsnDriveWatcher.RequiresLinkStateRefresh(UsnJournal.ReasonFileDelete, true));
+            Assert.True(UsnDriveWatcher.RequiresLinkStateRefresh(UsnJournal.ReasonRenameNewName, true));
+            Assert.False(UsnDriveWatcher.RequiresLinkStateRefresh(UsnJournal.ReasonRenameNewName, false));
+            Assert.False(UsnDriveWatcher.RequiresLinkStateRefresh(UsnJournal.ReasonBasicInfoChange, true));
+            Assert.True(UsnDriveWatcher.HardLinkReportQuietMs >= 1000);
         }
 
         [Fact]
@@ -271,7 +274,7 @@ namespace search.Tests
         }
 
         [Fact]
-        public void WalkBaselineChangesUseBoundedRescanInsteadOfImmediateReplayLoop()
+        public void WalkBaselineChangesHaveNoTopologyToRepairAgainst()
         {
             var gate = new HardLinkBaselineGate();
             const ulong frn = 0x3000000000007;
@@ -281,7 +284,7 @@ namespace search.Tests
                 gate.Observe(frn, reason));
             Assert.Single(gate.Publish(hasMftBaseline: false));
             Assert.False(gate.HasMftBaseline);
-            Assert.Equal(HardLinkBaselineAction.ScheduleWalkRescan,
+            Assert.Equal(HardLinkBaselineAction.NoBaseline,
                 gate.Observe(frn, reason));
 
             gate.Reset();
@@ -393,6 +396,43 @@ namespace search.Tests
             Assert.True(map.TryGetLinkState(createdDuringScan, out var parents, out var size));
             Assert.Equal(new ulong[] { 20, 21 }, parents);
             Assert.Equal(125UL, size);
+        }
+
+        /// <summary>
+        /// A scan of a busy volume is not guaranteed to list its newest records. Where the
+        /// fresh scan disagrees with a change the journal reported before the scan started,
+        /// the journal wins: a reference the scan never saw stays mapped, a reference the
+        /// scan still lists although its delete was already reported stays hidden. Where
+        /// both agree the scan's node replaces the overlay entry as before.
+        /// </summary>
+        [Fact]
+        public void FrnMapPublicationKeepsPreWatermarkChangesTheScanDisagreesWith()
+        {
+            var map = new UsnDriveWatcher.FrnMap();
+            var unseenCreate = ((ulong)6 << 48) | 9;
+            var deletedButListed = ((ulong)7 << 48) | 10;
+            var agreed = ((ulong)8 << 48) | 11;
+            map.Populate(new INode[] { new FrnNode(deletedButListed), new FrnNode(agreed) });
+            var liveCreated = new FrnNode(unseenCreate);
+            map.Set(unseenCreate, liveCreated);
+            map.SetLinkState(unseenCreate, new ulong[] { 30, 31 }, 64);
+            map.Remove(deletedButListed);
+            var liveAgreed = new FrnNode(agreed);
+            map.Set(agreed, liveAgreed);
+            var watermark = map.MutationVersion; //Everything above happened BEFORE the scan
+
+            var scannedStale = new FrnNode(deletedButListed);
+            var scannedAgreed = new FrnNode(agreed);
+            map.Populate(new INode[] { scannedStale, scannedAgreed }, watermark);
+
+            Assert.True(map.TryGetValue(unseenCreate, out var created));
+            Assert.Same(liveCreated, created);
+            Assert.True(map.TryGetLinkState(unseenCreate, out var parents, out var size));
+            Assert.Equal(new ulong[] { 30, 31 }, parents);
+            Assert.Equal(64UL, size);
+            Assert.False(map.TryGetValue(deletedButListed, out _));
+            Assert.True(map.TryGetValue(agreed, out var published));
+            Assert.Same(scannedAgreed, published);
         }
 
         [Fact]

@@ -1804,6 +1804,66 @@ namespace search.Models
         }
 
         /// <summary>
+        /// A create or rename names a file by its exact NTFS reference. If the index holds
+        /// that path for a different reference, the old owner is gone from the disk - its
+        /// delete could not be named (the journal record carried no path the map knew) or
+        /// has not reached this queue - and it must not shadow the new file: the row would
+        /// keep the old metadata forever, because refreshes by the old reference fail.
+        /// Returns what was removed (empty when the path is free or owned by the same file).
+        /// </summary>
+        INode[] RemoveStaleOwner(string path, ulong frn)
+        {
+            if (frn == 0 || !files.TryGetValue(path, out var owner) || owner.Frn == 0
+                || owner.Frn == frn)
+                return Array.Empty<INode>();
+            //A directory row is replaced with its whole subtree - what the index knew under
+            //the old directory reference cannot be under the new one.
+            if (owner.IsDirectory || HasArchiveChildren(owner)) return RemoveTree(path);
+            var removed = Remove(path);
+            return removed == null ? Array.Empty<INode>() : new[] { removed };
+        }
+
+        long hardLinkSkipReportedAt;
+        int hardLinkSkipsSinceReport;
+
+        /// <summary>
+        /// One line per quiet window, not per file: a package update can skip thousands
+        /// of hard-link repairs in a second.
+        /// </summary>
+        void ReportHardLinkApplySkipped(FsEvent e, string failure)
+        {
+            Interlocked.Increment(ref hardLinkSkipsSinceReport);
+            var now = Environment.TickCount64;
+            var last = Interlocked.Read(ref hardLinkSkipReportedAt);
+            if (now - last < 5000
+                || Interlocked.CompareExchange(ref hardLinkSkipReportedAt, now, last) != last)
+                return;
+            var skipped = Interlocked.Exchange(ref hardLinkSkipsSinceReport, 0);
+            StorageMaintenance.AppendDiagnostic(
+                $"USN hard-link apply skipped on {Path.GetPathRoot(e.FullPath)}: "
+                + $"skipped={skipped}; frn={e.Frn:x}; path={e.FullPath}; failure={failure}; "
+                + "directory sizes may drift until the next refresh from NTFS");
+        }
+
+        /// <summary>
+        /// Whether a path exists on disk right now - null when the disk cannot say
+        /// (access denied, transient I/O error). A drive publication asks this before it
+        /// lets a stale scan overrule the live index.
+        /// </summary>
+        internal static bool? ExistsOnDisk(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            try
+            {
+                File.GetAttributes(path);
+                return true;
+            }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            catch { return null; }
+        }
+
+        /// <summary>
         /// Get the node or index a newly seen entry, adding its contribution to ancestor
         /// directory size and item-count aggregates.
         /// </summary>
@@ -1893,10 +1953,13 @@ namespace search.Models
                     //Package replacement commonly removes an old hard-link parent while
                     //its already queued topology update is waiting. The directory's own
                     //removal discarded that complete aggregate, so its negative delta is
-                    //obsolete and must not force a drive-wide rebuild. An existing but
-                    //temporarily unindexed parent remains ambiguous and still fails safely.
-                    if (!Directory.Exists(deltas[i].ParentPath)) roots[i] = null;
-                    else return false;
+                    //obsolete. A parent that exists but is not indexed (a directory the
+                    //package created moments ago) is indexed now - the same thing its
+                    //queued create would do - so the delta lands where it belongs.
+                    roots[i] = Directory.Exists(deltas[i].ParentPath)
+                        ? GetOrAddNew(deltas[i].ParentPath) : null;
+                    if (roots[i] != null && (!roots[i].IsDirectory || !roots[i].Exists))
+                        return false;
                 }
 
             var generation = Interlocked.Increment(ref aggregateChangeGeneration);
@@ -2269,10 +2332,20 @@ namespace search.Models
                     //are covered by the directory's stored aggregate and must not each walk
                     //their parent chain as well.
                     var trees = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var skipped = new HashSet<FsEvent>(ReferenceEqualityComparer.Instance);
                     foreach (var deleted in pendingDeletes)
                     {
                         var path = deleted.FullPath;
                         var indexed = files.TryGetValue(path, out var i) ? i : null;
+                        //The path already belongs to a different file (created or renamed
+                        //over the deleted one, its create applied first): this delete is
+                        //about the old owner and must not take the new row with it.
+                        if (deleted.Frn != 0 && indexed?.Frn is > 0 and var owner
+                            && owner != deleted.Frn)
+                        {
+                            skipped.Add(deleted);
+                            continue;
+                        }
                         //A USN delete is exact: every descendant has its own ordered record.
                         //Fallback watchers and app echoes remain conservative and uproot the
                         //whole directory because they may report only its root. Archive
@@ -2287,6 +2360,7 @@ namespace search.Models
                     var directlyRemoved = new List<INode>();
                     foreach (var deleted in pendingDeletes)
                     {
+                        if (skipped.Contains(deleted)) continue;
                         var path = deleted.FullPath;
                         var normalized = path.TrimEnd(Path.DirectorySeparatorChar,
                             Path.AltDirectorySeparatorChar);
@@ -2354,6 +2428,7 @@ namespace search.Models
                                         (FileAttributes)e.NtfsAttributes, 0,
                                         DateTime.MinValue)
                                     : (NodeMetadataSnapshot?)null;
+                                RecordStructuralNodes(RemoveStaleOwner(e.FullPath, e.Frn));
                                 var node = GetOrAddNew(e.FullPath, createHint, e.Frn);
                                 if (e.Frn != 0)
                                     QueueMetadataRefresh(e.FullPath, e.Frn);
@@ -2372,21 +2447,26 @@ namespace search.Models
                                 {
                                     var current = files.TryGetValue(e.FullPath,
                                         out var indexedCurrent) ? indexedCurrent : null;
-                                    if (current == null || !ReferenceEquals(current, e.MetadataNode)
-                                        || !ApplyHardLinkParentDeltas(e.HardLinkParentDeltas))
+                                    //The row a repair targets is normally the instance the
+                                    //watcher looked at; after it moved the row to the file's
+                                    //surviving name, the rename created a fresh instance that
+                                    //only the file reference identifies.
+                                    var sameRow = current != null && (e.MetadataNode != null
+                                        ? ReferenceEquals(current, e.MetadataNode)
+                                        : current.Frn != 0 && current.Frn == e.Frn);
+                                    if (!sameRow || !ApplyHardLinkParentDeltas(e.HardLinkParentDeltas))
                                     {
-                                        //A manual/startup scan may have replaced the shard
-                                        //between the topology read and this ordered event.
-                                        //Its baseline cannot safely accept the old deltas.
-                                        var failure = current == null ? "canonical path missing"
-                                            : !ReferenceEquals(current, e.MetadataNode)
-                                                ? "canonical identity replaced"
-                                                : "hard-link parent delta could not be applied";
-                                        StorageMaintenance.AppendDiagnostic(
-                                            $"USN hard-link apply on {Path.GetPathRoot(e.FullPath)} "
-                                            + $"=> rescan: frn={e.Frn:x}; path={e.FullPath}; failure={failure}");
-                                        _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
-                                            DriveScanReason.UsnHardLinkChange);
+                                        //A scan replaced the row between the topology read and
+                                        //this ordered event (its own aggregates are exact), or
+                                        //the row vanished meanwhile. Either way the deltas no
+                                        //longer apply; a directory size drifts by at most this
+                                        //file until the next refresh - never worth reloading
+                                        //the whole drive, which used to happen here for every
+                                        //file of a package update.
+                                        ReportHardLinkApplySkipped(e, current == null
+                                            ? "canonical path missing"
+                                            : !sameRow ? "canonical identity replaced"
+                                            : "hard-link parent delta could not be applied");
                                         break;
                                     }
                                     current.ApplyMetadata(e.MetadataSnapshot.Value);
@@ -2463,6 +2543,7 @@ namespace search.Models
                                 {
                                     //Remove first so a same-directory rename nets to zero on the shared ancestors
                                     var removed = Remove(e.OldFullPath);
+                                    RecordStructuralNodes(RemoveStaleOwner(e.FullPath, renameFrn));
                                     var added = GetOrAddNew(e.FullPath, renameHint,
                                         storedRenameFrn);
                                     if (renameFrn != 0)
@@ -2915,8 +2996,11 @@ namespace search.Models
                                 var phase = Stopwatch.StartNew();
                                 //Pair both live overlays with the instant before the disk
                                 //snapshot starts. Any later create/rename/delete/metadata
-                                //mutation may be newer than the scan and must survive it.
-                                liveMutationWatermark = files.MutationVersion;
+                                //mutation may be newer than the scan and must survive it -
+                                //including the removal of an entry the current base never
+                                //held, which the index keeps as a tombstone while the
+                                //snapshot is pending.
+                                liveMutationWatermark = files.BeginSnapshot(root);
                                 frnMutationWatermark =
                                     FSChangeProcessor.CaptureFrnMutationVersion(root);
                                 var sourceTask = Task.Run(() => DriveEntries(drive, scanToken));
@@ -2985,7 +3069,11 @@ namespace search.Models
                             }
                             $"drive {root} scan failed: {e.Message}".Debug();
                         }
-                        finally { Interlocked.Add(ref loadingNodes, -streamed); } //Not published => not counted by files
+                        finally
+                        {
+                            Interlocked.Add(ref loadingNodes, -streamed); //Not published => not counted by files
+                            files.EndSnapshot(root); //No-op after a publication; releases a skipped/failed scan
+                        }
 
                         //Update filtered files
                         if (drivePublished && !scanToken.IsCancellationRequested)
@@ -3176,7 +3264,7 @@ namespace search.Models
                 {
                     //The completed immutable set was prepared outside the publication lock.
                     //Publish it by replacing one shard; live changes start in a fresh overlay.
-                    files.ReplaceDrive(root, prepared, preserveMutationsAfter);
+                    files.ReplaceDrive(root, prepared, preserveMutationsAfter, ExistsOnDisk);
                     //files counts the streamed nodes from this very moment => deduct them from the
                     //streaming counter in the same breath, or the loading status double-counts them
                     //for as long as the archive re-add and exe recompute below take

@@ -201,6 +201,19 @@ namespace search.Models
             public readonly IReadOnlyList<INode> DenseNodes;
             public readonly NonBlocking.ConcurrentDictionary<object, DeltaEntry> Delta;
             int count;
+            /// <summary>
+            /// A drive scan is reading the disk for this shard's replacement (set/cleared
+            /// under DriveNodeIndex.mutationLock). While it runs, removing an entry the
+            /// immutable base never held still leaves a tombstone: the scan may have read
+            /// that path's record before the removal, and only a post-watermark tombstone
+            /// keeps such a stale copy out of the published snapshot (a temp file written
+            /// and renamed away mid-scan otherwise reappears in the grid as a phantom).
+            /// </summary>
+            public bool SnapshotPending;
+            //Bounded so a runaway removal storm during a slow scan cannot grow the overlay
+            //without limit; the oldest tombstones are forgotten first.
+            readonly Queue<object> transientTombstones = new();
+            internal const int TransientTombstoneLimit = 16_384;
 
             public Shard(string root, PreparedDrive prepared)
             {
@@ -212,6 +225,7 @@ namespace search.Models
             }
 
             public int Count => Volatile.Read(ref count);
+            public bool IsUnused => count == 0 && Base.Count == 0 && Delta.IsEmpty;
 
             public bool TryGetValue(object key, out INode node)
             {
@@ -245,6 +259,18 @@ namespace search.Models
                 beforeRemove?.Invoke(node);
                 if (Base.Contains(key))
                     Delta[key] = new DeltaEntry(null, version);
+                else if (SnapshotPending)
+                {
+                    Delta[key] = new DeltaEntry(null, version);
+                    transientTombstones.Enqueue(key);
+                    while (transientTombstones.Count > TransientTombstoneLimit)
+                    {
+                        var oldest = transientTombstones.Dequeue();
+                        if (Delta.TryGetValue(oldest, out var entry) && entry.Node == null
+                            && !Base.Contains(oldest))
+                            Delta.TryRemove(oldest, out _);
+                    }
+                }
                 else
                     Delta.TryRemove(key, out _);
                 Volatile.Write(ref count, count - 1);
@@ -295,6 +321,38 @@ namespace search.Models
         /// immutable scan may have missed and must survive publication of its replacement.
         /// </summary>
         public long MutationVersion => Interlocked.Read(ref mutationVersion);
+
+        /// <summary>
+        /// Mark that a scan of this drive is about to read the disk and return the mutation
+        /// watermark to pair with it. Until the scan publishes (ReplaceDrive) or gives up
+        /// (EndSnapshot), removals of entries the current base never held keep tombstones so
+        /// the snapshot cannot resurrect them - see <see cref="Shard.SnapshotPending"/>.
+        /// </summary>
+        public long BeginSnapshot(string root)
+        {
+            lock (mutationLock)
+            {
+                if (!string.IsNullOrEmpty(root))
+                    GetOrCreateShardLocked(root).SnapshotPending = true;
+                return mutationVersion;
+            }
+        }
+
+        /// <summary>The scan paired with <see cref="BeginSnapshot"/> did not publish a replacement.</summary>
+        public void EndSnapshot(string root)
+        {
+            if (string.IsNullOrEmpty(root)) return;
+            lock (mutationLock)
+            {
+                var shard = Find(shards, root);
+                if (shard == null) return;
+                shard.SnapshotPending = false;
+                //A shard created only to carry the mark for a drive that was then skipped
+                //(deselected, not ready) must not linger as an empty, delta-less shard.
+                if (shard.IsUnused)
+                    shards = shards.Where(x => !ReferenceEquals(x, shard)).ToArray();
+            }
+        }
 
         /// <summary>Build the immutable drive base before taking the short publication lock.</summary>
         public static PreparedDrive PrepareDrive(IEnumerable<INode> nodes,
@@ -450,9 +508,19 @@ namespace search.Models
             }
         }
 
-        /// <summary>Atomically replace one drive while every other drive keeps its shard.</summary>
+        /// <summary>
+        /// Atomically replace one drive while every other drive keeps its shard.
+        /// Live mutations newer than the watermark always survive. An older mutation
+        /// survives only when the snapshot disagrees with it - a path the live pipeline
+        /// added that the snapshot lacks, or one it removed that the snapshot still
+        /// holds - and the disk, asked through existsOnDisk, does not side with the
+        /// snapshot (null = unknown, e.g. access denied: the live pipeline is trusted). A
+        /// snapshot can legitimately lag the live pipeline: a folder walk cannot see
+        /// protected subtrees the journal reports, and an MFT read is neither atomic nor
+        /// guaranteed to reflect the newest metadata writes.
+        /// </summary>
         public void ReplaceDrive(string root, PreparedDrive replacement,
-            long preserveMutationsAfter = long.MaxValue)
+            long preserveMutationsAfter = long.MaxValue, Func<string, bool?> existsOnDisk = null)
         {
             ArgumentNullException.ThrowIfNull(replacement);
             root = NormalizeRoot(root);
@@ -462,7 +530,8 @@ namespace search.Models
                 var at = Array.FindIndex(current, x => string.Equals(x.Root, root, StringComparison.OrdinalIgnoreCase));
                 var preserved = at < 0 || preserveMutationsAfter == long.MaxValue
                     ? Array.Empty<KeyValuePair<object, DeltaEntry>>()
-                    : current[at].Delta.Where(pair => pair.Value.Version > preserveMutationsAfter)
+                    : current[at].Delta.Where(pair => pair.Value.Version > preserveMutationsAfter
+                            || DisagreesWithSnapshot(pair, replacement.Base, existsOnDisk))
                         .OrderBy(pair => pair.Value.Version).ToArray();
                 if (replacement.IsEmpty)
                 {
@@ -494,6 +563,22 @@ namespace search.Models
                 next[at] = published;
                 shards = next;
             }
+        }
+
+        static bool DisagreesWithSnapshot(KeyValuePair<object, DeltaEntry> pair,
+            CompactPathIndex snapshot, Func<string, bool?> existsOnDisk)
+        {
+            if (existsOnDisk == null) return false;
+            var inSnapshot = snapshot.Contains(pair.Key);
+            if (pair.Value.Node != null == inSnapshot) return false; //Both agree on existence
+            var path = pair.Key as string ?? (pair.Key as INode)?.FullName;
+            if (string.IsNullOrEmpty(path)) return false;
+            bool? onDisk;
+            try { onDisk = existsOnDisk(path); }
+            catch { onDisk = null; }
+            //Keep the live add unless the disk proves it gone; keep the live tombstone
+            //unless the disk proves the entry back.
+            return pair.Value.Node != null ? onDisk != false : onDisk != true;
         }
 
         /// <summary>Compatibility helper for small callers/tests; production prepares before publish.</summary>

@@ -93,6 +93,9 @@ namespace search.Tests
                     $"USN journal failed to open on NTFS volume {root}");
                 return; //No readable journal on this volume - nothing to test
             }
+            //The drive scan's publication: until it happens nothing is indexed for the
+            //drive, so the watcher holds unresolved records back instead of reconciling
+            watcher.Populate(Array.Empty<INode>());
             try
             {
                 try
@@ -356,9 +359,108 @@ namespace search.Tests
                             d.SizeDelta == -8192 && d.CountDelta == -1))),
                     $"no targeted hard-link removal; got: {string.Join("; ", updates)}");
 
-                await Task.Delay(UsnDriveWatcher.ExactRescanQuietMs + 500);
+                await Task.Delay(1500);
                 Assert.False(rescan.Task.IsCompleted,
-                    "targeted hard-link repair unexpectedly requested an exact MFT rescan");
+                    "targeted hard-link repair unexpectedly requested a drive rescan");
+            }
+            finally
+            {
+                watcher.Dispose();
+                FSChangeProcessor.Lookup = lookup;
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// The index keeps one row per file, under the name the scan or the create named
+        /// (the canonical name). Deleting exactly that name of a multi-linked file is a
+        /// HARD_LINK_CHANGE, not a delete - the file lives on under its other name, so the
+        /// row must move there instead of staying a phantom of a path that is gone.
+        /// </summary>
+        [Fact]
+        public async Task DeletingTheCanonicalNameOfAHardLinkedFileMovesItsRowToTheSurvivingName()
+        {
+            var root = Path.GetPathRoot(Path.GetTempPath());
+            var events = new ConcurrentQueue<FsEvent>();
+            var rescan = new TaskCompletionSource<DriveScanReason>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var indexed = new ConcurrentDictionary<string, INode>(
+                StringComparer.OrdinalIgnoreCase);
+            var lookup = FSChangeProcessor.Lookup;
+            FSChangeProcessor.Lookup = path =>
+                indexed.TryGetValue(path, out var node) ? node : null;
+            var watcher = UsnDriveWatcher.TryStart(root, e =>
+            {
+                events.Enqueue(e);
+                //Mirror the model handler for the events this test drives
+                if (e.IsHardLinkUpdate)
+                {
+                    if (indexed.TryGetValue(e.FullPath, out var row)
+                        && (e.MetadataNode == null ? row.Frn == e.Frn
+                            : ReferenceEquals(row, e.MetadataNode)))
+                        row.ApplyMetadata(e.MetadataSnapshot.Value);
+                }
+                else if (e.ChangeType == WatcherChangeTypes.Created && e.Frn != 0
+                    && INode.TryReadMetadata(e.FullPath, out var snapshot))
+                {
+                    indexed.TryGetValue(Path.GetDirectoryName(e.FullPath) ?? "", out var parent);
+                    indexed[e.FullPath] = new LiveFrnNode(e.Frn, e.FullPath, parent, snapshot);
+                }
+                else if (e.ChangeType == WatcherChangeTypes.Renamed)
+                {
+                    indexed.TryRemove(e.OldFullPath, out _);
+                    if (INode.TryReadMetadata(e.FullPath, out var moved))
+                    {
+                        indexed.TryGetValue(Path.GetDirectoryName(e.FullPath) ?? "", out var parent);
+                        indexed[e.FullPath] = new LiveFrnNode(e.Frn, e.FullPath, parent, moved);
+                    }
+                }
+                return Task.CompletedTask;
+            }, reason => rescan.TrySetResult(reason), _ => { });
+            if (watcher == null)
+            {
+                FSChangeProcessor.Lookup = lookup;
+                Assert.False(string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase),
+                    $"USN journal failed to open on NTFS volume {root}");
+                return;
+            }
+
+            var dir = Path.Combine(Path.GetTempPath(), $"usn-canonical-{Guid.NewGuid():N}");
+            var other = Path.Combine(dir, "other");
+            Directory.CreateDirectory(other);
+            try
+            {
+                var file = Path.Combine(dir, "canonical.bin");
+                var link = Path.Combine(other, "link.bin");
+                File.WriteAllBytes(file, new byte[4096]);
+                Assert.True(await WaitFor(() => indexed.ContainsKey(file)),
+                    $"the file was not indexed; events: {string.Join("; ", events)}");
+                Assert.True(CreateHardLink(link, file, IntPtr.Zero),
+                    $"CreateHardLink failed: {Marshal.GetLastWin32Error()}");
+                Assert.True(await WaitFor(() => events.Any(e => e.IsHardLinkUpdate
+                        && e.HardLinkParentDeltas.Any(d => d.CountDelta == 1
+                            && string.Equals(d.ParentPath, other, StringComparison.OrdinalIgnoreCase)))),
+                    $"the link was not accounted to its directory; events: {string.Join("; ", events)}");
+
+                File.Delete(file); //The indexed name goes, the file stays under other\link.bin
+                Assert.True(await WaitFor(() => events.Any(e =>
+                        e.ChangeType == WatcherChangeTypes.Renamed
+                        && string.Equals(e.OldFullPath, file, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(e.FullPath, link, StringComparison.OrdinalIgnoreCase))),
+                    $"the row did not move to the surviving name; events: {string.Join("; ", events)}");
+                Assert.True(await WaitFor(() => !indexed.ContainsKey(file) && indexed.ContainsKey(link)));
+                //The rename handler moves the file's own contribution out of dir and into
+                //other - which already counted the link. The topology delta that follows
+                //the rename must therefore take exactly that one link back out of other
+                //(net zero there) and touch dir only through the rename itself.
+                Assert.True(await WaitFor(() => events.Any(e => e.IsHardLinkUpdate && e.MetadataNode == null)),
+                    $"no topology delta followed the move; events: {string.Join("; ", events)}");
+                var afterMove = events.Where(e => e.IsHardLinkUpdate && e.MetadataNode == null).ToArray();
+                var delta = Assert.Single(Assert.Single(afterMove).HardLinkParentDeltas);
+                Assert.Equal(other, delta.ParentPath, ignoreCase: true);
+                Assert.Equal(-1, delta.CountDelta);
+                Assert.Equal(-4096, delta.SizeDelta);
+                Assert.False(rescan.Task.IsCompleted, "a hard-link change requested a drive rescan");
             }
             finally
             {
