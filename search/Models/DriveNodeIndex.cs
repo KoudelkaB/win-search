@@ -227,6 +227,19 @@ namespace search.Models
             public int Count => Volatile.Read(ref count);
             public bool IsUnused => count == 0 && Base.Count == 0 && Delta.IsEmpty;
 
+            public void EndSnapshot()
+            {
+                SnapshotPending = false;
+                //Only a pending scan needs copies of in-place metadata mutations and
+                //tombstones for paths outside the base. Release them after cancellation.
+                foreach (var pair in Delta)
+                    if (pair.Value.Node == null ? !Base.Contains(pair.Key)
+                        : Base.TryGetValue(pair.Key, out var stored)
+                            && ReferenceEquals(stored, pair.Value.Node))
+                        Delta.TryRemove(pair.Key, out _);
+                transientTombstones.Clear();
+            }
+
             public bool TryGetValue(object key, out INode node)
             {
                 if (!Delta.IsEmpty && Delta.TryGetValue(key, out var changed))
@@ -346,7 +359,7 @@ namespace search.Models
             {
                 var shard = Find(shards, root);
                 if (shard == null) return;
-                shard.SnapshotPending = false;
+                shard.EndSnapshot();
                 //A shard created only to carry the mark for a drive that was then skipped
                 //(deselected, not ready) must not linger as an empty, delta-less shard.
                 if (shard.IsUnused)
@@ -466,7 +479,7 @@ namespace search.Models
 
         /// <summary>
         /// Mark an in-place metadata/aggregate mutation. Base nodes are normally not placed
-        /// in the structural overlay; forcing this delta lets a concurrent scan preserve the
+        /// in the structural overlay; during a pending scan a delta preserves the
         /// changed identity and values if its disk snapshot predates the mutation.
         /// </summary>
         public bool Touch(object key, INode expected)
@@ -477,7 +490,7 @@ namespace search.Models
                 var routed = Find(shards, RootOf(key));
                 if (routed == null || !routed.TryGetValue(key, out var current)
                     || !ReferenceEquals(current, expected)) return false;
-                routed.Set(key, current, ++mutationVersion, forceDelta: true);
+                routed.Set(key, current, ++mutationVersion, forceDelta: routed.SnapshotPending);
                 return true;
             }
         }

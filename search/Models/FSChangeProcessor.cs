@@ -282,6 +282,7 @@ namespace search.Models
                     var repeatable = e.ChangeType is WatcherChangeTypes.Created
                         or WatcherChangeTypes.Deleted;
                     if (!repeatable || prior == null || prior.ChangeType != e.ChangeType
+                        || (prior.Frn != 0 && e.Frn != 0 && prior.Frn != e.Frn)
                         || !string.Equals(prior.FullPath, e.FullPath,
                             StringComparison.OrdinalIgnoreCase))
                         result.Add(e);
@@ -496,6 +497,12 @@ namespace search.Models
         internal static long CaptureFrnMutationVersion(string root)
             => sources.TryGetValue(root, out var source) && source is UsnDriveWatcher usn
                 ? usn.FrnMutationVersion : long.MaxValue;
+
+        internal static void RemapDirectory(ulong frn, string oldPath, string newPath)
+        {
+            if (sources.TryGetValue(RootOf(newPath), out var source) && source is UsnDriveWatcher usn)
+                usn.RemapDirectory(frn, oldPath, newPath);
+        }
 
         /// <summary>
         /// Hand one drive's freshly published scan to its USN watcher - fills the file

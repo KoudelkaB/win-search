@@ -1629,7 +1629,7 @@ namespace search.Models
                 treeRoots.Add(candidate);
             }
 
-            var roots = new HashSet<object>(treeRoots.Select(x => x.Node), ReferenceEqualityComparer.Instance);
+            var roots = new HashSet<object>(treeRoots.Select(x => x.Node), NodePath.KeyComparer);
             var prefixes = treeRoots.Select(x => x.Path + Path.DirectorySeparatorChar).ToArray();
 
             //The directory node already stores both aggregates for its complete subtree.
@@ -1895,8 +1895,7 @@ namespace search.Models
 
         /// <summary>
         /// Update ancestor size and recursive item-count aggregates in one walk. Ordinary
-        /// MFT nodes take the allocation-free parent-chain path below; hard-link ambiguity
-        /// is healed automatically by the USN watcher's quiet-window MFT rebuild.
+        /// MFT nodes use their parent chain; hard links supply explicit parent deltas.
         /// </summary>
         void PropagateSizeDelta(INode node, long delta)
             => PropagateAggregateDelta(node, delta, 0);
@@ -1916,7 +1915,7 @@ namespace search.Models
                     {
                         files.Touch(dir, dir);
                         pendingAggregateRows[dir] = generation;
-                    }) != 0;
+                    }, ResolveCurrentDirectory) != 0;
             }
             else
             {
@@ -1972,9 +1971,10 @@ namespace search.Models
                 if (root.PathParent != null || IsDriveRoot(root.FullName))
                 {
                     var depth = 0;
-                    for (var dir = root; dir != null && depth++ < 256; dir = dir.PathParent)
+                    for (var ancestor = root; ancestor != null && depth++ < 512; ancestor = ancestor.PathParent)
                     {
-                        if (!dir.IsDirectory) continue;
+                        var dir = ResolveCurrentDirectory(ancestor);
+                        if (dir?.IsDirectory != true) continue;
                         if (delta.SizeDelta != 0) dir.AddSizeDelta(delta.SizeDelta);
                         if (delta.CountDelta != 0) dir.AddCountDelta(delta.CountDelta);
                         files.Touch(dir, dir);
@@ -2007,14 +2007,22 @@ namespace search.Models
             Action<INode> markChanged)
             => ApplyAggregateDeltaToParentChain(node, 0, delta, markChanged);
 
-        static int ApplyAggregateDeltaToParentChain(INode node, long sizeDelta,
-            long countDelta, Action<INode> markChanged)
+        static INode ResolveCurrentDirectory(INode directory)
+            => files.TryGetValue(directory, out var current) ? current : null;
+
+        internal static int ApplyAggregateDeltaToParentChain(INode node, long sizeDelta,
+            long countDelta, Action<INode> markChanged, Func<INode, INode> resolve = null)
         {
             var changed = 0;
             var depth = 0;
-            for (var dir = node?.PathParent; dir != null && depth++ < 256; dir = dir.PathParent)
+            for (var ancestor = node?.PathParent; ancestor != null && depth++ < 512;
+                ancestor = ancestor.PathParent)
             {
-                if (!dir.IsDirectory) continue;
+                //A preserved child can still point to the previous scan's ancestors.
+                //Mutate the currently published directory, including when an intermediate
+                //ancestor was removed, and keep walking the original path to its root.
+                var dir = resolve == null ? ancestor : resolve(ancestor);
+                if (dir?.IsDirectory != true) continue;
                 if (sizeDelta != 0) dir.AddSizeDelta(sizeDelta);
                 if (countDelta != 0) dir.AddCountDelta(countDelta);
                 markChanged?.Invoke(dir);
@@ -2534,7 +2542,11 @@ namespace search.Models
                                     var added = ReindexRenamedTree(e.OldFullPath,
                                         e.FullPath, removedTree, renameHint,
                                         storedRenameFrn,
-                                        preserveDescendantFrns: e.Frn == 0);
+                                        preserveDescendantFrns: true);
+                                    //App echoes can precede the journal. Keep its resolver
+                                    //in step so a subsequent child delete needs no disk lookup.
+                                    if (e.Frn == 0 && oldRoot?.IsDirectory == true)
+                                        FSChangeProcessor.RemapDirectory(renameFrn, e.OldFullPath, e.FullPath);
                                     if (renameFrn != 0)
                                         QueueMetadataRefresh(e.FullPath, renameFrn);
                                     RecordStructuralNodes(removedTree.Concat(added));

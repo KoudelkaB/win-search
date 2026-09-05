@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using search.Core;
@@ -139,6 +140,9 @@ namespace search.Models
         /// <summary>Live FRN-map watermark paired with a drive-scan start.</summary>
         internal long FrnMutationVersion => frnMap.MutationVersion;
 
+        internal void RemapDirectory(ulong frn, string oldPath, string newPath)
+            => frnMap.RemapDirectory(frn, oldPath, newPath);
+
         UsnDriveWatcher(UsnJournal journal, Func<FsEvent, Task> process,
             Action<DriveScanReason> rescan, Action<UsnDriveWatcher> dead)
         {
@@ -240,6 +244,9 @@ namespace search.Models
                     $"USN journal on {journal.Root} lost history => rescan".Debug();
                     hardLinkBaseline.Reset();
                     frnMap.Clear(); //Stale beyond repair - the rescan repopulates it
+                    pendingRenames.Clear();
+                    ghosts.Clear();
+                    delayedHardLinkRepairs.Clear();
                     populated = false;
                     try { rescan(DriveScanReason.UsnHistoryLost); } catch { }
                     continue;
@@ -625,7 +632,7 @@ namespace search.Models
             failure = null;
             if (!frnMap.TryGetValue(frn, out var mapped) || mapped.IsDirectory)
                 return Failed(out failure, $"FRN {frn:x} is not mapped");
-            var path = mapped.FullName;
+            var path = frnMap.GetPath(mapped, out _);
             var indexed = FSChangeProcessor.Lookup(path);
             if (indexed == null || indexed.IsDirectory)
                 return Failed(out failure, $"canonical path is not indexed ({path})");
@@ -661,7 +668,7 @@ namespace search.Models
             {
                 if (!TryResolveLinkParent(oldParentRefs[i], out var parent))
                     return Failed(out failure, $"old parent {oldParentRefs[i]:x}");
-                oldParentPaths[i] = parent.FullName;
+                oldParentPaths[i] = frnMap.GetPath(parent, out _);
             }
 
             var currentParentRefs = new ulong[currentPaths.Length];
@@ -863,6 +870,12 @@ namespace search.Models
         {
             try
             {
+                //Every following child record is queued after this rename. Move the
+                //resolver's directory topology now, so even a child already deleted from
+                //disk resolves at the path the ordered handler will give it.
+                if (e.ChangeType == WatcherChangeTypes.Renamed
+                    && (e.NtfsAttributes & (uint)FileAttributes.Directory) != 0)
+                    frnMap.RemapDirectory(e.Frn, e.OldFullPath, e.FullPath);
                 var queued = process(e);
                 if (trackLoopCompletion) lastEnqueued = queued;
             }
@@ -896,9 +909,9 @@ namespace search.Models
         {
             movedFrom = null;
             if (!frnMap.TryGetValue(frn, out var node)) return null;
-            var path = node.FullName;
+            var path = frnMap.GetPath(node, out var remappedParent);
             if (FSChangeProcessor.Lookup(path) != null) return path; //Still indexed under that path
-            var queued = node is PathNode; //Our own event for this path is still in flight
+            var queued = node is PathNode || remappedParent;
             if (!heal) return queued ? path : null;
             var live = journal.TryResolvePath(frn, out var gone);
             if (live == null)
@@ -927,7 +940,14 @@ namespace search.Models
         /// itself - it verifies against the live index or the disk like any entry.
         /// </summary>
         void Remap(ulong frn, string path)
-            => frnMap.Set(frn, FSChangeProcessor.Lookup(path) ?? new PathNode(path));
+        {
+            var indexed = FSChangeProcessor.Lookup(path);
+            if (indexed != null && (indexed.Frn == 0 || indexed.Frn == frn))
+                frnMap.Set(frn, indexed);
+            else
+                frnMap.Set(frn, new PathNode(path,
+                    frnMap.TryGetValue(frn, out var known) ? known.Attributes : 0));
+        }
 
         /// <summary>
         /// FRN -> node map. A normal MFT scan supplies its already allocated record-number
@@ -961,6 +981,7 @@ namespace search.Models
                 public readonly NonBlocking.ConcurrentDictionary<ulong, INode> Sparse;
                 public readonly NonBlocking.ConcurrentDictionary<ulong, SourceOverride> Overrides;
                 public readonly NonBlocking.ConcurrentDictionary<ulong, LinkOverride> LinkOverrides;
+                public volatile bool HasDirectoryRemaps;
                 public PageTable(IFrnNodeSource source, Dictionary<ulong, Page> pages,
                     NonBlocking.ConcurrentDictionary<ulong, INode> sparse,
                     NonBlocking.ConcurrentDictionary<ulong, SourceOverride> overrides,
@@ -1007,6 +1028,59 @@ namespace search.Models
             long mutationVersion;
 
             public long MutationVersion => Interlocked.Read(ref mutationVersion);
+
+            /// <summary>
+            /// Materialize through live parent references. Immutable MFT children retain
+            /// their original parent objects after a directory move; the sparse directory
+            /// override supplies their current prefix without remapping the whole MFT.
+            /// </summary>
+            public string GetPath(INode node, out bool remappedParent)
+            {
+                remappedParent = false;
+                if (!pageTable.HasDirectoryRemaps || node.PathParent == null) return node.FullName;
+                var names = new List<string>(8);
+                var current = node;
+                while (current.PathParent is { } parent && names.Count < 512)
+                {
+                    names.Add(current.Name);
+                    if (parent.Frn != 0 && TryGetValue(parent.Frn, out var mapped)
+                        && !ReferenceEquals(parent, mapped))
+                    {
+                        remappedParent |= !NodePath.PathEquals(parent, mapped);
+                        parent = mapped;
+                    }
+                    current = parent;
+                }
+                var result = new StringBuilder(current.PathParent == null ? current.FullName : current.Name);
+                for (var i = names.Count - 1; i >= 0; i--)
+                {
+                    if (result.Length != 0 && result[^1] != '\\') result.Append('\\');
+                    result.Append(names[i]);
+                }
+                return result.ToString();
+            }
+
+            public void RemapDirectory(ulong frn, string oldPath, string newPath)
+            {
+                if (frn == 0 || string.IsNullOrEmpty(oldPath) || string.IsNullOrEmpty(newPath)) return;
+                lock (mutationLock)
+                {
+                    pageTable.HasDirectoryRemaps = true;
+                    var prefix = oldPath.TrimEnd('\\') + '\\';
+                    //Only live path-backed overrides need explicit rewriting. Scanned
+                    //children use GetPath's parent references and pay no per-child delta.
+                    foreach (var pair in pageTable.Overrides.ToArray())
+                    {
+                        var change = pair.Value;
+                        if (change.Node == null || change.Node.PathParent != null) continue;
+                        var path = change.Node.FullName;
+                        if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            Set(change.Frn, new PathNode(newPath.TrimEnd('\\') + '\\'
+                                + path.Substring(prefix.Length), change.Node.Attributes));
+                    }
+                    Set(frn, new PathNode(newPath, FileAttributes.Directory));
+                }
+            }
 
             /// <summary>Whether the scan behind this table (ignoring overrides) knows the exact reference</summary>
             static bool ScanHas(PageTable table, ulong frn)
@@ -1227,6 +1301,8 @@ namespace search.Models
                                 || (populated.Overrides.TryGetValue(pair.Key, out var kept)
                                     && kept.Frn == pair.Value.Frn && kept.Node != null))
                                 populated.LinkOverrides[pair.Key] = pair.Value;
+                        populated.HasDirectoryRemaps = old.HasDirectoryRemaps
+                            && !populated.Overrides.IsEmpty;
                     }
                     //Set/Remove wait on mutationLock and therefore apply after this fresh
                     //table is visible. Earlier changes newer than the scan watermark were
@@ -1240,11 +1316,16 @@ namespace search.Models
         sealed class PathNode : INode
         {
             readonly string path;
-            public PathNode(string path) => this.path = path;
+            readonly FileAttributes attributes;
+            public PathNode(string path, FileAttributes attributes = 0)
+            {
+                this.path = path;
+                this.attributes = attributes;
+            }
             public override string FullName => path;
             public override string Name => Path.GetFileName(path);
             public override bool Exists => false; //Must never enter the index - it carries no metadata
-            public override FileAttributes Attributes { get => 0; protected set { } }
+            public override FileAttributes Attributes { get => attributes; protected set { } }
             public override ulong Size { get => 0; protected set { } }
             public override DateTime LastChangeTime { get => default; protected set { } }
         }

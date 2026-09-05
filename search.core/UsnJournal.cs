@@ -209,7 +209,8 @@ namespace search.Core
                 {
                     var nameLength = BitConverter.ToUInt16(data, offset + 56);
                     var nameOffset = BitConverter.ToUInt16(data, offset + 58);
-                    var name = nameLength > 0 && offset + nameOffset + nameLength <= length
+                    var name = nameLength > 0 && (nameLength & 1) == 0
+                        && nameOffset >= 60 && nameOffset + nameLength <= recordLength
                         ? Encoding.Unicode.GetString(data, offset + nameOffset, nameLength)
                         : ""; //The unprivileged read blanks all names
                     records.Add(new UsnRecord(
@@ -273,15 +274,27 @@ namespace search.Core
                 return null;
             }
             var path = new StringBuilder(1024);
-            var length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
-            if (length == 0 || length > path.Capacity)
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                error = Marshal.GetLastWin32Error();
-                return null;
+                var length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
+                if (length == 0)
+                {
+                    error = Marshal.GetLastWin32Error();
+                    return null;
+                }
+                //On insufficient space Windows returns the required character count,
+                //including the terminator; GetLastError is not a failure indication here.
+                if (length >= path.Capacity)
+                {
+                    if (length > 65_536) return null;
+                    path = new StringBuilder(checked((int)length));
+                    continue;
+                }
+                var result = path.ToString();
+                //GetFinalPathNameByHandle returns the \\?\ form.
+                return result.StartsWith(@"\\?\", StringComparison.Ordinal) ? result.Substring(4) : result;
             }
-            var result = path.ToString();
-            //GetFinalPathNameByHandle returns the \\?\ form
-            return result.StartsWith(@"\\?\", StringComparison.Ordinal) ? result.Substring(4) : result;
+            return null;
         }
 
         /// <summary>

@@ -121,12 +121,13 @@ namespace search.Tests
             return attribute;
         }
 
-        public static byte[] StandardInfo(DateTime created, DateTime modified, DateTime accessed)
+        public static byte[] StandardInfo(DateTime created, DateTime modified, DateTime accessed, uint flags = 0)
         {
             var value = new byte[48];
             W64(value, 0, (ulong)created.ToFileTimeUtc());
             W64(value, 8, (ulong)modified.ToFileTimeUtc());
             W64(value, 24, (ulong)accessed.ToFileTimeUtc());
+            W32(value, 32, flags);
             return Resident(0x10, value);
         }
 

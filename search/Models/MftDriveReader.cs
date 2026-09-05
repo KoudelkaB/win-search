@@ -156,7 +156,7 @@ namespace search.Models
                 var parentReference = parentReferences[node.EntryNumber];
                 var parentEntry = (uint)(parentReference & FileReferenceMask);
                 if (parentEntry != node.EntryNumber && parentEntry < (uint)parsed.Length
-                    && parsed[parentEntry] is { } parent
+                    && parsed[parentEntry] is { IsDirectory: true } parent
                     && SequencesMatch((ushort)(parentReference >> 48), parent.SequenceNumber))
                     node.Parent = parent;
             }
@@ -252,6 +252,7 @@ namespace search.Models
             ulong fnModified = 0;
             var hasStandardInfo = false;
             ulong siModified = 0;
+            uint? siFlags = null;
             var hasDataSize = false;
             ulong dataSize = 0;
 
@@ -281,6 +282,7 @@ namespace search.Models
                             case AttributeStandardInformation when valueLength >= 32:
                                 siModified = U64(value[8..]);
                                 hasStandardInfo = true;
+                                if (valueLength >= 36) siFlags = U32(value[32..]);
                                 break;
 
                             case AttributeFileName when valueLength >= 66:
@@ -327,7 +329,10 @@ namespace search.Models
 
             // Mask to standard FILE_ATTRIBUTE_* bits - $FILE_NAME flags carry 0x10000000 for directories,
             // which must not leak into FileAttributes (the header flag below is authoritative)
-            var attributes = (FileAttributes)(fileNameFlags & 0x00FFFFFF);
+            //The $FILE_NAME copy can lag attribute-only changes until a name is updated.
+            //Use the same authoritative standard information as the displayed timestamp.
+            var attributes = (FileAttributes)((siFlags ?? fileNameFlags) & 0x00FFFFFF)
+                & ~FileAttributes.Directory;
             if (isDirectory)
                 attributes |= FileAttributes.Directory;
 

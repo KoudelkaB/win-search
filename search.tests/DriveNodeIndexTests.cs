@@ -221,7 +221,7 @@ namespace search.Tests
             var index = new DriveNodeIndex();
             index.ReplaceDrive(@"C:\", Map(root, renamedOld));
             index[changedBeforeScan.FullName] = changedBeforeScan;
-            var watermark = index.MutationVersion;
+            var watermark = index.BeginSnapshot(@"C:\");
 
             //These are the create + rename mutations delivered while the immutable MFT
             //snapshot is being built. Its stale result still contains draft.tmp and an
@@ -301,6 +301,26 @@ namespace search.Tests
             index.BeginSnapshot(@"D:\");
             index.EndSnapshot(@"D:\");
             Assert.True(index.TryGetValue(kept.FullName, out _)); //a used shard stays
+        }
+
+        [Fact]
+        public void MetadataOnlyUpdatesKeepTheDenseSnapshotOutsideAScan()
+        {
+            var node = new TestNode(@"C:\growing.log");
+            var dense = new INode[] { node };
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            node.AddSizeDelta(42);
+            Assert.True(index.Touch(node, node));
+            Assert.True(index.TryGetDenseSnapshot(out var snapshot));
+            Assert.Same(dense, snapshot);
+            Assert.Equal(42UL, snapshot[0].Size);
+
+            index.BeginSnapshot(@"C:\");
+            Assert.True(index.Touch(node, node));
+            index.EndSnapshot(@"C:\"); //cancelled F12 releases metadata-only overlays
+            Assert.True(index.TryGetDenseSnapshot(out snapshot));
+            Assert.Same(dense, snapshot);
         }
 
         /// <summary>

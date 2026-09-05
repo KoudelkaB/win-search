@@ -140,6 +140,66 @@ namespace search.Tests
         }
 
         [Fact]
+        public void SubtreeMembershipSurvivesMixedSnapshotGenerations()
+        {
+            var old = Sample();
+            var fresh = Sample();
+            var docs = ByName(fresh, "Docs");
+            var child = ByName(old, "b.txt");
+
+            Assert.True(NodePath.IsUnder(child, docs, @"Q:\Docs\"));
+            Assert.True(NodePath.IsUnder(child, new FileNode(@"Q:\Docs"), @"Q:\Docs\"));
+            Assert.True(NodePath.IsUnder(child, null, @"Q:\Docs\"));
+            Assert.False(NodePath.IsUnder(child, null, @"Q:\Doc\"));
+            Assert.False(NodePath.IsUnder(ByName(old, "Docs"), docs, @"Q:\Docs\"));
+            var roots = new HashSet<object>(NodePath.KeyComparer) { docs };
+            Assert.True(NodePath.IsUnderAny(child, roots, new[] { @"Q:\Docs\" }));
+        }
+
+        [Fact]
+        public void LiveAggregateDeltasUpdateThePublishedAncestorsAfterAScan()
+        {
+            var old = Sample();
+            var fresh = Sample();
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"Q:\", DriveNodeIndex.PrepareDrive(fresh));
+            var file = ByName(old, "b.txt");
+            var oldSize = ByName(old, "Docs").Size;
+            Assert.Equal(3, SearchModel.ApplyAggregateDeltaToParentChain(file, 42, 1,
+                null, ancestor => index.TryGetValue(ancestor, out var current) ? current : null));
+            Assert.Equal(oldSize, ByName(old, "Docs").Size);
+            Assert.Equal(oldSize + 42, ByName(fresh, "Docs").Size);
+            Assert.Equal(ByName(old, "Docs").Count + 1, ByName(fresh, "Docs").Count);
+        }
+
+        [Fact]
+        public void DirectoryMovesRebaseBothScannedAndLiveFileReferences()
+        {
+            var nodes = Sample();
+            var map = new UsnDriveWatcher.FrnMap();
+            map.Populate(nodes);
+            var docs = ByName(nodes, "Docs");
+            var child = ByName(nodes, "b.txt");
+            const ulong liveFrn = 100;
+            map.Set(liveFrn, FileNode.Create(@"Q:\Docs\live.txt",
+                new NodeMetadataSnapshot(false, 12, DateTime.MinValue), liveFrn));
+
+            var watermark = map.MutationVersion;
+            map.RemapDirectory(docs.Frn, @"Q:\Docs", @"Q:\Moved");
+            Assert.Equal(@"Q:\Moved\Sub\b.txt", map.GetPath(child, out var moved));
+            Assert.True(moved);
+            Assert.True(map.TryGetValue(liveFrn, out var live));
+            Assert.Equal(@"Q:\Moved\live.txt", map.GetPath(live, out _));
+            Assert.Equal(@"Q:\Docs\Sub\b.txt", child.FullName); //immutable path index stays intact
+
+            map.Populate(nodes, watermark); //A concurrent scan still saw the old prefix.
+            Assert.Equal(@"Q:\Moved\Sub\b.txt", map.GetPath(child, out _));
+
+            map.RemapDirectory(ByName(nodes, "Sub").Frn, @"Q:\Moved\Sub", @"Q:\Elsewhere");
+            Assert.Equal(@"Q:\Elsewhere\b.txt", map.GetPath(child, out _));
+        }
+
+        [Fact]
         public void LeafAndComponentHelpersNeedNoFullPath()
         {
             var nodes = Sample();

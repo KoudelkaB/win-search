@@ -139,6 +139,16 @@ namespace search.Models
         /// falls back to the textual prefix, exactly like the old FullName.StartsWith.
         /// </summary>
         public static bool IsUnder(INode n, INode dir, string dirPrefixWithSlash)
+            => IsUnder(n, dir, dirPrefixWithSlash, TerminalOf(dir));
+
+        internal static INode TerminalOf(INode node)
+        {
+            for (var guard = 0; node?.PathParent != null && guard < MaxWalk; guard++)
+                node = node.PathParent;
+            return node;
+        }
+
+        internal static bool IsUnder(INode n, INode dir, string dirPrefixWithSlash, INode directoryTerminal)
         {
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
@@ -146,13 +156,27 @@ namespace search.Models
                 m = m.PathParent;
                 if (dir != null && ReferenceEquals(m, dir)) return true;
             }
-            return m.FullName.StartsWith(dirPrefixWithSlash, StringComparison.OrdinalIgnoreCase);
+            //Within one immutable tree, the identity walk is conclusive. NodeFilter
+            //caches the criterion's terminal once, keeping its normal hot loop unchanged.
+            if (dir != null && ReferenceEquals(m, directoryTerminal)) return false;
+            if (m.FullName.StartsWith(dirPrefixWithSlash, StringComparison.OrdinalIgnoreCase)) return true;
+
+            //A live overlay can retain a child from the preceding scan while its
+            //directory comes from the new one. Only mixed trees need path comparison.
+            var target = dir != null ? Cursor.For(dir) : Cursor.ForDirectoryPrefix(dirPrefixWithSlash);
+            var cursor = Cursor.For(n);
+            for (var guard = 0; !cursor.IsBase && guard < MaxWalk * 2; guard++)
+            {
+                cursor = cursor.Up();
+                if (CursorsEqual(cursor, target)) return true;
+            }
+            return false;
         }
 
         /// <summary>
         /// <see cref="IsUnder"/> against several directories in one chain walk - removing
         /// N sibling trees must not cost N passes over a chain (or N index scans upstream).
-        /// dirs holds the directories' indexed nodes (reference identity), prefixes their
+        /// dirs holds the directories' indexed nodes with KeyComparer, prefixes their
         /// paths with a trailing slash for the textual fallback.
         /// </summary>
         public static bool IsUnderAny(INode n, HashSet<object> dirs, IReadOnlyList<string> prefixes)
@@ -316,6 +340,14 @@ namespace search.Models
                 => n.PathParent != null ? new Cursor(n, MaxWalk) : ForString(n.FullName);
 
             public static Cursor ForString(string path) => new Cursor(path, path.Length);
+
+            public static Cursor ForDirectoryPrefix(string path)
+            {
+                var end = path.Length;
+                var rootEnd = path.IndexOf('\\') + 1;
+                while (end > rootEnd && path[end - 1] == '\\') end--;
+                return new Cursor(path, end);
+            }
 
             /// <summary>The node's path without its leaf segment (its folder); empty for a base-only path</summary>
             public static Cursor Folder(INode n)

@@ -208,6 +208,17 @@ namespace search.Tests
             Assert.Equal(0x20u, result[0].NtfsAttributes);
         }
 
+        [Theory]
+        [InlineData(WatcherChangeTypes.Created)]
+        [InlineData(WatcherChangeTypes.Deleted)]
+        public void DifferentFileReferencesAtTheSamePathAreNotCoalesced(WatcherChangeTypes change)
+        {
+            var first = new FsEvent(change, @"C:\replaced.txt", frn: 1);
+            var second = new FsEvent(change, first.FullPath, frn: 2);
+            Assert.Equal(new[] { first, second },
+                FSChangeProcessor.CoalesceChangedEvents(new[] { first, second }));
+        }
+
         /// <summary>
         /// "explorer /select,X" opens Explorer's default page when X does not exist, so a
         /// row whose file was renamed or deleted meanwhile has to fall back to the closest

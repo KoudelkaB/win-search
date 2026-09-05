@@ -104,6 +104,7 @@ namespace search.Models
             public readonly string Prefix; // Path + '\' for the textual fallback
             public readonly bool Recursive;
             INode node;
+            public INode Terminal { get; private set; }
             bool resolved;
 
             public DirCriterion(string path, bool recursive)
@@ -120,6 +121,7 @@ namespace search.Models
                     if (!resolved)
                     {
                         node = Resolve(Path);
+                        Terminal = NodePath.TerminalOf(node);
                         resolved = true;
                     }
                     return node;
@@ -253,7 +255,7 @@ namespace search.Models
         /// The node lies strictly inside the directory subtree - by ancestor identity for
         /// indexed chains, by path prefix for path-backed nodes (zip entries, walked drives)
         /// </summary>
-        static bool IsUnder(INode n, DirCriterion d) => NodePath.IsUnder(n, d.Node, d.Prefix);
+        static bool IsUnder(INode n, DirCriterion d) => NodePath.IsUnder(n, d.Node, d.Prefix, d.Terminal);
 
         /// <summary>
         /// The directory is the node's immediate parent

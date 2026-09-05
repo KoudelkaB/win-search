@@ -194,6 +194,98 @@ namespace search.Tests
             }
         }
 
+        [Fact]
+        public void FileReferenceResolutionSupportsPathsLongerThanTheInitialBuffer()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), $"usn-long-path-{Guid.NewGuid():N}");
+            try
+            {
+                var deep = directory;
+                while (deep.Length < 1200) deep = Path.Combine(deep, new string('d', 100));
+                Directory.CreateDirectory(deep);
+                var file = Path.Combine(deep, "long.txt");
+                File.WriteAllText(file, "long path");
+                using var journal = UsnJournal.TryOpen(Path.GetPathRoot(file));
+                Assert.NotNull(journal);
+                Assert.True(journal.TryGetFileReference(file, out var frn));
+                Assert.Equal(file, journal.TryResolvePath(frn));
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task DeletedDescendantOfARenamedDirectoryKeepsItsExactPath()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), $"usn-moved-tree-{Guid.NewGuid():N}");
+            var before = Path.Combine(directory, "before");
+            var after = Path.Combine(directory, "after");
+            var oldSub = Path.Combine(before, "sub");
+            var oldFile = Path.Combine(oldSub, "child.bin");
+            var newFile = Path.Combine(after, "sub", "child.bin");
+            var indexed = new ConcurrentDictionary<string, INode>(StringComparer.OrdinalIgnoreCase);
+            var events = new ConcurrentQueue<FsEvent>();
+            var lookup = FSChangeProcessor.Lookup;
+            UsnDriveWatcher watcher = null;
+            try
+            {
+                Directory.CreateDirectory(oldSub);
+                File.WriteAllBytes(oldFile, new byte[41]);
+                var root = Path.GetPathRoot(directory);
+                using var journal = UsnJournal.TryOpen(root);
+                Assert.NotNull(journal);
+                INode Add(string path, INode parent)
+                {
+                    Assert.True(journal.TryGetFileReference(path, out var frn));
+                    Assert.True(INode.TryReadMetadata(path, out var metadata));
+                    return indexed[path] = new LiveFrnNode(frn, path, parent, metadata);
+                }
+                var top = Add(directory, null);
+                var moved = Add(before, top);
+                var sub = Add(oldSub, moved);
+                Add(oldFile, sub);
+                var initial = indexed.Values.ToArray();
+                var renameQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                FSChangeProcessor.Lookup = path => indexed.TryGetValue(path, out var node) ? node : null;
+                watcher = UsnDriveWatcher.TryStart(root, e =>
+                {
+                    events.Enqueue(e);
+                    if (e.ChangeType == WatcherChangeTypes.Renamed && e.OldFullPath == before)
+                    {
+                        renameQueued.TrySetResult();
+                        return Task.Run(async () =>
+                        {
+                            await Task.Delay(200); //The ordered model applies after translation.
+                            foreach (var node in initial.Where(n => n.FullName == before
+                                || n.FullName.StartsWith(before + '\\', StringComparison.OrdinalIgnoreCase)))
+                            {
+                                indexed.TryRemove(node.FullName, out _);
+                                var path = after + node.FullName.Substring(before.Length);
+                                indexed[path] = new LiveFrnNode(node.Frn, path, null, NodeMetadataSnapshot.From(node));
+                            }
+                        });
+                    }
+                    return Task.CompletedTask;
+                }, _ => { }, _ => { });
+                Assert.NotNull(watcher);
+                watcher.Populate(initial);
+                Directory.Move(before, after);
+                await renameQueued.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                File.Delete(newFile);
+                Assert.True(await WaitFor(() => events.Any(e => e.ChangeType == WatcherChangeTypes.Deleted
+                    && string.Equals(e.FullPath, newFile, StringComparison.OrdinalIgnoreCase))),
+                    $"Missing exact child delete; events: {string.Join("; ", events)}");
+            }
+            finally
+            {
+                watcher?.Dispose();
+                FSChangeProcessor.Lookup = lookup;
+                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            }
+        }
+
         /// <summary>
         /// "Write foo.tmp, rename it over foo" is how editors, compilers and CLI tools save
         /// a file. Both records normally land in ONE journal read batch, so the temp file's

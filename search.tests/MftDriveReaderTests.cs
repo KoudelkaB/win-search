@@ -495,6 +495,28 @@ namespace search.Tests
         }
 
         [Fact]
+        public void StandardInformationFlagsOverrideTheStaleFilenameCopy()
+        {
+            var current = FileAttributes.Hidden | FileAttributes.Compressed;
+            var nodes = WithRoot(1024).AddRecord(attributes: new[]
+            {
+                FakeMft.StandardInfo(Created, Modified, Accessed, (uint)current),
+                FakeMft.FileName(FakeMft.RootEntry, "changed.bin", flags: (uint)FileAttributes.ReadOnly)
+            }).Parse();
+            Assert.Equal(current, nodes.Single(n => n.Name == "changed.bin").Attributes);
+        }
+
+        [Fact]
+        public void AFileCannotBeTheParentOfAnotherMftRecord()
+        {
+            var nodes = WithRoot(1024)
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "parent.bin") })
+                .AddRecord(attributes: new[] { FakeMft.FileName(6, "phantom.txt") })
+                .Parse();
+            Assert.DoesNotContain(nodes, n => n.Name == "phantom.txt");
+        }
+
+        [Fact]
         public void AnMftShorterThanOneRecordYieldsNothingButIsStillConsumed()
         {
             var stream = new MemoryStream(new byte[100]);

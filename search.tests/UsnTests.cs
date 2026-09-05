@@ -87,6 +87,18 @@ namespace search.Tests
             Assert.Equal(0UL, new FileNode(Path.GetTempPath().TrimEnd('\\')).Frn);
         }
 
+        [Fact]
+        public void AJournalNameCannotConsumeTheFollowingRecord()
+        {
+            var damaged = RecordV2(1, 5, UsnJournal.ReasonFileDelete, 0);
+            BitConverter.GetBytes((ushort)80).CopyTo(damaged, 56);
+            var data = Batch(damaged, RecordV2(2, 5, UsnJournal.ReasonFileCreate, 0, "good.txt"));
+            var records = UsnJournal.Parse(data, data.Length);
+            Assert.Equal(2, records.Count);
+            Assert.Empty(records[0].Name);
+            Assert.Equal("good.txt", records[1].Name);
+        }
+
         /// <summary>Node carrying only an FRN - what the map stores and verifies elsewhere</summary>
         sealed class FrnNode : INode
         {
