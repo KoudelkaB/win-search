@@ -168,6 +168,8 @@ namespace search.Models
         MftLoadTiming LoadTiming { get; }
         bool TryGetByFrn(ulong frn, out INode node);
         bool HasMultipleLinks(ulong frn);
+        IReadOnlyList<INode> GetFileLinks(ulong frn)
+            => TryGetByFrn(frn, out var node) ? new[] { node } : Array.Empty<INode>();
         /// <summary>
         /// Parent directory references for every non-DOS file name of a multi-linked
         /// record. Duplicate parents are intentional: two differently named links can

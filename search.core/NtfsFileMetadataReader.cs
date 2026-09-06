@@ -101,6 +101,25 @@ namespace search.Core
             }
         }
 
+        /// <summary>Read identity and metadata from the same path handle during reconciliation.</summary>
+        public static bool TryReadPath(string path, out ulong frn, out NtfsFileMetadata metadata)
+        {
+            frn = 0;
+            metadata = default;
+            var name = path.Length >= 248 && !path.StartsWith(@"\\", StringComparison.Ordinal)
+                ? @"\\?\" + path : path;
+            const uint OpenReparsePoint = 0x00200000;
+            using var file = CreateFile(name, FILE_READ_ATTRIBUTES, SHARE_ALL, IntPtr.Zero,
+                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | OpenReparsePoint, IntPtr.Zero);
+            if (file.IsInvalid || !GetFileInformationByHandle(file, out var info)) return false;
+            frn = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;
+            metadata = new NtfsFileMetadata(info.FileAttributes,
+                (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? 0UL
+                    : ((ulong)info.FileSizeHigh << 32) | info.FileSizeLow,
+                ((long)info.LastWriteTimeHigh << 32) | info.LastWriteTimeLow);
+            return true;
+        }
+
         public void Dispose() => volumeHint.Dispose();
 
         static int privilegeAttempted;

@@ -470,7 +470,7 @@ namespace search.Tests
         /// row must move there instead of staying a phantom of a path that is gone.
         /// </summary>
         [Fact]
-        public async Task DeletingTheCanonicalNameOfAHardLinkedFileMovesItsRowToTheSurvivingName()
+        public async Task DeletingTheCanonicalNameRemovesOnlyThatHardLinkRow()
         {
             var root = Path.GetPathRoot(Path.GetTempPath());
             var events = new ConcurrentQueue<FsEvent>();
@@ -484,13 +484,13 @@ namespace search.Tests
             var watcher = UsnDriveWatcher.TryStart(root, e =>
             {
                 events.Enqueue(e);
-                //Mirror the model handler for the events this test drives
+                //Mirror the topology row update without applying aggregate deltas twice.
                 if (e.IsHardLinkUpdate)
                 {
-                    if (indexed.TryGetValue(e.FullPath, out var row)
-                        && (e.MetadataNode == null ? row.Frn == e.Frn
-                            : ReferenceEquals(row, e.MetadataNode)))
-                        row.ApplyMetadata(e.MetadataSnapshot.Value);
+                    foreach (var oldPath in e.OldLinkPaths.Except(e.CurrentLinkPaths,
+                        StringComparer.OrdinalIgnoreCase)) indexed.TryRemove(oldPath, out _);
+                    foreach (var currentPath in e.CurrentLinkPaths)
+                        indexed[currentPath] = FileNode.Create(currentPath, e.MetadataSnapshot.Value, e.Frn);
                 }
                 else if (e.ChangeType == WatcherChangeTypes.Created && e.Frn != 0
                     && INode.TryReadMetadata(e.FullPath, out var snapshot))
@@ -534,22 +534,19 @@ namespace search.Tests
                             && string.Equals(d.ParentPath, other, StringComparison.OrdinalIgnoreCase)))),
                     $"the link was not accounted to its directory; events: {string.Join("; ", events)}");
 
-                File.Delete(file); //The indexed name goes, the file stays under other\link.bin
-                Assert.True(await WaitFor(() => events.Any(e =>
-                        e.ChangeType == WatcherChangeTypes.Renamed
-                        && string.Equals(e.OldFullPath, file, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(e.FullPath, link, StringComparison.OrdinalIgnoreCase))),
-                    $"the row did not move to the surviving name; events: {string.Join("; ", events)}");
-                Assert.True(await WaitFor(() => !indexed.ContainsKey(file) && indexed.ContainsKey(link)));
-                //The rename handler moves the file's own contribution out of dir and into
-                //other - which already counted the link. The topology delta that follows
-                //the rename must therefore take exactly that one link back out of other
-                //(net zero there) and touch dir only through the rename itself.
-                Assert.True(await WaitFor(() => events.Any(e => e.IsHardLinkUpdate && e.MetadataNode == null)),
-                    $"no topology delta followed the move; events: {string.Join("; ", events)}");
-                var afterMove = events.Where(e => e.IsHardLinkUpdate && e.MetadataNode == null).ToArray();
+                Assert.True(await WaitFor(() => indexed.ContainsKey(file) && indexed.ContainsKey(link)));
+                var renamedLink = Path.Combine(other, "renamed-link.bin");
+                File.Move(link, renamedLink);
+                Assert.True(await WaitFor(() => !indexed.ContainsKey(link) && indexed.ContainsKey(renamedLink)),
+                    $"renaming a noncanonical link left stale results; events: {string.Join("; ", events)}");
+                link = renamedLink;
+                File.Delete(file); //Only this directory entry goes; the other stays searchable.
+                Assert.True(await WaitFor(() => !indexed.ContainsKey(file) && indexed.ContainsKey(link)),
+                    $"the removed name remained indexed; events: {string.Join("; ", events)}");
+                var afterMove = events.Where(e => e.IsHardLinkUpdate
+                    && e.OldLinkPaths.Contains(file) && !e.CurrentLinkPaths.Contains(file)).ToArray();
                 var delta = Assert.Single(Assert.Single(afterMove).HardLinkParentDeltas);
-                Assert.Equal(other, delta.ParentPath, ignoreCase: true);
+                Assert.Equal(dir, delta.ParentPath, ignoreCase: true);
                 Assert.Equal(-1, delta.CountDelta);
                 Assert.Equal(-4096, delta.SizeDelta);
                 Assert.False(rescan.Task.IsCompleted, "a hard-link change requested a drive rescan");

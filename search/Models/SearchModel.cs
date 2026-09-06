@@ -1934,12 +1934,105 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Apply the explicit parent contributions of one multi-linked file. Unlike the
-        /// ordinary node propagation, each delta starts at the named parent directory
-        /// itself because the compact searchable node has only one canonical parent chain.
-        /// Resolve every parent before mutating anything so a stale topology falls back
-        /// cleanly instead of leaving a partially adjusted tree.
+        /// Synchronize the searchable directory entries of one NTFS file, whose aggregate
+        /// contributions are applied separately through the complete topology delta.
         /// </summary>
+        internal static bool CanApplyHardLinkDelta(DriveNodeIndex index, FsEvent change)
+            => HardLinkDeltaRejection(index, change) == null;
+
+        internal static string HardLinkDeltaRejection(DriveNodeIndex index, FsEvent change)
+        {
+            if (!index.TryGetValue(change.FullPath, out var current)) return "canonical path missing";
+            if (current.Frn == 0) return "canonical FRN unknown";
+            if (change.MetadataNode != null ? !ReferenceEquals(current, change.MetadataNode)
+                : current.Frn != change.Frn) return "canonical identity replaced";
+            return HardLinkAffectedPaths(change).Any(path =>
+                index.TryGetValue(path, out var row) && row.Frn == 0)
+                ? "affected path FRN unknown" : null;
+        }
+
+        static IEnumerable<string> HardLinkAffectedPaths(FsEvent change)
+            => (change.OldLinkPaths ?? Array.Empty<string>())
+                .Concat(change.CurrentLinkPaths ?? Array.Empty<string>()).Append(change.FullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        internal static (bool Known, NodeMetadataSnapshot? Snapshot, ulong Frn) ReadHardLinkPath(string path)
+        {
+            try
+            {
+                //Distinguish missing from inaccessible: a failed stat must not erase a
+                //protected row. The fresh snapshot may belong to a replacement file.
+                if (search.Core.NtfsFileMetadataReader.TryReadPath(path, out var frn, out var metadata))
+                    return (true, new NodeMetadataSnapshot((FileAttributes)metadata.Attributes,
+                        metadata.Size, DateTime.FromFileTime(metadata.LastWriteFileTimeUtc)), frn);
+                _ = File.GetAttributes(path);
+                return INode.TryReadMetadata(path, out var snapshot) ? (true, snapshot, 0) : (false, null, 0);
+            }
+            catch (FileNotFoundException) { return (true, null, 0); }
+            catch (DirectoryNotFoundException) { return (true, null, 0); }
+            catch (IOException) { return (false, null, 0); }
+            catch (UnauthorizedAccessException) { return (false, null, 0); }
+        }
+
+        internal static void ReconcileHardLinkRows(DriveNodeIndex index, FsEvent change,
+            Func<string, (bool Known, NodeMetadataSnapshot? Snapshot, ulong Frn)> read,
+            Action<INode, long, long> aggregate, Action<INode, bool> structural)
+        {
+            //The queued topology's baseline is obsolete. Re-read only its affected paths,
+            //and derive contributions from the rows we actually replace, not stale deltas.
+            foreach (var path in HardLinkAffectedPaths(change))
+            {
+                var live = read(path);
+                if (!live.Known || live.Snapshot?.IsDirectory == true) continue;
+                if (index.TryGetValue(path, out var old))
+                {
+                    if (old.IsDirectory) continue;
+                    if (index.TryRemove(path, row => aggregate(row, -(long)row.Size, -1), out var removed))
+                        structural(removed, false);
+                }
+                if (live.Snapshot is { } snapshot)
+                {
+                    //Use the freshly read identity, never the possibly stale event FRN.
+                    var added = FileNode.Create(path, snapshot, live.Frn);
+                    if (ReferenceEquals(index.GetOrAdd(path, added), added))
+                    {
+                        aggregate(added, (long)added.Size, 1);
+                        structural(added, true);
+                    }
+                }
+            }
+        }
+
+        internal static void ApplyHardLinkRows(DriveNodeIndex index, FsEvent change,
+            Action<INode, bool> structural, Action<INode> metadata)
+        {
+            // Parent deltas account for the entire topology once. Row changes here
+            // must not propagate size/count a second time through their own paths.
+            var currentPaths = new HashSet<string>(change.CurrentLinkPaths, StringComparer.OrdinalIgnoreCase);
+            foreach (var path in change.OldLinkPaths)
+                if (!currentPaths.Contains(path) && index.TryGetValue(path, out var old)
+                    && (old.Frn == change.Frn || ReferenceEquals(old, change.MetadataNode))
+                    && index.TryRemove(path, out var removed))
+                    structural(removed, false);
+            foreach (var path in currentPaths)
+            {
+                if (index.TryGetValue(path, out var row))
+                {
+                    if (row.Frn != change.Frn && !ReferenceEquals(row, change.MetadataNode)) continue;
+                    row.ApplyMetadata(change.MetadataSnapshot.Value);
+                    index.Touch(row, row);
+                    metadata(row);
+                }
+                else
+                {
+                    var added = FileNode.Create(path, change.MetadataSnapshot.Value, change.Frn);
+                    row = index.GetOrAdd(path, added);
+                    if (ReferenceEquals(row, added)) structural(row, true);
+                }
+            }
+        }
+
+        // Resolve every parent before applying the topology's aggregate contributions.
         bool ApplyHardLinkParentDeltas(IReadOnlyList<HardLinkParentDelta> deltas)
         {
             if (deltas == null) return false;
@@ -2455,31 +2548,38 @@ namespace search.Models
                                 {
                                     var current = files.TryGetValue(e.FullPath,
                                         out var indexedCurrent) ? indexedCurrent : null;
-                                    //The row a repair targets is normally the instance the
-                                    //watcher looked at; after it moved the row to the file's
-                                    //surviving name, the rename created a fresh instance that
-                                    //only the file reference identifies.
-                                    var sameRow = current != null && (e.MetadataNode != null
-                                        ? ReferenceEquals(current, e.MetadataNode)
-                                        : current.Frn != 0 && current.Frn == e.Frn);
-                                    if (!sameRow || !ApplyHardLinkParentDeltas(e.HardLinkParentDeltas))
+                                    //Reject a repair when a newer scan replaced its baseline.
+                                    var rejection = HardLinkDeltaRejection(files, e);
+                                    if (rejection != null || !ApplyHardLinkParentDeltas(e.HardLinkParentDeltas))
                                     {
-                                        //A scan replaced the row between the topology read and
-                                        //this ordered event (its own aggregates are exact), or
-                                        //the row vanished meanwhile. Either way the deltas no
-                                        //longer apply; a directory size drifts by at most this
-                                        //file until the next refresh - never worth reloading
-                                        //the whole drive, which used to happen here for every
-                                        //file of a package update.
-                                        ReportHardLinkApplySkipped(e, current == null
-                                            ? "canonical path missing"
-                                            : !sameRow ? "canonical identity replaced"
-                                            : "hard-link parent delta could not be applied");
+                                        //A scan/reconcile replaced the baseline, or parent
+                                        //resolution failed. Recover names and aggregates from
+                                        //the disk now; emitting a second rename would double
+                                        //apply a topology update that succeeded normally.
+                                        ReportHardLinkApplySkipped(e, rejection
+                                            ?? "hard-link parent delta could not be applied");
+                                        ReconcileHardLinkRows(files, e, ReadHardLinkPath,
+                                            PropagateAggregateDelta, (row, added) =>
+                                            {
+                                                if (added) PatchFileAdded(row);
+                                                else PatchFileRemoved(row);
+                                                RecordStructuralNode(row);
+                                            });
                                         break;
                                     }
-                                    current.ApplyMetadata(e.MetadataSnapshot.Value);
-                                    files.Touch(current, current);
-                                    RecordMetadata(current);
+                                    if (e.CurrentLinkPaths != null)
+                                        ApplyHardLinkRows(files, e, (row, added) =>
+                                        {
+                                            if (added) PatchFileAdded(row);
+                                            else PatchFileRemoved(row);
+                                            RecordStructuralNode(row);
+                                        }, RecordMetadata);
+                                    else
+                                    {
+                                        current.ApplyMetadata(e.MetadataSnapshot.Value);
+                                        files.Touch(current, current);
+                                        RecordMetadata(current);
+                                    }
                                     break;
                                 }
                                 if (!e.IsMetadataResult)

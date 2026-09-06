@@ -400,7 +400,7 @@ namespace search.Tests
                 .Parse(chunkBytes: 1024);
 
             Assert.Contains(nodes, n => n.Name == "kept.bin");
-            Assert.DoesNotContain(nodes, n => n.Name == "overflow-link.bin");
+            Assert.Contains(nodes, n => n.FullName == @"Q:\Other\overflow-link.bin");
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size); // both links still counted
         }
 
@@ -543,6 +543,9 @@ namespace search.Tests
 
             var nodes = mft.Parse();
 
+            Assert.Equal(new[] { @"Q:\Docs\linked.bin", @"Q:\Other\linked2.bin" },
+                nodes.Where(n => !n.IsDirectory).Select(n => n.FullName).OrderBy(p => p));
+
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Other").Size);
             Assert.Equal(200UL, nodes.Single(n => n.Name == "Q:").Size);
@@ -609,6 +612,9 @@ namespace search.Tests
                 });
 
             var nodes = mft.Parse();
+
+            Assert.Single(nodes, n => !n.IsDirectory);
+            Assert.DoesNotContain(nodes, n => n.Name == "AFILE~1.TXT");
 
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Docs").Size);
             Assert.Equal(100UL, nodes.Single(n => n.Name == "Q:").Size);

@@ -248,6 +248,10 @@ namespace search.Tests
                 UsnJournal.ReasonDataExtend, false));
             Assert.False(UsnDriveWatcher.CanRepairHardLinkIncrementally(
                 UsnJournal.ReasonBasicInfoChange, true));
+            Assert.False(UsnDriveWatcher.CanRepairHardLinkIncrementally(
+                UsnJournal.ReasonCompressionChange | UsnJournal.ReasonEncryptionChange, true));
+            Assert.True(UsnDriveWatcher.CanRepairHardLinkIncrementally(
+                UsnJournal.ReasonBasicInfoChange | UsnJournal.ReasonDataExtend, true));
 
             //Only a rename of the canonical name leaves the retained link topology stale;
             //a delete of the last name clears it with the map entry. Nothing here may

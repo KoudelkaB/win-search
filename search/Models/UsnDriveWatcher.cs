@@ -340,12 +340,11 @@ namespace search.Models
             //Hard-link reason flags can retain FILE_CREATE/FILE_DELETE from the link
             //operation. The targeted topology diff already represents that name change;
             //treating it as the canonical node's create/delete would corrupt the index.
-            const uint renameReasons = UsnJournal.ReasonRenameOldName
-                | UsnJournal.ReasonRenameNewName;
-            if (repairedHardLinks && liveLinkCount > 0
-                && (r.Reason & UsnJournal.ReasonHardLinkChange) != 0
-                && (r.Reason & renameReasons) == 0)
+            if (repairedHardLinks && liveLinkCount > 0)
+            {
+                pendingRenames.Remove(r.Frn);
                 return;
+            }
 
             //Reason bits accumulate over a file's open-close session - classify by the
             //most existence-relevant bit. A delete record may still carry the create bits
@@ -356,8 +355,13 @@ namespace search.Models
                 //Path the map knew before MapPath heals or drops the entry - the
                 //nothing-indexed proof below needs it even when verification fails
                 var lastKnown = frnMap.TryGetValue(r.Frn, out var known) ? known.FullName : null;
+                var vanishedLinks = hardLinkFileGone ? frnMap.GetLinkPaths(r.Frn) : Array.Empty<string>();
                 var path = MapPath(r.Frn) ?? PathFromRecord(r);
                 frnMap.Remove(r.Frn);
+                foreach (var link in vanishedLinks)
+                    if (!string.Equals(link, path, StringComparison.OrdinalIgnoreCase))
+                        Process(new FsEvent(WatcherChangeTypes.Deleted, link,
+                            descendantDeletesReported: true, frn: r.Frn, ntfsAttributes: r.Attributes));
                 if (path != null)
                 {
                     ghosts.Remove(r.Frn);
@@ -483,6 +487,19 @@ namespace search.Models
         {
             if (repairedHardLinks) return; //Snapshot + every link parent were updated together.
             if (!changedSeen.Add(r.Frn)) return;
+            if (frnMap.HasMultipleLinks(r.Frn) && !CanRepairHardLinkIncrementally(r.Reason, true))
+            {
+                //Attribute-only changes do not alter topology. Reuse retained names and
+                //let the existing metadata worker refresh them outside the journal loop.
+                var paths = frnMap.GetLinkPaths(r.Frn);
+                if (paths.Length > 0)
+                {
+                    foreach (var path in paths)
+                        Process(new FsEvent(WatcherChangeTypes.Changed, path,
+                            frn: r.Frn, ntfsAttributes: r.Attributes));
+                    return;
+                }
+            }
             //A change record written before a rename can be read after it too - MapPath then
             //heals to the new path and reports what name it left behind
             var changed = MapPath(r.Frn, heal: true, out var movedFrom);
@@ -563,7 +580,7 @@ namespace search.Models
                 if (!TryGetParentReference(paths[i], out parents[i], out _)) return;
             var size = INode.TryReadMetadata(canonicalPath, out var snapshot)
                 ? snapshot.Size : FSChangeProcessor.Lookup(canonicalPath)?.Size ?? 0;
-            frnMap.SetLinkState(frn, parents, size);
+            frnMap.SetLinkState(frn, parents, size, paths);
         }
 
         /// <summary>
@@ -586,7 +603,7 @@ namespace search.Models
         }
 
         /// <summary>
-        /// A hard-link topology change, or a size change of an already multi-linked file,
+        /// A hard-link topology, name or metadata change of an already multi-linked file
         /// can be repaired by enumerating that one FRN's live names and diffing their
         /// parents against the sparse topology retained from the MFT scan.
         /// </summary>
@@ -594,9 +611,10 @@ namespace search.Models
         {
             if ((reason & UsnJournal.ReasonHardLinkChange) != 0) return true;
             if (!hasMultipleLinks) return false;
-            const uint size = UsnJournal.ReasonDataOverwrite | UsnJournal.ReasonDataExtend
-                | UsnJournal.ReasonDataTruncation;
-            return (reason & size) != 0;
+            const uint changes = UsnJournal.ReasonDataOverwrite | UsnJournal.ReasonDataExtend
+                | UsnJournal.ReasonDataTruncation | UsnJournal.ReasonRenameOldName
+                | UsnJournal.ReasonRenameNewName | UsnJournal.ReasonFileDelete;
+            return (reason & changes) != 0;
         }
 
         /// <summary>
@@ -684,17 +702,6 @@ namespace search.Models
                 currentParentPaths[i] = parentPath;
             }
 
-            if (moved)
-            {
-                //The rename reported below moves the canonical link's own contribution
-                //from its old parent to its new one; the deltas cover only the rest of
-                //the topology change (an old parent that lost its link, a size change).
-                var oldCanonicalParent = Path.GetDirectoryName(path);
-                var newCanonicalParent = Path.GetDirectoryName(canonical);
-                var at = Array.FindIndex(oldParentPaths, p =>
-                    string.Equals(p, oldCanonicalParent, StringComparison.OrdinalIgnoreCase));
-                if (at >= 0) oldParentPaths[at] = newCanonicalParent;
-            }
             if (!TryCalculateHardLinkParentDeltas(oldParentPaths, currentParentPaths,
                     oldParentRefs.Length == 1 ? indexed.Size : oldSize,
                     snapshot.Size, out var deltas))
@@ -705,17 +712,12 @@ namespace search.Models
             //handle can share a USN batch while the serialized model queue is still
             //waiting; the following record must diff from this state, not add the same
             //size delta again from the not-yet-updated index node.
-            frnMap.SetLinkState(frn, currentParentRefs, snapshot.Size);
-            if (moved)
-            {
-                Process(new FsEvent(WatcherChangeTypes.Renamed, canonical, path, frn: frn,
-                    ntfsAttributes: (uint)snapshot.Attributes), trackLoopCompletion);
-                Remap(frn, canonical);
-            }
-            //After a move the row is a new identity the handler creates from the rename;
-            //it is matched by file reference instead of by instance.
-            Process(FsEvent.HardLinkUpdate(canonical, frn, moved ? null : indexed, snapshot,
-                deltas), trackLoopCompletion);
+            var oldPaths = frnMap.GetLinkPaths(frn);
+            if (oldPaths.Length == 0) oldPaths = new[] { path };
+            frnMap.SetLinkState(frn, currentParentRefs, snapshot.Size, currentPaths);
+            Process(FsEvent.HardLinkUpdate(path, frn, indexed, snapshot,
+                deltas, oldPaths, currentPaths), trackLoopCompletion);
+            if (moved) Remap(frn, canonical);
             ($"USN hard-link update on {journal.Root}: frn={frn:x}, links "
                 + $"{oldParentRefs.Length}->{currentParentRefs.Length}, parents changed={deltas.Length}"
                 + (moved ? $", canonical name moved to {canonical}" : ""))
@@ -1014,12 +1016,14 @@ namespace search.Models
                 public readonly ulong[] Parents;
                 public readonly ulong Size;
                 public readonly long Version;
-                public LinkOverride(ulong frn, ulong[] parents, ulong size, long version)
+                public readonly string[] Names;
+                public LinkOverride(ulong frn, ulong[] parents, ulong size, long version, string[] names = null)
                 {
                     Frn = frn;
                     Parents = parents;
                     Size = size;
                     Version = version;
+                    Names = names;
                 }
             }
 
@@ -1214,7 +1218,27 @@ namespace search.Models
                 return true;
             }
 
-            public void SetLinkState(ulong frn, ulong[] parents, ulong size)
+            public string[] GetLinkPaths(ulong frn)
+            {
+                var table = pageTable;
+                if (!TryGetValue(frn, out _)) return Array.Empty<string>();
+                if (table.LinkOverrides.TryGetValue(frn & EntryMask, out var changed))
+                {
+                    //An override is authoritative, including a tombstone or topology
+                    //whose names are unknown. Never resurrect scan-time paths here.
+                    if (changed.Frn != frn || changed.Parents.Length == 0 || changed.Names == null)
+                        return Array.Empty<string>();
+                    var paths = new List<string>();
+                    for (var i = 0; i < changed.Names.Length; i++)
+                        if (TryGetValue(changed.Parents[i], out var parent))
+                            paths.Add(Path.Combine(GetPath(parent, out _), changed.Names[i]));
+                    return paths.ToArray();
+                }
+                return table.Source?.GetFileLinks(frn).Select(node => GetPath(node, out _)).ToArray()
+                    ?? Array.Empty<string>();
+            }
+
+            public void SetLinkState(ulong frn, ulong[] parents, ulong size, string[] paths = null)
             {
                 if (parents == null) throw new ArgumentNullException(nameof(parents));
                 lock (mutationLock)
@@ -1222,7 +1246,7 @@ namespace search.Models
                     var entry = frn & EntryMask;
                     var version = ++mutationVersion;
                     pageTable.LinkOverrides[entry] =
-                        new LinkOverride(frn, parents, size, version);
+                        new LinkOverride(frn, parents, size, version, paths?.Select(Path.GetFileName).ToArray());
                 }
             }
 

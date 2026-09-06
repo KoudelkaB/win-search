@@ -27,6 +27,7 @@ namespace search.Models
     /// </summary>
     static class MftDriveReader
     {
+        readonly record struct FileLink(ulong Parent, string Name);
         const uint RootEntryNumber = 5;
         const byte NoNameRank = 0x7f;
         const byte OwnSingleLink = 0x80;
@@ -55,7 +56,7 @@ namespace search.Models
             var parentReferences = new ulong[recordCount];
             var nameRanks = new byte[recordCount];
             Array.Fill(nameRanks, NoNameRank);
-            var baseHardLinks = new NonBlocking.ConcurrentDictionary<uint, ulong[]>();
+            var baseHardLinks = new NonBlocking.ConcurrentDictionary<uint, FileLink[]>();
 
             // What extension records contribute to their base record (keyed by the base index
             // taken from the extension's own header - no $ATTRIBUTE_LIST parsing needed, so it
@@ -65,7 +66,7 @@ namespace search.Models
             // Sequence numbers ride along so stale references (records freed and reused while
             // the $MFT streamed by) are rejected instead of mixing two unrelated files.
             var extensionSizes = new NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)>();
-            var extensionLinks = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)>();
+            var extensionLinks = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<FileLink> Parents)>();
             var extensionNames = new NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)>();
             var pendingSizes = new ConcurrentQueue<MftNode>();
             var parallelOptions = new ParallelOptions { CancellationToken = cancellationToken };
@@ -123,7 +124,7 @@ namespace search.Models
             // $FILE_NAMEs overflow into extension records too - without this a file whose
             // Win32 name moved out of a crowded base record shows up under its DOS 8.3
             // name (DOTNET~4.EXE), or not at all when the base kept no name
-            var displacedOwnLinks = new Dictionary<uint, ulong>();
+            var displacedOwnLinks = new Dictionary<uint, FileLink>();
             foreach (var (baseIndex, n) in extensionNames)
             {
                 if (baseIndex >= (uint)parsed.Length || baseIndex == RootEntryNumber) continue;
@@ -134,7 +135,7 @@ namespace search.Models
                     //The chosen path may move to an extension name. Preserve the base's
                     //single hard-link parent only for the rare records that need it later.
                     if ((nameRanks[baseIndex] & OwnSingleLink) != 0)
-                        displacedOwnLinks[baseIndex] = parentReferences[baseIndex];
+                        displacedOwnLinks[baseIndex] = new FileLink(parentReferences[baseIndex], node.Name);
                     node.SetName(n.Name);
                     parentReferences[baseIndex] = n.Parent;
                     nameRanks[baseIndex] = (byte)((nameRanks[baseIndex] & OwnSingleLink) | n.Rank);
@@ -161,23 +162,44 @@ namespace search.Models
                     node.Parent = parent;
             }
 
-            DropOrphans(parsed, cancellationToken);
-
-            // Merge overflowed hard-link parents into their (surviving) base records
+            // Merge overflowed hard-link names before discarding an orphaned canonical
+            // path: another link may still have a live parent.
             foreach (var (baseIndex, contribution) in extensionLinks)
             {
                 if (baseIndex >= (uint)parsed.Length || parsed[baseIndex] is not { } node || node.IsDirectory
                     || !SequencesMatch(contribution.Sequence, node.SequenceNumber))
                     continue;
-                var links = new List<ulong>(1 + contribution.Parents.Count);
+                var links = new List<FileLink>(1 + contribution.Parents.Count);
                 if (baseHardLinks.TryGetValue(baseIndex, out var ownLinks)) links.AddRange(ownLinks);
                 // A base record holding only the DOS name counts no link of its own - its
                 // Win32 pair is one of the extension's names and must not count twice
                 else if ((nameRanks[baseIndex] & OwnSingleLink) != 0)
                     links.Add(displacedOwnLinks.TryGetValue(baseIndex, out var displaced)
-                        ? displaced : parentReferences[baseIndex]);
+                        ? displaced : new FileLink(parentReferences[baseIndex], node.Name));
                 links.AddRange(contribution.Parents);
                 baseHardLinks[baseIndex] = links.ToArray();
+            }
+
+            var linkedFiles = baseHardLinks.Keys.ToDictionary(entry => entry, entry => parsed[entry]);
+            DropOrphans(parsed, cancellationToken);
+            foreach (var (entry, node) in linkedFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var live = baseHardLinks[entry].Where(link =>
+                {
+                    var parentEntry = link.Parent & FileReferenceMask;
+                    return parentEntry < (ulong)parsed.Length
+                        && parsed[(int)parentEntry] is { IsDirectory: true } parent
+                        && SequencesMatch((ushort)(link.Parent >> 48), parent.SequenceNumber);
+                }).Distinct().ToArray();
+                baseHardLinks[entry] = live;
+                if (node == null || live.Length == 0) continue;
+                if (parsed[entry] == null)
+                {
+                    node.SetName(live[0].Name);
+                    node.Parent = parsed[(int)(live[0].Parent & FileReferenceMask)];
+                    parsed[entry] = node;
+                }
             }
 
             var linkMs = phase.ElapsedMilliseconds;
@@ -187,6 +209,29 @@ namespace search.Models
             var aggregateHashMs = phase.ElapsedMilliseconds;
             phase.Restart();
             var dense = BuildDenseAndFinalizeFilePathHashes(parsed, cancellationToken);
+            // The FRN table keeps one identity per record; search indexes every name.
+            // Append aliases only after aggregation, which already counts each link.
+            var aliases = new List<INode>();
+            foreach (var (entry, links) in baseHardLinks.OrderBy(pair => pair.Key))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (parsed[entry] is not { } node) continue;
+                foreach (var link in links)
+                {
+                    var parent = parsed[(int)(link.Parent & FileReferenceMask)];
+                    if (parent == node.Parent && link.Name == node.Name) continue;
+                    var alias = new MftNode(node.Frn, link.Name, node.Attributes, node.Size,
+                        node.LastChangeTime) { Parent = parent };
+                    alias.SetPathHash(NodePath.ComputeChildPathHash(parent, link.Name));
+                    aliases.Add(alias);
+                }
+            }
+            if (aliases.Count > 0)
+            {
+                var offset = dense.Length;
+                Array.Resize(ref dense, checked(offset + aliases.Count));
+                aliases.CopyTo(dense, offset);
+            }
             //Retain only the sparse parent topology of genuinely multi-linked live files.
             //It lets the USN watcher diff one file's current links and adjust the affected
             //directory aggregates instead of rebuilding the complete MFT. A flat layout
@@ -197,12 +242,12 @@ namespace search.Models
                 if (entry >= (uint)parsed.Length || parsed[entry] == null) continue;
                 var live = links.Where(link =>
                 {
-                    var parentEntry = (uint)(link & FileReferenceMask);
+                    var parentEntry = (uint)(link.Parent & FileReferenceMask);
                     return parentEntry < (uint)parsed.Length
                         && parsed[parentEntry] is { IsDirectory: true } parent
-                        && SequencesMatch((ushort)(link >> 48), parent.SequenceNumber);
+                        && SequencesMatch((ushort)(link.Parent >> 48), parent.SequenceNumber);
                 }).ToArray();
-                if (live.Length > 1) hardLinkSets.Add((entry, live));
+                if (live.Length > 1) hardLinkSets.Add((entry, live.Select(link => link.Parent).ToArray()));
             }
             hardLinkSets.Sort((a, b) => a.Entry.CompareTo(b.Entry));
             var hardLinkedEntries = new uint[hardLinkSets.Count];
@@ -218,14 +263,14 @@ namespace search.Models
             }
             hardLinkOffsets[hardLinkSets.Count] = hardLinkAt;
             return new MftNodeCollection(parsed, dense, hardLinkedEntries,
-                hardLinkOffsets, hardLinkParents,
+                hardLinkOffsets, hardLinkParents, aliases,
                 new MftLoadTiming(readParseMs, linkMs, aggregateHashMs, phase.ElapsedMilliseconds,
                     nameStats.NamesSeen, nameStats.UniqueNames, nameStats.SavedBytes));
         }
 
         static MftNode ParseRecord(ReadOnlySpan<byte> record, int index, string rootName,
             ConcurrentQueue<MftNode> pendingSizes, MftNamePool namePool,
-            out ulong parentReference, out byte nameRank, out ulong[] hardLinks,
+            out ulong parentReference, out byte nameRank, out FileLink[] hardLinks,
             out bool hasOwnSingleLink)
         {
             parentReference = 0;
@@ -247,8 +292,8 @@ namespace search.Models
             // must count the file once per link - that is what a directory walk and
             // Explorer's folder properties do. Allocated only for multi-link files.
             var linkCount = 0;
-            ulong firstLinkParent = 0;
-            List<ulong> linkParents = null;
+            FileLink firstLink = default;
+            List<FileLink> linkParents = null;
             ulong fnModified = 0;
             var hasStandardInfo = false;
             ulong siModified = 0;
@@ -288,16 +333,19 @@ namespace search.Models
                             case AttributeFileName when valueLength >= 66:
                                 var nameBytes = value[64] * 2;
                                 var rank = value[65] switch { 1 => 0, 3 => 1, 0 => 2, _ => 3 }; // Win32, Win32+DOS, POSIX, DOS
+                                if (66 + nameBytes > valueLength) break;
+                                var rawName = new string(MemoryMarshal.Cast<byte, char>(value.Slice(66, nameBytes)));
+                                var decodedName = index == RootEntryNumber ? rawName : namePool.Canonicalize(rawName);
                                 if (!isDirectory && value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
                                 {
-                                    var linkParent = U64(value);
-                                    if (linkCount++ == 0) firstLinkParent = linkParent;
-                                    else (linkParents ??= new List<ulong>(4) { firstLinkParent }).Add(linkParent);
+                                    var link = new FileLink(U64(value), decodedName);
+                                    if (linkCount++ == 0) firstLink = link;
+                                    else (linkParents ??= new List<FileLink>(4) { firstLink }).Add(link);
                                 }
                                 if (rank < bestNameRank && 66 + nameBytes <= valueLength)
                                 {
                                     bestNameRank = rank;
-                                    name = new string(MemoryMarshal.Cast<byte, char>(value.Slice(66, nameBytes)));
+                                    name = decodedName;
                                     bestParentReference = U64(value);
                                     fnModified = U64(value[16..]);
                                     fileNameSize = U64(value[48..]);
@@ -341,7 +389,7 @@ namespace search.Models
             hardLinks = linkParents?.ToArray();
             hasOwnSingleLink = linkCount == 1;
             var frn = ((ulong)sequenceNumber << 48) | (uint)index;
-            var selectedName = index == RootEntryNumber ? rootName : namePool.Canonicalize(name);
+            var selectedName = index == RootEntryNumber ? rootName : name;
             var node = isDirectory
                 ? new MftDirectoryNode(frn,
                     selectedName,
@@ -366,13 +414,13 @@ namespace search.Models
         /// </summary>
         static void ScanExtension(ReadOnlySpan<byte> record, ulong baseReference,
             NonBlocking.ConcurrentDictionary<uint, (ulong Size, ushort Sequence)> sizes,
-            NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<ulong> Parents)> links,
+            NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, List<FileLink> Parents)> links,
             NonBlocking.ConcurrentDictionary<uint, (ushort Sequence, int Rank, string Name, ulong Parent)> names,
             MftNamePool namePool)
         {
             var baseIndex = (uint)(baseReference & FileReferenceMask);
             var baseSequence = (ushort)(baseReference >> 48);
-            List<ulong> parents = null;
+            List<FileLink> parents = null;
             string bestName = null;
             var bestRank = int.MaxValue;
             ulong bestParent = 0;
@@ -401,15 +449,16 @@ namespace search.Models
                     if (valueLength >= 66 && valueOffset + valueLength <= length)
                     {
                         var value = record.Slice(offset + valueOffset, valueLength);
-                        if (value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
-                            (parents ??= new List<ulong>(2)).Add(U64(value));
-
                         var nameBytes = value[64] * 2;
+                        if (66 + nameBytes > valueLength) { offset += length; continue; }
+                        var decodedName = namePool.Canonicalize(new string(MemoryMarshal.Cast<byte, char>(value.Slice(66, nameBytes))));
+                        if (value[65] != 2) // A DOS name shadows its Win32 pair - not a separate link
+                            (parents ??= new List<FileLink>(2)).Add(new FileLink(U64(value), decodedName));
                         var rank = value[65] switch { 1 => 0, 3 => 1, 0 => 2, _ => 3 }; // Win32, Win32+DOS, POSIX, DOS
                         if (rank < bestRank && 66 + nameBytes <= valueLength)
                         {
                             bestRank = rank;
-                            bestName = new string(MemoryMarshal.Cast<byte, char>(value.Slice(66, nameBytes)));
+                            bestName = decodedName;
                             bestParent = U64(value);
                         }
                     }
@@ -422,7 +471,7 @@ namespace search.Models
                 links.AddOrUpdate(baseIndex, (baseSequence, parents),
                     (_, old) =>
                     {
-                        var merged = new List<ulong>(old.Parents.Count + parents.Count);
+                        var merged = new List<FileLink>(old.Parents.Count + parents.Count);
                         merged.AddRange(old.Parents);
                         merged.AddRange(parents);
                         return (old.Sequence, merged);
@@ -430,7 +479,6 @@ namespace search.Models
 
             if (bestName != null)
             {
-                bestName = namePool.Canonicalize(bestName);
                 names.AddOrUpdate(baseIndex, (baseSequence, bestRank, bestName, bestParent),
                     (_, old) => old.Rank <= bestRank ? old : (baseSequence, bestRank, bestName, bestParent));
             }
@@ -518,7 +566,7 @@ namespace search.Models
         /// cached parent hash in parallel instead of recursively re-hashing every ancestor.
         /// </summary>
         static void CalculateFolderSizesAndDirectoryPathHashes(MftNode[] nodes,
-            NonBlocking.ConcurrentDictionary<uint, ulong[]> hardLinks, ulong[] folderSizes,
+            NonBlocking.ConcurrentDictionary<uint, FileLink[]> hardLinks, ulong[] folderSizes,
             CancellationToken cancellationToken)
         {
             Array.Clear(folderSizes);
@@ -585,9 +633,9 @@ namespace search.Models
                 {
                     foreach (var link in links)
                     {
-                        var entry = (uint)(link & FileReferenceMask);
+                        var entry = (uint)(link.Parent & FileReferenceMask);
                         if (entry < (uint)nodes.Length && nodes[entry] is { } parent && parent != node
-                            && SequencesMatch((ushort)(link >> 48), parent.SequenceNumber))
+                            && SequencesMatch((ushort)(link.Parent >> 48), parent.SequenceNumber))
                         {
                             Add(folderSizes, parent, node.Size);
                             AddCount(parent, 1);
@@ -756,9 +804,10 @@ namespace search.Models
             readonly uint[] hardLinkedEntries;
             readonly int[] hardLinkOffsets;
             readonly ulong[] hardLinkParents;
+            readonly Dictionary<ulong, INode[]> fileLinks;
 
             public MftNodeCollection(MftNode[] byEntry, INode[] dense, uint[] hardLinkedEntries,
-                int[] hardLinkOffsets, ulong[] hardLinkParents,
+                int[] hardLinkOffsets, ulong[] hardLinkParents, List<INode> aliases,
                 MftLoadTiming loadTiming)
             {
                 this.byEntry = byEntry;
@@ -766,12 +815,18 @@ namespace search.Models
                 this.hardLinkedEntries = hardLinkedEntries;
                 this.hardLinkOffsets = hardLinkOffsets;
                 this.hardLinkParents = hardLinkParents;
+                fileLinks = aliases.GroupBy(node => node.Frn).ToDictionary(group => group.Key,
+                    group => group.Prepend(byEntry[(int)(group.Key & FileReferenceMask)]).ToArray());
                 LoadTiming = loadTiming;
             }
 
             public int Count => dense.Length;
             public IReadOnlyList<INode> DenseNodes => dense;
             public MftLoadTiming LoadTiming { get; }
+
+            public IReadOnlyList<INode> GetFileLinks(ulong frn)
+                => fileLinks.TryGetValue(frn, out var links) ? links
+                    : TryGetByFrn(frn, out var node) ? new[] { node } : Array.Empty<INode>();
 
             public bool TryGetByFrn(ulong frn, out INode node)
             {

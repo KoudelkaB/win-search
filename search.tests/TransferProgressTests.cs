@@ -212,6 +212,102 @@ namespace search.Tests
                 throw failure;
         }
 
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(true, true)]
+        public void FileCopyPreservesRelativeSymlinkIncludingMissingTarget(bool cancellable, bool dangling)
+        {
+            var root = CreateRoot();
+            try
+            {
+                var target = Path.Combine(root, "payload.txt");
+                if (!dangling) File.WriteAllText(target, "payload");
+                var source = Path.Combine(root, "source.txt");
+                var destination = Path.Combine(root, "copied.txt");
+                File.CreateSymbolicLink(source, "payload.txt");
+                using var cancellation = new CancellationTokenSource();
+                var errors = source.UniversalCopyOrMove(destination, false,
+                    cancellationToken: cancellable ? cancellation.Token : CancellationToken.None);
+                Assert.True(errors.Count == 0, string.Join(Environment.NewLine, errors));
+                Assert.Equal("payload.txt", new FileInfo(destination).LinkTarget);
+                Assert.True(File.GetAttributes(destination).HasFlag(FileAttributes.ReparsePoint));
+                if (!dangling) Assert.Equal("payload", File.ReadAllText(target));
+                else Assert.False(File.Exists(target));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(true, true)]
+        public void FileCopyOverwritesDestinationLinkWithoutChangingItsTarget(bool cancellable, bool sourceIsLink)
+        {
+            var root = CreateRoot();
+            try
+            {
+                var oldTarget = Path.Combine(root, "old.txt");
+                File.WriteAllText(oldTarget, "keep me");
+                var target = Path.Combine(root, "new.txt");
+                File.WriteAllText(target, "new content");
+                var source = Path.Combine(root, "source.txt");
+                if (sourceIsLink) File.CreateSymbolicLink(source, target);
+                else File.WriteAllText(source, "new content");
+                var destination = Path.Combine(root, "destination.txt");
+                File.CreateSymbolicLink(destination, oldTarget);
+                using var cancellation = new CancellationTokenSource();
+                var token = cancellable ? cancellation.Token : CancellationToken.None;
+                Assert.NotEmpty(source.UniversalCopyOrMove(destination, false, cancellationToken: token));
+                Assert.Equal(oldTarget, new FileInfo(destination).LinkTarget);
+                Assert.Empty(source.UniversalCopyOrMove(destination, true, cancellationToken: token));
+                Assert.Equal("keep me", File.ReadAllText(oldTarget));
+                Assert.Equal(sourceIsLink ? target : null, new FileInfo(destination).LinkTarget);
+                Assert.Equal("new content", File.ReadAllText(destination));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void CopyNeverFollowsDanglingDestinationLink(bool overwrite)
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Path.Combine(root, "source.txt");
+                File.WriteAllText(source, "payload");
+                var absent = Path.Combine(root, "absent.txt");
+                var destination = Path.Combine(root, "link.txt");
+                File.CreateSymbolicLink(destination, absent);
+                var errors = source.UniversalCopyOrMove(destination, overwrite);
+                Assert.Equal(overwrite, errors.Count == 0);
+                Assert.False(File.Exists(absent));
+                Assert.Equal(overwrite ? null : absent, new FileInfo(destination).LinkTarget);
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void DirectoryCopyPreservesNestedFileSymlink()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Directory.CreateDirectory(Path.Combine(root, "source"));
+                File.WriteAllText(Path.Combine(source.FullName, "payload.txt"), "payload");
+                File.CreateSymbolicLink(Path.Combine(source.FullName, "link.txt"), "payload.txt");
+                var destination = Path.Combine(root, "copy");
+                Assert.Empty(source.FullName.UniversalCopyOrMove(destination, false));
+                Assert.Equal("payload.txt", new FileInfo(Path.Combine(destination, "link.txt")).LinkTarget);
+                Assert.Equal("payload", File.ReadAllText(Path.Combine(destination, "link.txt")));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
         [Fact]
         public void DirectoryCopyPreservesJunctionInsteadOfTraversingItsTarget()
         {

@@ -254,10 +254,11 @@ namespace search.Models
                 else
                 {
                     if (move) File.Move(file, dest, overwrite);
-                    else if (nativeCancellation != null)
-                        CopyFileCancellable(file, dest, overwrite, nativeCancellation);
+                    else if (a.HasFlag(FileAttributes.ReparsePoint)
+                        && new FileInfo(file).LinkTarget is { } linkTarget)
+                        CopyFileLink(linkTarget, dest, overwrite);
                     else
-                        File.Copy(file, dest, overwrite);
+                        CopyFileCancellable(file, dest, overwrite, nativeCancellation);
                 }
                 EchoTransferred(file, dest, move, batchEcho);
             }
@@ -324,25 +325,57 @@ namespace search.Models
             return errors;
         }
 
+        static void CopyFileLink(string linkTarget, string destination, bool overwrite)
+        {
+            // CreateSymbolicLink supports unelevated Developer Mode, unlike CopyFileEx's
+            // COPY_FILE_COPY_SYMLINK. Stage beside the destination so relative targets
+            // stay relative and a creation failure cannot destroy an existing file.
+            var staged = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(destination)),
+                $".win-search-link-{Guid.NewGuid():N}");
+            File.CreateSymbolicLink(staged, linkTarget);
+            try { File.Move(staged, destination, overwrite); }
+            finally { File.Delete(staged); }
+        }
+
         static void CopyFileCancellable(
             string source,
             string destination,
             bool overwrite,
             NativeCopyCancellation cancellation)
         {
+            var destinationInfo = new FileInfo(destination);
+            var destinationAttributes = destinationInfo.Attributes;
+            if (destinationAttributes != (FileAttributes)(-1)
+                && destinationAttributes.HasFlag(FileAttributes.ReparsePoint)
+                && destinationInfo.LinkTarget != null)
+            {
+                if (!overwrite) throw new IOException($"Destination '{destination}' already exists.");
+                // CopyFileEx follows a destination symlink when the source is a regular
+                // file, even with COPY_FILE_COPY_SYMLINK. Replace the entry by rename.
+                var staged = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(destination)),
+                    $".win-search-copy-{Guid.NewGuid():N}");
+                try
+                {
+                    CopyFileCancellable(source, staged, false, cancellation);
+                    cancellation?.Token.ThrowIfCancellationRequested();
+                    File.Move(staged, destination, true);
+                }
+                finally { File.Delete(staged); }
+                return;
+            }
             var flags = overwrite ? CopyFileFlags.None : CopyFileFlags.FailIfExists;
             if (CopyFileEx(
                 source,
                 destination,
                 IntPtr.Zero,
                 IntPtr.Zero,
-                cancellation.Pointer,
+                cancellation?.Pointer ?? IntPtr.Zero,
                 flags))
                 return;
 
             var error = Marshal.GetLastWin32Error();
-            if (cancellation.Token.IsCancellationRequested || error == ErrorRequestAborted)
-                throw new OperationCanceledException(cancellation.Token);
+            if (cancellation?.Token.IsCancellationRequested == true || error == ErrorRequestAborted)
+                throw new OperationCanceledException(cancellation?.Token ?? CancellationToken.None);
             throw new IOException(
                 $"Cannot copy '{source}' to '{destination}': {new Win32Exception(error).Message}",
                 new Win32Exception(error));
