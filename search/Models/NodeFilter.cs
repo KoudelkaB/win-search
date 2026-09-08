@@ -215,15 +215,35 @@ namespace search.Models
         /// <returns></returns>
         public bool Matches(INode n)
         {
-            if (inName.Count > 0 && !inName.All(x => x.Matches(n.Name))) return false;
-            if (inParentName.Count > 0 && !inParentName.All(x => x.Matches(n.ParentName))) return false;
-            if (inParentsName.Count > 0 && !inParentsName.All(x => MatchesPath(x, n))) return false;
+            //Plain loops on purpose: this runs once per indexed node on every keystroke
+            //(millions of calls). LINQ All/Any with a closure over n allocated two objects
+            //per node per criterion list - hundreds of MB of garbage per filter change.
+            if (inName.Count > 0)
+            {
+                var name = n.Name;
+                for (var i = 0; i < inName.Count; i++)
+                    if (!inName[i].Matches(name)) return false;
+            }
+            if (inParentName.Count > 0)
+            {
+                var parentName = n.ParentName;
+                for (var i = 0; i < inParentName.Count; i++)
+                    if (!inParentName[i].Matches(parentName)) return false;
+            }
+            for (var i = 0; i < inParentsName.Count; i++)
+                if (!MatchesPath(inParentsName[i], n)) return false;
 
             if (dirs.Count == 0) return true;
 
-            if (inName.Count == 0)
-                return dirs.Any(d => d.Recursive ? IsUnder(n, d) : HasParent(n, d));
-            return dirs.Any(d => IsUnder(n, d));
+            //With a name term every directory criterion means "somewhere below"; without
+            //one a single '\' means the immediate parent only.
+            var alwaysRecursive = inName.Count > 0;
+            for (var i = 0; i < dirs.Count; i++)
+            {
+                var d = dirs[i];
+                if ((alwaysRecursive || d.Recursive) ? IsUnder(n, d) : HasParent(n, d)) return true;
+            }
+            return false;
         }
 
         /// <summary>

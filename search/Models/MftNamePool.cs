@@ -15,6 +15,8 @@ namespace search.Models
     /// sets spread parallel parser writes across locks. Each worker also keeps a tiny
     /// direct-mapped cache, so common package/framework names stop touching the shared sets
     /// after their first occurrence on that worker.
+    /// Names are looked up straight from the record bytes: a duplicate (about two of every
+    /// three names on a Windows volume) never allocates a string at all.
     /// </summary>
     internal sealed class MftNamePool : IDisposable
     {
@@ -25,11 +27,15 @@ namespace search.Models
         {
             public readonly object Gate = new();
             public HashSet<string> Names;
+            public HashSet<string>.AlternateLookup<ReadOnlySpan<char>> Lookup;
 
             public Stripe(int capacity)
-                => Names = capacity == 0
+            {
+                Names = capacity == 0
                     ? new HashSet<string>(StringComparer.Ordinal)
                     : new HashSet<string>(capacity, StringComparer.Ordinal);
+                Lookup = Names.GetAlternateLookup<ReadOnlySpan<char>>();
+            }
         }
 
         sealed class LocalCache
@@ -41,12 +47,12 @@ namespace search.Models
             public long UniqueNames;
             public long SavedBytes;
 
-            public bool TryGet(string value, int hash, out string canonical)
+            public bool TryGet(ReadOnlySpan<char> value, int hash, out string canonical)
             {
                 var at = (hash ^ (hash >> 16)) & (LocalCacheSize - 1);
                 canonical = names[at];
                 return canonical != null && hashes[at] == hash
-                    && string.Equals(canonical, value, StringComparison.Ordinal);
+                    && value.SequenceEqual(canonical);
             }
 
             public void Store(int hash, string canonical)
@@ -73,10 +79,18 @@ namespace search.Models
         }
 
         public string Canonicalize(string value)
-        {
-            if (value == null) return null;
+            => value == null ? null : Canonicalize(value.AsSpan(), value);
 
-            var hash = value.GetHashCode(StringComparison.Ordinal);
+        /// <summary>
+        /// The canonical string for these characters - allocated only the first time the
+        /// content is seen (a decoded $FILE_NAME can therefore be looked up in place).
+        /// </summary>
+        public string Canonicalize(ReadOnlySpan<char> value) => Canonicalize(value, null);
+
+        string Canonicalize(ReadOnlySpan<char> value, string instance)
+        {
+            //Same hash as string.GetHashCode() over equal content
+            var hash = string.GetHashCode(value);
             var local = localCaches.Value;
             local.NamesSeen++;
             if (local.TryGet(value, hash, out var canonical))
@@ -88,12 +102,12 @@ namespace search.Models
             var stripe = stripes[(int)(unchecked((uint)hash) & (StripeCount - 1))];
             lock (stripe.Gate)
             {
-                if (stripe.Names.TryGetValue(value, out canonical))
+                if (stripe.Lookup.TryGetValue(value, out canonical))
                     local.SavedBytes += StringBytes(value.Length);
                 else
                 {
-                    stripe.Names.Add(value);
-                    canonical = value;
+                    canonical = instance ?? new string(value);
+                    stripe.Names.Add(canonical);
                     local.UniqueNames++;
                 }
             }
@@ -127,6 +141,7 @@ namespace search.Models
                 {
                     stripe.Names.Clear();
                     stripe.Names = null;
+                    stripe.Lookup = default;
                 }
             localCaches.Dispose();
         }

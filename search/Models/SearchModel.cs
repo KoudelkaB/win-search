@@ -1287,13 +1287,6 @@ namespace search.Models
         QueryResult? GetItems(bool refresh, Func<bool> IsCanceled,
             int maxVersionRetries = int.MaxValue)
         {
-            //Cancel
-            var cts = new CancellationTokenSource();
-            T CancelOr<T>(T v)
-            {
-                if (IsCanceled()) cts.Cancel();
-                return v;
-            }
             var retries = 0;
             while (!IsCanceled())
             {
@@ -1330,18 +1323,21 @@ namespace search.Models
                         else
                         {
                             cacheStatus = "miss";
-                            all = CopyFilesCancellable(IsCanceled);
+                            var nf = nodeFilter;
+                            //A filtered query matches straight over the immutable drive arrays
+                            //and their small deltas. It never needs the complete node list, so
+                            //the multi-million reference copy a shadowed base would cost on
+                            //every keystroke is skipped. An empty search box matches everything
+                            //- it takes the (cached) full snapshot and pays no delegate calls.
+                            all = filter != null && !nf.MatchesAll
+                                ? files.FilterSnapshot(nf.Matches, IsCanceled)
+                                : CopyFilesCancellable(IsCanceled);
                             if (all == null) return null;
                             if (!IsBulkFilesVersionStable(bulkVersion))
                             {
                                 if (++retries > maxVersionRetries) return null;
                                 continue;
                             }
-                            var nf = nodeFilter;
-                            //An empty search box matches everything - never pay 2M delegate calls for it
-                            if (filter != null && !nf.MatchesAll)
-                                all = all.AsParallel().WithCancellation(cts.Token)
-                                    .Where(x => CancelOr(nf.Matches(x))).ToList();
                             builtCache = new SnapshotCache(filter, sourceVersion, all, nf);
                         }
                         unknownTail = all.Count > MaterializedWindowLimit;

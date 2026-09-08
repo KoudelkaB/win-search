@@ -377,6 +377,26 @@ namespace search.Tests
         }
 
         [Fact]
+        public void NamePoolResolvesRecordCharactersWithoutAllocatingDuplicates()
+        {
+            using var pool = new MftNamePool(16);
+            var first = pool.Canonicalize("Program Files".AsSpan());
+            var chars = "xProgram Filesx".AsSpan(1, "Program Files".Length);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+
+            var again = pool.Canonicalize(chars);
+            var afterHit = GC.GetAllocatedBytesForCurrentThread();
+            var other = pool.Canonicalize("Program Files (x86)".AsSpan());
+
+            Assert.Same(first, again);
+            Assert.Equal(allocated, afterHit); //A duplicate never allocates a string
+            Assert.NotSame(first, other);
+            Assert.Equal("Program Files (x86)", other);
+            Assert.Equal(3, pool.Stats.NamesSeen);
+            Assert.Equal(2, pool.Stats.UniqueNames);
+        }
+
+        [Fact]
         public void AFileWhoseNamesAllOverflowedIsStillIndexed()
         {
             var nodes = WithRoot(1024)

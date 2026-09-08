@@ -123,6 +123,76 @@ namespace search.Tests
         }
 
         [Fact]
+        public void FilterSnapshotMatchesOverBaseAndDeltaWithoutTheFullCopy()
+        {
+            var keep = new TestNode(@"C:\keep.txt");
+            var remove = new TestNode(@"C:\remove.txt");
+            var replace = new TestNode(@"C:\replace.txt");
+            var other = new TestNode(@"C:\other.log");
+            IReadOnlyList<INode> dense = new INode[] { keep, remove, replace, other };
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            var replacement = new TestNode(replace.FullName);
+            var added = new TestNode(@"C:\added.txt");
+            var addedMiss = new TestNode(@"C:\added.log");
+
+            //No delta yet: the dense array is matched directly
+            var fresh = index.FilterSnapshot(n => n.Name.EndsWith(".txt"), () => false);
+            Assert.Equal(new INode[] { keep, remove, replace }, fresh.OrderBy(n => n.Name).ToArray());
+
+            Assert.True(index.TryRemove(remove.FullName, out _));
+            index[replace.FullName] = replacement;
+            index[added.FullName] = added;
+            index[addedMiss.FullName] = addedMiss;
+            var filtered = index.FilterSnapshot(n => n.Name.EndsWith(".txt"), () => false);
+
+            //Same membership CopySnapshot would produce, then filtered - tombstoned and
+            //shadowed base nodes are gone, delta additions are matched too
+            Assert.Equal(3, filtered.Count);
+            Assert.Contains(keep, filtered);
+            Assert.Contains(replacement, filtered);
+            Assert.Contains(added, filtered);
+            Assert.DoesNotContain(remove, filtered);
+            Assert.DoesNotContain(replace, filtered);
+            Assert.DoesNotContain(other, filtered);
+            Assert.DoesNotContain(addedMiss, filtered);
+            var expected = index.CopySnapshot(() => false).Where(n => n.Name.EndsWith(".txt"));
+            Assert.Equal(expected.OrderBy(n => n.Name), filtered.OrderBy(n => n.Name));
+
+            Assert.Null(index.FilterSnapshot(_ => true, () => true));
+        }
+
+        [Fact]
+        public void FilterSnapshotSearchesWhileADrivesFirstScanIsStillReadingTheDisk()
+        {
+            //BeginSnapshot marks the drive before its first scan publishes anything, so the
+            //shard carries an EMPTY dense array. A search in that window must still work.
+            var indexed = new TestNode(@"D:\already.txt");
+            IReadOnlyList<INode> dense = new INode[] { indexed };
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(@"D:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            index.BeginSnapshot(@"C:\");
+
+            Assert.Equal(new INode[] { indexed },
+                index.FilterSnapshot(n => n.Name.EndsWith(".txt"), () => false));
+
+            //A file created during that scan lives only in the empty shard's delta
+            var live = new TestNode(@"C:\live.txt");
+            index[live.FullName] = live;
+            var filtered = index.FilterSnapshot(n => n.Name.EndsWith(".txt"), () => false);
+
+            Assert.Equal(2, filtered.Count);
+            Assert.Contains(live, filtered);
+            Assert.Contains(indexed, filtered);
+
+            //And the same holds for an empty replacement that had to preserve that delta
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.Empty, preserveMutationsAfter: 0,
+                existsOnDisk: _ => true);
+            Assert.Contains(live,
+                index.FilterSnapshot(n => n.Name.EndsWith(".txt"), () => false));
+        }
+
+        [Fact]
         public void CompactBaseResolvesProbeChainsAndMisses()
         {
             var nodes = Enumerable.Range(0, 5000)

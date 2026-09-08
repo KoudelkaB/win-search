@@ -667,6 +667,78 @@ namespace search.Models
             return isCanceled() ? null : result;
         }
 
+        /// <summary>
+        /// The nodes matching a predicate, straight from the immutable dense arrays plus
+        /// their small deltas. A filtered query never needs the complete node list, so this
+        /// skips the multi-million-reference copy CopySnapshot would otherwise allocate on
+        /// every keystroke once the first watcher mutation has shadowed a base entry. The
+        /// dense ranges are matched in parallel; result order is arbitrary, like the index
+        /// enumeration order the callers already expect. Null when canceled.
+        /// </summary>
+        public List<INode> FilterSnapshot(Func<INode, bool> match, Func<bool> isCanceled)
+        {
+            ArgumentNullException.ThrowIfNull(match);
+            isCanceled ??= static () => false;
+            var snapshot = shards;
+            var result = new List<INode>();
+            foreach (var shard in snapshot)
+            {
+                var delta = shard.Delta.ToArray();
+                HashSet<object> shadowed = null;
+                if (delta.Length != 0)
+                {
+                    shadowed = new HashSet<object>(NodePath.KeyComparer);
+                    foreach (var pair in delta) shadowed.Add(pair.Key);
+                }
+
+                var dense = shard.DenseNodes;
+                //A shard can carry an EMPTY dense array with live deltas: BeginSnapshot
+                //marks a drive whose first scan is still reading the disk, and ReplaceDrive
+                //publishes an empty base when it must preserve post-watermark mutations.
+                //Partitioner.Create rejects an empty range, so only a non-empty base is
+                //partitioned - the delta pass below still runs for both.
+                if (dense == null)
+                {
+                    var seen = 0;
+                    foreach (var node in shard.Base)
+                    {
+                        if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
+                        if (shadowed?.Contains(node) == true) continue;
+                        if (match(node)) result.Add(node);
+                    }
+                }
+                else if (dense.Count != 0)
+                {
+                    var canceled = false;
+                    System.Threading.Tasks.Parallel.ForEach(
+                        System.Collections.Concurrent.Partitioner.Create(0, dense.Count, 16384),
+                        () => new List<INode>(),
+                        (range, state, local) =>
+                        {
+                            if (state.IsStopped) return local;
+                            if (isCanceled())
+                            {
+                                canceled = true;
+                                state.Stop();
+                                return local;
+                            }
+                            for (var i = range.Item1; i < range.Item2; i++)
+                            {
+                                var node = dense[i];
+                                if (shadowed?.Contains(node) == true) continue;
+                                if (match(node)) local.Add(node);
+                            }
+                            return local;
+                        },
+                        local => { lock (result) result.AddRange(local); });
+                    if (canceled) return null;
+                }
+                foreach (var pair in delta)
+                    if (pair.Value.Node is { } added && match(added)) result.Add(added);
+            }
+            return isCanceled() ? null : result;
+        }
+
         public IEnumerator<KeyValuePair<object, INode>> GetEnumerator()
         {
             var snapshot = shards;
