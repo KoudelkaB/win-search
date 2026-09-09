@@ -17,32 +17,45 @@ namespace search.Tests
         static FakeMft WithRoot(int bytesPerRecord) => new FakeMft(bytesPerRecord).AddEmpty(5).AddRoot();
 
         [Fact]
-        public void OnlyMftDirectoriesPayForTheRecursiveCounter()
+        public void MftRowsAreColumnsAndHandlesAreLazyCachedFlyweights()
         {
-            var nodes = WithRoot(1024)
-                .AddRecord(attributes: new[]
-                {
-                    FakeMft.FileName(FakeMft.RootEntry, "file.bin")
-                })
-                .Parse();
-            var fileType = nodes.Single(n => !n.IsDirectory).GetType();
-            var directoryType = nodes.Single(n => n.IsDirectory).GetType();
-            _ = RuntimeHelpers.GetUninitializedObject(fileType); //Warm the runtime helper.
+            var mft = WithRoot(1024)
+                .AddRecord(attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "file.bin") })
+                .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Dir") });
+            using var stream = new MemoryStream(mft.Image());
+            var table = Assert.IsType<MftTable>(MftDriveReader.GetNodes(stream, mft.BytesPerRecord,
+                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root));
+
+            //Every row costs the column bytes, not a 64/72-byte object plus an 8-byte reference
+            Assert.Equal(44, MftTable.BytesPerRow);
+            Assert.Equal(3, table.Count);
+            Assert.Equal(0, table.MaterializedHandles);
+
+            //A handle is created on first use and is the row's single identity afterwards
+            var file = table.DenseNodes.Single(n => n.Name == "file.bin");
+            Assert.Same(file, table.DenseNodes[table.RowOf(file)]);
+            Assert.True(table.TryGetByFrn(file.Frn, out var byFrn));
+            Assert.Same(file, byFrn);
+            Assert.Equal(3, table.MaterializedHandles);
+
+            var handleType = file.GetType();
+            _ = RuntimeHelpers.GetUninitializedObject(handleType); //Warm the runtime helper.
             const int count = 10_000;
             var instances = new object[count];
             var before = GC.GetAllocatedBytesForCurrentThread();
             for (var i = 0; i < instances.Length; i++)
-                instances[i] = RuntimeHelpers.GetUninitializedObject(fileType);
-            var fileBytes = (GC.GetAllocatedBytesForCurrentThread() - before) / count;
-
-            before = GC.GetAllocatedBytesForCurrentThread();
-            for (var i = 0; i < instances.Length; i++)
-                instances[i] = RuntimeHelpers.GetUninitializedObject(directoryType);
-            var directoryBytes = (GC.GetAllocatedBytesForCurrentThread() - before) / count;
-
-            Assert.Equal(64, fileBytes);
-            Assert.Equal(72, directoryBytes);
+                instances[i] = RuntimeHelpers.GetUninitializedObject(handleType);
+            var handleBytes = (GC.GetAllocatedBytesForCurrentThread() - before) / count;
+            Assert.Equal(40, handleBytes);
             GC.KeepAlive(instances);
+
+            //Directories and files share the row layout; only directories report descendants
+            var dir = table.DenseNodes.Single(n => n.Name == "Dir");
+            Assert.Equal(0U, dir.Count);
+            Assert.Equal(1U, file.Count);
+            Assert.Equal(@"Q:\Dir", dir.FullName);
+            Assert.Equal(@"Q:\file.bin", file.FullName);
+            Assert.Equal(@"Q:\", table.DenseNodes.Single(n => n.Name == "Q:").FullName);
         }
 
         [Theory]
@@ -294,7 +307,9 @@ namespace search.Tests
             var files = source.DenseNodes.Where(n => n.Name == "shared.bin").ToArray();
 
             Assert.Equal(2, files.Length);
-            Assert.Same(files[0].Name, files[1].Name);
+            //One blob entry serves both rows - a name is stored once per distinct content
+            var table = Assert.IsType<MftTable>(source);
+            Assert.Equal(table.NameOffset[table.RowOf(files[0])], table.NameOffset[table.RowOf(files[1])]);
             Assert.Equal(4, source.LoadTiming.NamesSeen);
             Assert.Equal(3, source.LoadTiming.UniqueNames);
             Assert.Equal(48, source.LoadTiming.NameBytesSaved);
@@ -354,7 +369,8 @@ namespace search.Tests
             var files = nodes.Where(n => n.Name == "shared.bin").ToArray();
 
             Assert.Equal(2, files.Length);
-            Assert.Same(files[0].Name, files[1].Name);
+            var table = Assert.IsType<MftNode>(files[0]).Table;
+            Assert.Equal(table.NameOffset[table.RowOf(files[0])], table.NameOffset[table.RowOf(files[1])]);
             Assert.Contains(files, n => n.FullName == @"Q:\A\shared.bin");
             Assert.Contains(files, n => n.FullName == @"Q:\B\shared.bin");
         }

@@ -19,7 +19,7 @@ namespace search.Models
         // Caps walks over corrupt parent cycles; mirrors the old FullName depth cap.
         // Materialize, hashing, equality and ordering all cut over to the same fallback
         // at the same depth, so they stay mutually consistent even for degenerate chains.
-        const int MaxWalk = 256;
+        internal const int MaxWalk = 256;
 
         /// <summary>
         /// Ordering of one path COMPONENT. Every component of every path passes through
@@ -236,8 +236,8 @@ namespace search.Models
         // Hashing - must equal HashChars over the node's FullName string
         // ------------------------------------------------------------------
 
-        const uint FnvSeed = 2166136261;
-        const uint FnvPrime = 16777619;
+        internal const uint FnvSeed = 2166136261;
+        internal const uint FnvPrime = 16777619;
 
         static int HashPath(INode n) => n.TryGetPathHash(out var hash)
             ? hash : (int)HashUp(n, MaxWalk).Hash;
@@ -277,7 +277,7 @@ namespace search.Models
             return (HashChars(hash, name), name.Length > 0 ? name[^1] : last);
         }
 
-        static uint HashChars(uint hash, string s)
+        internal static uint HashChars(uint hash, ReadOnlySpan<char> s)
         {
             foreach (var c in s)
                 hash = (hash ^ char.ToUpperInvariant(c)) * FnvPrime;
