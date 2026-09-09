@@ -234,6 +234,9 @@ namespace search.Models
             public IReadOnlyList<INode> Materialize(Func<bool> isCanceled)
             {
                 if (!HasDeltas) return Nodes;
+                //A row snapshot hides removed rows in place and appends additions - no walk
+                //over the multi-million-row base and no handle for rows nobody asked for.
+                if (Nodes is DriveNodeIndex.Snapshot snapshot) return snapshot.Patch(Removed, Added);
                 var result = new List<INode>(Math.Max(0, Nodes.Count + Added.Length - Removed.Count));
                 var pendingAdded = Added.Length == 0 ? null
                     : new HashSet<INode>(Added, ReferenceEqualityComparer.Instance);
@@ -1268,14 +1271,9 @@ namespace search.Models
         }
 
         static IReadOnlyList<INode> CopyFilesCancellable(Func<bool> isCanceled)
-        {
-            //A freshly published MFT shard already owns a dense immutable node array.
-            //Reuse it directly: no 2M-entry dictionary walk, list allocation or reference copy.
-            if (files.TryGetDenseSnapshot(out var dense)) return dense;
-            //A watcher mutation shadows the immutable base with a tiny delta. Merge it over
-            //the retained dense arrays rather than walking/copying a million-entry hash map.
-            return files.CopySnapshot(isCanceled);
-        }
+            //The immutable drive rows plus the small live overlay as one read-only view:
+            //built in O(overlay), no row copied, no handle created until a row is selected.
+            => files.BuildSnapshot(isCanceled);
 
         /// <summary>
         /// Get items according to current filter and sort. Truncated records whether the
@@ -1330,7 +1328,7 @@ namespace search.Models
                             //every keystroke is skipped. An empty search box matches everything
                             //- it takes the (cached) full snapshot and pays no delegate calls.
                             all = filter != null && !nf.MatchesAll
-                                ? files.FilterSnapshot(nf.Matches, IsCanceled)
+                                ? files.FilterSnapshot(nf.Matches, nf.Matches, IsCanceled)
                                 : CopyFilesCancellable(IsCanceled);
                             if (all == null) return null;
                             if (!IsBulkFilesVersionStable(bulkVersion))
@@ -1366,7 +1364,7 @@ namespace search.Models
                         //small reserve are materialized. Sorting the whole multi-million-node index
                         //would burn CPU and allocate heavily on every authoritative refresh.
                         result = SelectTop(all, compare, MaterializedWindowLimit,
-                            IsCanceled, SortScalarKey(sort));
+                            IsCanceled, SortScalarKey(sort), ParseSort(sort));
                     }
                     if (result == null || IsCanceled()) return null;
                     if (refresh && !IsBulkFilesVersionStable(bulkVersion))
@@ -1408,32 +1406,126 @@ namespace search.Models
         /// enumerates a concurrent index in arbitrary order anyway.
         /// </summary>
         /// <returns>null when canceled</returns>
-        internal static List<INode> SelectTop(IEnumerable<INode> src, Comparison<INode> compare, int limit, Func<bool> IsCanceled = null, Func<INode, ulong> scalarKey = null)
+        /// <summary>Which column a sort string orders by, so row sweeps can read it straight from the table.</summary>
+        internal enum SortField { None, Rank, Name, Size, Count, Time, FullName, Folder }
+
+        internal readonly record struct SortSpec(SortField Field, bool Ascending)
+        {
+            public static readonly SortSpec None = new(SortField.None, true);
+        }
+
+        internal static SortSpec ParseSort(string sort)
+        {
+            if (string.IsNullOrWhiteSpace(sort) || sort.Length < 2) return SortSpec.None;
+            var up = sort[0] == '+';
+            return sort.Substring(1) switch
+            {
+                "C" => new SortSpec(SortField.Rank, up),
+                nameof(INode.Name) => new SortSpec(SortField.Name, up),
+                nameof(INode.Size) => new SortSpec(SortField.Size, !up),
+                nameof(INode.Count) => new SortSpec(SortField.Count, !up),
+                nameof(INode.LastChangeTime) => new SortSpec(SortField.Time, !up),
+                nameof(INode.FullName) => new SortSpec(SortField.FullName, up),
+                nameof(INode.Folder) => new SortSpec(SortField.Folder, up),
+                _ => SortSpec.None
+            };
+        }
+
+        /// <summary>
+        /// One element of a query source: an MFT row read from its table's columns, or a
+        /// node. Sort keys and threshold comparisons never create a handle for a row that
+        /// is not going to be part of the window.
+        /// </summary>
+        readonly struct RowSource
+        {
+            readonly IReadOnlyList<INode> all;
+            readonly DriveNodeIndex.Snapshot snapshot;
+            readonly SortSpec spec;
+
+            public RowSource(IReadOnlyList<INode> all, SortSpec spec)
+            {
+                this.all = all;
+                this.spec = spec;
+                snapshot = spec.Field != SortField.None ? all as DriveNodeIndex.Snapshot : null;
+            }
+
+            /// <summary>SortScalarKey's value for the element - the sort string's '+' inverts the key.</summary>
+            public ulong ScalarKey(int index, Func<INode, ulong> key, bool inverted)
+            {
+                if (snapshot != null && snapshot.TryRow(index, out var table, out var row))
+                {
+                    var raw = spec.Field switch
+                    {
+                        SortField.Size => Volatile.Read(ref table.Size[row]),
+                        SortField.Count => table.IsDirectory(row) ? Volatile.Read(ref table.Descendants[row]) : 1UL,
+                        _ => (ulong)Math.Max(0, Volatile.Read(ref table.TimeTicks[row]))
+                    };
+                    return inverted ? ulong.MaxValue - raw : raw;
+                }
+                return key(all[index]);
+            }
+
+            /// <summary>SortComparison's order of the element against a materialized threshold node.</summary>
+            public int CompareTo(int index, INode threshold, Comparison<INode> compare)
+            {
+                if (snapshot != null && snapshot.TryRow(index, out var table, out var row))
+                {
+                    var c = spec.Field switch
+                    {
+                        SortField.Name => NodePath.CompareNameRow(table, row, threshold),
+                        SortField.FullName => NodePath.CompareRow(table, row, threshold),
+                        SortField.Folder => NodePath.CompareFolderThenNameRow(table, row, threshold),
+                        SortField.Size => Volatile.Read(ref table.Size[row]).CompareTo(threshold.Size),
+                        SortField.Count => (table.IsDirectory(row) ? Volatile.Read(ref table.Descendants[row]) : 1U).CompareTo(threshold.Count),
+                        SortField.Time => table.TimeAt(row).CompareTo(threshold.LastChangeTime),
+                        _ => int.MinValue
+                    };
+                    if (c != int.MinValue) return spec.Ascending ? c : -c;
+                }
+                return compare(all[index], threshold);
+            }
+
+            public INode this[int index] => all[index];
+            public int Count => all.Count;
+        }
+
+        internal static List<INode> SelectTop(IEnumerable<INode> src, Comparison<INode> compare, int limit,
+            Func<bool> IsCanceled = null, Func<INode, ulong> scalarKey = null, SortSpec spec = default)
         {
             //The passes below need a stable, index-partitionable view twice (sample, then
             //threshold filter) - impossible over a live concurrent stream. A source that is
-            //already a materialized list (files.Values snapshot, the Items copy) is used
-            //as-is; only a lazy source (a PLINQ filter query) materializes here, executing
-            //its filter in parallel on the way in.
+            //already a materialized list (an index snapshot, the Items copy) is used as-is;
+            //only a lazy source materializes here.
             var all = src as IReadOnlyList<INode> ?? src.ToList();
             if (IsCanceled?.Invoke() == true) return null;
             if (all.Count > limit)
             {
-                //Scalar keys (sizes, dates) sweep and sort densely: one node touch per node,
+                var source = new RowSource(all, spec);
+                //Scalar keys (sizes, dates) sweep and sort densely: one column read per row,
                 //no delegate comparison, no pointer chasing across the heap in the sort phase
-                if (scalarKey != null && ScalarTop(all, scalarKey, limit, IsCanceled) is { } top)
+                if (scalarKey != null && ScalarTop(source, scalarKey, InvertsScalarKey(spec), limit, IsCanceled) is { } top)
                     return top;
                 if (IsCanceled?.Invoke() == true) return null;
-                var candidates = ThresholdCandidates(all, compare, limit, IsCanceled);
+                var candidates = ThresholdCandidates(source, compare, limit, IsCanceled);
                 if (IsCanceled?.Invoke() == true) return null;
                 //Sampling could not prune (heavy ties at the threshold, unlucky sample) =>
                 //the sequential heap pass is exact for any key distribution
-                if (candidates == null) return HeapTop(all, compare, limit, IsCanceled);
+                if (candidates == null)
+                    return scalarKey != null
+                        ? ScalarHeapTop(source, scalarKey, InvertsScalarKey(spec), limit, compare, IsCanceled)
+                        : HeapTop(all, compare, limit, IsCanceled);
                 all = candidates;
             }
             //Bounded leftover (at most ~3x the window) - a parallel sort of it stays small
             return all.AsParallel().OrderBy(x => x, Comparer<INode>.Create(compare)).Take(limit).ToList();
         }
+
+        /// <summary>
+        /// SortScalarKey inverts the raw column for a '+' sort (largest first). Scalar fields
+        /// record Ascending = !up, so a descending spec means the key was inverted.
+        /// </summary>
+        static bool InvertsScalarKey(SortSpec spec)
+            => spec.Field is SortField.Size or SortField.Count or SortField.Time && !spec.Ascending;
 
         /// <summary>
         /// Monotone unsigned key producing exactly SortComparison's order for numeric and
@@ -1460,28 +1552,27 @@ namespace search.Models
         /// null when the quantile guarantee fails (massive ties, unlucky sample) - the
         /// caller then falls back to the exact comparer-based paths.
         /// </summary>
-        static List<INode> ScalarTop(IReadOnlyList<INode> all, Func<INode, ulong> key, int limit, Func<bool> IsCanceled)
+        static List<INode> ScalarTop(RowSource all, Func<INode, ulong> key, bool inverted, int limit, Func<bool> IsCanceled)
         {
             var stride = Math.Max(1, all.Count >> 12);
             var sample = new List<ulong>(all.Count / stride + 1);
-            for (var i = 0; i < all.Count; i += stride) sample.Add(key(all[i]));
+            for (var i = 0; i < all.Count; i += stride) sample.Add(all.ScalarKey(i, key, inverted));
             sample.Sort();
             var at = (int)Math.Min(sample.Count - 1.0, sample.Count * 1.5 * limit / all.Count);
             var threshold = sample[at];
 
             var cap = limit * 3 + 1024;
-            var candidates = new List<(ulong Key, INode Node)>(Math.Min(cap, all.Count));
+            var candidates = new List<(ulong Key, int Index)>(Math.Min(cap, all.Count));
             var total = 0;
-            Parallel.ForEach(Partitioner.Create(0, all.Count, 16384), () => new List<(ulong, INode)>(),
+            Parallel.ForEach(Partitioner.Create(0, all.Count, 16384), () => new List<(ulong, int)>(),
                 (range, state, local) =>
                 {
                     if (state.IsStopped || IsCanceled?.Invoke() == true) { state.Stop(); return local; }
                     var found = 0;
                     for (var i = range.Item1; i < range.Item2; i++)
                     {
-                        var node = all[i];
-                        var k = key(node);
-                        if (k <= threshold) { local.Add((k, node)); found++; }
+                        var k = all.ScalarKey(i, key, inverted);
+                        if (k <= threshold) { local.Add((k, i)); found++; }
                     }
                     if (Interlocked.Add(ref total, found) > cap) state.Stop();
                     return local;
@@ -1491,7 +1582,32 @@ namespace search.Models
 
             candidates.Sort((a, b) => a.Key.CompareTo(b.Key)); //Dense - no node access at all
             var result = new List<INode>(limit);
-            for (var i = 0; i < limit; i++) result.Add(candidates[i].Node);
+            for (var i = 0; i < limit; i++) result.Add(all[candidates[i].Index]); //Only the window materializes
+            return result;
+        }
+
+        /// <summary>
+        /// Exact top-limit by scalar key when sampling could not prune (a low-cardinality
+        /// key such as file Count = 1 ties millions of rows): a worst-out heap of indexes
+        /// keyed by the column value - no handle is created for the rows it evicts. Equal
+        /// keys are finally ordered by the full comparison for a stable window.
+        /// </summary>
+        static List<INode> ScalarHeapTop(RowSource all, Func<INode, ulong> key, bool inverted, int limit,
+            Comparison<INode> compare, Func<bool> IsCanceled)
+        {
+            //Inverted comparer => the heap root is the worst kept element, evicted first
+            var heap = new PriorityQueue<int, ulong>(Comparer<ulong>.Create((a, b) => b.CompareTo(a)));
+            for (var i = 0; i < all.Count; i++)
+            {
+                if ((i & 0xFFFF) == 0 && IsCanceled?.Invoke() == true) return null;
+                var k = all.ScalarKey(i, key, inverted);
+                if (heap.Count < limit) heap.Enqueue(i, k);
+                //Compares against the root's key first - a row beyond the window never sifts the heap
+                else if (heap.TryPeek(out _, out var worst) && k < worst) heap.EnqueueDequeue(i, k);
+            }
+            var result = new List<INode>(heap.Count);
+            foreach (var (index, _) in heap.UnorderedItems) result.Add(all[index]);
+            result.Sort(compare);
             return result;
         }
 
@@ -1502,7 +1618,7 @@ namespace search.Models
         /// than limit nodes passed (the sample misjudged the quantile). Runs the expensive
         /// comparisons (culture-aware names, path chains) across all cores.
         /// </summary>
-        static List<INode> ThresholdCandidates(IReadOnlyList<INode> all, Comparison<INode> compare, int limit, Func<bool> IsCanceled)
+        static List<INode> ThresholdCandidates(RowSource all, Comparison<INode> compare, int limit, Func<bool> IsCanceled)
         {
             //A ~4k sample nails the quantile within a few percent; aiming the threshold at
             //1.5x limit leaves an unlucky sample still admitting the whole window
@@ -1522,7 +1638,7 @@ namespace search.Models
                     if (state.IsStopped || IsCanceled?.Invoke() == true) { state.Stop(); return local; }
                     var found = 0;
                     for (var i = range.Item1; i < range.Item2; i++)
-                        if (compare(all[i], threshold) <= 0) { local.Add(all[i]); found++; }
+                        if (all.CompareTo(i, threshold, compare) <= 0) { local.Add(all[i]); found++; }
                     //Cap enforcement is per range - the overshoot stays a few ranges' worth
                     if (Interlocked.Add(ref total, found) > cap) state.Stop();
                     return local;
@@ -1633,10 +1749,19 @@ namespace search.Models
             //both expensive and dependent on receiving every descendant USN event.
             foreach (var (_, root) in treeRoots) SubtractTreeAggregatesFromAncestors(root);
 
-            var candidates = files.Values.AsParallel()
-                .Where(n => roots.Contains(n) || NodePath.IsUnderAny(n, roots, prefixes))
-                .ToArray();
-            var removed = new List<INode>(candidates.Length);
+            //Rows are swept in place: each drive table resolves the root paths to its own
+            //rows once (through the immutable base, so a root replaced in the live overlay
+            //still names its scanned subtree) and every row just walks its parent column.
+            var rootRows = new ConcurrentDictionary<MftTable, HashSet<int>>(ReferenceEqualityComparer.Instance);
+            var candidates = files.FilterSnapshot(
+                n => roots.Contains(n) || NodePath.IsUnderAny(n, roots, prefixes),
+                (table, row) =>
+                {
+                    var rows = rootRows.GetOrAdd(table, t => files.ResolveRows(t, roots));
+                    return rows.Contains(row) || NodePath.IsUnderAnyRow(table, row, rows, prefixes);
+                },
+                null) ?? new List<INode>();
+            var removed = new List<INode>(candidates.Count);
             foreach (var candidate in candidates)
             {
                 if (!files.TryRemove(candidate, out var actual)) continue;
@@ -1754,7 +1879,7 @@ namespace search.Models
             //is a full-index walk and the watcher batches a storm's worth of misses, so
             //N directories must not cost N passes.
             var changed = new List<INode>();
-            var stale = files.Values.AsParallel().Where(n =>
+            bool StaleNode(INode n)
             {
                 foreach (var (dirNode, prefix, onDisk) in targets)
                 {
@@ -1764,7 +1889,38 @@ namespace search.Models
                     if (!onDisk.Contains(end < 0 ? full : full.Substring(0, end))) return true;
                 }
                 return false;
-            }).ToArray();
+            }
+            //An MFT row walks its parent column to the target directory's row and names the
+            //child entry directly below it - no path string for the millions of rows elsewhere.
+            bool StaleRow(MftTable table, int row)
+            {
+                foreach (var (dirNode, prefix, onDisk) in targets)
+                {
+                    var dirRow = table.RowOf(dirNode);
+                    if (dirRow < 0)
+                    {
+                        //The directory is a live node or another scan's row: compare paths
+                        var node = table.Handle(row);
+                        if (ReferenceEquals(node, dirNode) || !NodePath.IsUnder(node, dirNode, prefix)) continue;
+                        var full = node.FullName;
+                        var end = full.IndexOf(Path.DirectorySeparatorChar, prefix.Length);
+                        if (!onDisk.Contains(end < 0 ? full : full.Substring(0, end))) return true;
+                        continue;
+                    }
+                    if (row == dirRow) continue;
+                    var child = -1;
+                    for (var p = row; p >= 0; p = table.Parent[p])
+                        if (table.Parent[p] == dirRow)
+                        {
+                            child = p;
+                            break;
+                        }
+                    if (child < 0) continue;
+                    if (!onDisk.Contains(prefix + table.NameString(child))) return true;
+                }
+                return false;
+            }
+            var stale = files.FilterSnapshot(StaleNode, StaleRow, null) ?? new List<INode>();
             foreach (var candidate in stale)
             {
                 if (!files.TryRemove(candidate, SubtractNodeAggregates, out var actual)) continue;
@@ -2977,9 +3133,10 @@ namespace search.Models
         /// </summary>
         /// <param name="name"></param>
         /// <returns></returns>
-        public static string FindFile(string name) => files.Values.AsParallel().FirstOrDefault(
-                  x => !x.IsDirectory &&
-                  x.Name.StartsWith(name, StringComparison.OrdinalIgnoreCase) && x.Name.Length == name.Length)?.FullName;
+        public static string FindFile(string name) => files.FilterSnapshot(
+                  x => !x.IsDirectory && string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase),
+                  (table, row) => !table.IsDirectory(row) && table.NameAt(row).EqualsIgnoreCase(name),
+                  null)?.FirstOrDefault()?.FullName;
 
         public static string FindFile(params string[] names)
         {
@@ -3400,8 +3557,11 @@ namespace search.Models
                     EndBulkFilesMutation();
                 }
             }
-            exes = files.Values.AsParallel()
-                .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
+            exes = (files.FilterSnapshot(
+                n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe"),
+                (table, row) => !table.IsDirectory(row)
+                    && table.NameAt(row).EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+                null) ?? new List<INode>()).ToArray();
             LoadStatusTooltip = OriginsInfo(origins).Trim();
             return true;
         }

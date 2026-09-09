@@ -1,11 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Linq;
 using System.IO;
-using System.Linq.Expressions;
-using System.Reflection;
-using Ex = System.Linq.Expressions.Expression;
 
 namespace search.Models
 {
@@ -16,36 +13,14 @@ namespace search.Models
         /// Format: [:]text[:][|]...
         /// : - means that the name should start/end or both (be equal) to text
         /// | is or in the pattern
+        /// Matched against spans: an MFT row's name is tested in place in the name blob,
+        /// so a filter pass over millions of rows allocates nothing.
         /// </summary>
         class Pattern
         {
-            string pattern;
-            public readonly Func<string, bool> Matches;
+            readonly string pattern;
             [Flags] enum Pos { CONTAINS = 0, STARTS = 1, ENDS = 2, EQUALS = STARTS | ENDS }
-
-            //TODO: optmize by precislely constructed regex or seach function i.e. search the string only once for all
-            // e.g. construct starting/equal char table, construct ending table (merge the tables together and add containing)
-            // e.g. ".cs:|.cpp:" would result in ".c(s|pp)$" - would be better to do without regex (because of the risk of backtracking)
-            // i.e. I need to search for .c and branch the search when found...
-            //=> construct expression:
-            //  c=='.' && (++c=='c' || c=='C') && ((++c=='s' || c=='S') && b(0) || (c=='p'|| c=='P') && (++c=='p'|| c=='P'))
-            // kde "b" je backtracking on false:
-            //      bool b(char x) { if (++c != x) { c--; return false; } return true; };
-            // Obecný mechanismus? <= nejdříve SEŘADIT dle abecedy.
-            //=> lepší bude sestavit "statement expression" jako z lambdy s {}
-            //aby bylo napřímo a nemusela se tam volat b() funkce
-            //Porvnat s rychlostí regulárů... Jak moc se skutečně regulár kompiluje?
-            //https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton
-
-            //Method by expression tree
-            static MethodInfo MethodCalled(Expression<Action> e) => (e.Body as MethodCallExpression)?.Method;
-            static readonly MethodInfo miContains = MethodCalled(() => "".Contains("", (StringComparison)0));
-
-            //Method by reflection
-            static readonly Type[] cmpTypes = { typeof(string), typeof(StringComparison) };
-            static readonly MethodInfo miStartsWith = typeof(string).GetMethod("StartsWith", cmpTypes);
-            static readonly MethodInfo miEndsWith = typeof(string).GetMethod("EndsWith", cmpTypes);
-            static readonly MethodInfo miEquals = typeof(string).GetMethod("Equals", cmpTypes);
+            readonly (string Text, Pos Position)[] alternatives;
 
             /// <summary>
             /// True when every alternative is a plain contains-match without '\' - such a
@@ -68,24 +43,39 @@ namespace search.Models
                 this.pattern = pattern;
                 PlainContains = pattern.Split('|').All(x => !x.StartsWith(':') && !x.EndsWith(':') && !x.Contains('\\'));
                 ComponentMatch = !pattern.Contains('\\');
-
-                //Create and compile expression for comparison
-                ParameterExpression text = Ex.Parameter(typeof(string));
-                ConstantExpression cmp = Ex.Constant(StringComparison.OrdinalIgnoreCase);
-                var ex = Ex.Lambda(pattern.Split('|').Distinct()
-                    //Order by pobability to match (from shortest containing to longest equal)
-                    .OrderBy(x => (x.Where(c => c == ':').Count() << 10) + x.Length)
-                    .Select(x => (Ex)Ex.Call(text,
-                     ((x.StartsWith(':') ? Pos.STARTS : 0) | (x.EndsWith(':') ? Pos.ENDS : 0)) switch
-                     {
-                         Pos.CONTAINS => miContains,
-                         Pos.STARTS => miStartsWith,
-                         Pos.ENDS => miEndsWith,
-                         Pos.EQUALS => miEquals,
-                         _ => throw new InvalidOperationException("Unknown pattern position")
-                     }, Ex.Constant(x.Trim(':')), cmp)).Aggregate((s, n) => Ex.OrElse(s, n)), text);
-                Matches = (Func<string, bool>)ex.Compile();
+                alternatives = pattern.Split('|').Distinct()
+                    //Order by probability to match (from shortest containing to longest equal)
+                    .OrderBy(x => (x.Count(c => c == ':') << 10) + x.Length)
+                    .Select(x => (x.Trim(':'),
+                        (x.StartsWith(':') ? Pos.STARTS : 0) | (x.EndsWith(':') ? Pos.ENDS : 0)))
+                    .ToArray();
             }
+
+            public bool Matches(string text) => Matches(text.AsSpan());
+
+            public bool Matches(ReadOnlySpan<char> text)
+            {
+                for (var i = 0; i < alternatives.Length; i++)
+                {
+                    var (value, position) = alternatives[i];
+                    var hit = position switch
+                    {
+                        Pos.CONTAINS => text.Contains(value, StringComparison.OrdinalIgnoreCase),
+                        Pos.STARTS => text.StartsWith(value, StringComparison.OrdinalIgnoreCase),
+                        Pos.ENDS => text.EndsWith(value, StringComparison.OrdinalIgnoreCase),
+                        _ => text.Equals(value, StringComparison.OrdinalIgnoreCase)
+                    };
+                    if (hit) return true;
+                }
+                return false;
+            }
+
+            public bool Matches(NameSpan name)
+            {
+                Span<char> scratch = stackalloc char[NameSpan.MaxChars];
+                return Matches(name.Chars(scratch));
+            }
+
             public override string ToString() => pattern;
 
             //Implicit casts
@@ -134,11 +124,11 @@ namespace search.Models
         /// </summary>
         internal static Func<string, INode> Resolve = SearchModel.FindByPath;
 
-    List<Pattern> inName = new List<Pattern>();
-    List<Pattern> inParentName = new List<Pattern>();
-    List<Pattern> inParentsName = new List<Pattern>();
-    // Directories with recursion flag
-    List<DirCriterion> dirs = new List<DirCriterion>();
+        List<Pattern> inName = new List<Pattern>();
+        List<Pattern> inParentName = new List<Pattern>();
+        List<Pattern> inParentsName = new List<Pattern>();
+        // Directories with recursion flag
+        List<DirCriterion> dirs = new List<DirCriterion>();
 
         /// <summary>
         /// Create the filter from text - list of OR directories and AND values separated by spaces except in quotes "..."
@@ -215,6 +205,7 @@ namespace search.Models
         /// <returns></returns>
         public bool Matches(INode n)
         {
+            if (n is MftNode h) return Matches(h.Table, h.Row);
             //Plain loops on purpose: this runs once per indexed node on every keystroke
             //(millions of calls). LINQ All/Any with a closure over n allocated two objects
             //per node per criterion list - hundreds of MB of garbage per filter change.
@@ -247,6 +238,43 @@ namespace search.Models
         }
 
         /// <summary>
+        /// <see cref="Matches(INode)"/> for one MFT table row, evaluated in place: names are
+        /// compared inside the name blob and directory criteria walk the parent column, so
+        /// no handle or string exists for a row that does not match.
+        /// </summary>
+        internal bool Matches(MftTable table, int row)
+        {
+            if (inName.Count > 0)
+            {
+                var name = table.NameAt(row);
+                for (var i = 0; i < inName.Count; i++)
+                    if (!inName[i].Matches(name)) return false;
+            }
+            if (inParentName.Count > 0)
+            {
+                var parent = table.Parent[row];
+                for (var i = 0; i < inParentName.Count; i++)
+                    if (parent < 0 ? !inParentName[i].Matches("") : !inParentName[i].Matches(table.NameAt(parent)))
+                        return false;
+            }
+            for (var i = 0; i < inParentsName.Count; i++)
+                if (!MatchesPathRow(inParentsName[i], table, row)) return false;
+
+            if (dirs.Count == 0) return true;
+
+            var alwaysRecursive = inName.Count > 0;
+            for (var i = 0; i < dirs.Count; i++)
+            {
+                var d = dirs[i];
+                if ((alwaysRecursive || d.Recursive)
+                    ? NodePath.IsUnderRow(table, row, d.Node, d.Prefix)
+                    : NodePath.HasParentRow(table, row, d.Node))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// The pattern matched against the path's components, without building the path:
         /// a '\'-less pattern cannot span a separator, so each component is tested on its
         /// own - plain terms behave exactly as a full-path contains, and anchors bind to
@@ -267,6 +295,26 @@ namespace search.Models
 
             // Anchored: test the remaining path-backed prefix component by component
             foreach (var part in m.FullName.Split('\\'))
+                if (part.Length > 0 && p.Matches(part)) return true;
+            return false;
+        }
+
+        static bool MatchesPathRow(Pattern p, MftTable table, int row)
+        {
+            if (!p.ComponentMatch) return p.Matches(table.FullName(row));
+
+            var m = row;
+            for (var guard = 0; table.Parent[m] >= 0 && guard < 512; guard++)
+            {
+                if (p.Matches(table.NameAt(m))) return true;
+                m = table.Parent[m];
+            }
+            //m is the path-terminal row (the drive root): its own full name is the prefix
+            var terminal = m == table.RootRow ? table.Root : table.FullName(m);
+            if (p.PlainContains) return p.Matches(terminal);
+
+            // Anchored: test the remaining path-backed prefix component by component
+            foreach (var part in terminal.Split('\\'))
                 if (part.Length > 0 && p.Matches(part)) return true;
             return false;
         }

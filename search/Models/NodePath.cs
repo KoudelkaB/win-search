@@ -400,6 +400,10 @@ namespace search.Models
             return false;
         }
 
+        /// <summary>Two rows of one table spell the same path (a duplicate textual entry).</summary>
+        internal static bool RowsEqual(MftTable table, int a, int b)
+            => a == b || CursorsEqual(Cursor.ForRow(table, a), Cursor.ForRow(table, b));
+
         /// <summary>Path equality of a table row against an index key (node or path string).</summary>
         internal static bool KeyEqualsRow(MftTable table, int row, object key)
         {

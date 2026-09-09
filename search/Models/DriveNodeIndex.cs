@@ -1,18 +1,21 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace search.Models
 {
     /// <summary>
     /// Path index sharded by filesystem root. A completed drive scan is retained as one
-    /// immutable compact table containing only indexes into its dense node array. Watcher/UI
-    /// mutations live in a small overlay (node or tombstone), so the multi-million-node base
-    /// never pays mutable dictionary key+value/node overhead.
+    /// immutable compact table containing only indexes into its dense node source - for an
+    /// MFT scan that source is the columnar <see cref="MftTable"/>, so the multi-million-row
+    /// base owns no objects at all. Watcher/UI mutations live in a small overlay (node or
+    /// tombstone). Queries sweep rows and materialize handles only for their results.
     /// </summary>
     internal sealed class DriveNodeIndex : IEnumerable<KeyValuePair<object, INode>>
     {
@@ -28,28 +31,40 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Immutable open-addressed path table. Slots retain only an index into the existing
-        /// dense node array; an eight-bit hash fingerprint rejects nearly all probe collisions
-        /// without walking parent chains. Double hashing avoids primary clustering at 70% load.
+        /// Immutable open-addressed path table. Slots retain only an index into the dense
+        /// source (a table row or a list position); an eight-bit hash fingerprint rejects
+        /// nearly all probe collisions without walking parent chains. Double hashing avoids
+        /// primary clustering at 70% load. Table rows are hashed and compared in place - no
+        /// handle is created while building or probing.
         /// </summary>
         internal sealed class CompactPathIndex : IReadOnlyCollection<INode>
         {
             const int LoadNumerator = 7;
             const int LoadDenominator = 10;
+            readonly MftTable table;
             readonly IReadOnlyList<INode> nodes;
             readonly INode[] nodeArray;
             readonly int[] slots; //dense index + 1; 0 = empty
             readonly byte[] fingerprints;
+            readonly int[] duplicateRows; //Sorted dense indexes hidden by a later entry with the same path
 
             public CompactPathIndex(IReadOnlyList<INode> nodes,
                 CancellationToken cancellationToken = default)
+                : this(MftTable.TryFromDense(nodes), nodes, cancellationToken) { }
+
+            public CompactPathIndex(MftTable table, CancellationToken cancellationToken = default)
+                : this(table, table.DenseNodes, cancellationToken) { }
+
+            CompactPathIndex(MftTable table, IReadOnlyList<INode> nodes, CancellationToken cancellationToken)
             {
+                this.table = table;
                 this.nodes = nodes;
                 nodeArray = nodes as INode[];
                 if (nodes.Count == 0)
                 {
                     slots = Array.Empty<int>();
                     fingerprints = Array.Empty<byte>();
+                    duplicateRows = Array.Empty<int>();
                     return;
                 }
 
@@ -60,13 +75,14 @@ namespace search.Models
                 fingerprints = new byte[capacity];
                 var mask = capacity - 1;
                 var uniqueCount = 0;
+                List<int> duplicates = null;
 
                 for (var i = 0; i < nodes.Count; i++)
                 {
                     if ((i & 0x0FFF) == 0) cancellationToken.ThrowIfCancellationRequested();
-                    var node = nodes[i] ?? throw new ArgumentException(
-                        "Path index cannot contain a null node.", nameof(nodes));
-                    var hash = Hash(node);
+                    if (table == null && nodes[i] == null)
+                        throw new ArgumentException("Path index cannot contain a null node.", nameof(nodes));
+                    var hash = HashOf(i);
                     var fingerprint = Fingerprint(hash);
                     var at = (int)(hash & (uint)mask);
                     var step = Step(hash, mask);
@@ -82,11 +98,11 @@ namespace search.Models
                             inserted = true;
                             break;
                         }
-                        if (fingerprints[at] == fingerprint
-                            && NodePath.KeyEquals(NodeAt(stored - 1), node))
+                        if (fingerprints[at] == fingerprint && SameSource(stored - 1, i))
                         {
                             //Same textual path: mirror dictionary assignment semantics by
                             //making the later value authoritative without another slot.
+                            (duplicates ??= new List<int>()).Add(stored - 1);
                             slots[at] = i + 1;
                             inserted = true;
                             break;
@@ -97,18 +113,36 @@ namespace search.Models
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 Count = uniqueCount;
+                if (duplicates == null) duplicateRows = Array.Empty<int>();
+                else
+                {
+                    duplicates.Sort();
+                    duplicateRows = duplicates.ToArray();
+                }
             }
 
             public int Count { get; }
+            public MftTable Table => table;
+            /// <summary>Dense indexes that are NOT authoritative (an equal path came later); sorted.</summary>
+            public int[] DuplicateRows => duplicateRows;
             internal long StorageBytes => (long)slots.Length * sizeof(int) + fingerprints.Length;
 
             public bool TryGetValue(object key, out INode node)
             {
-                if (key == null || slots.Length == 0)
+                if (TryGetRow(key, out var row))
                 {
-                    node = null;
-                    return false;
+                    node = NodeAt(row);
+                    return true;
                 }
+                node = null;
+                return false;
+            }
+
+            /// <summary>The dense index (table row / list position) holding this path.</summary>
+            public bool TryGetRow(object key, out int row)
+            {
+                row = -1;
+                if (key == null || slots.Length == 0) return false;
                 var hash = Hash(key);
                 var fingerprint = Fingerprint(hash);
                 var mask = slots.Length - 1;
@@ -117,25 +151,18 @@ namespace search.Models
                 for (var probe = 0; probe < slots.Length; probe++)
                 {
                     var stored = slots[at];
-                    if (stored == 0)
+                    if (stored == 0) return false;
+                    if (fingerprints[at] == fingerprint && KeyEquals(stored - 1, key))
                     {
-                        node = null;
-                        return false;
-                    }
-                    var candidate = NodeAt(stored - 1);
-                    if (fingerprints[at] == fingerprint
-                        && NodePath.KeyEquals(candidate, key))
-                    {
-                        node = candidate;
+                        row = stored - 1;
                         return true;
                     }
                     at = (at + step) & mask;
                 }
-                node = null;
                 return false;
             }
 
-            public bool Contains(object key) => TryGetValue(key, out _);
+            public bool Contains(object key) => TryGetRow(key, out _);
 
             public IEnumerator<INode> GetEnumerator()
             {
@@ -146,7 +173,17 @@ namespace search.Models
             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            INode NodeAt(int index) => nodeArray != null ? nodeArray[index] : nodes[index];
+            internal INode NodeAt(int index)
+                => table != null ? table.Handle(index) : nodeArray != null ? nodeArray[index] : nodes[index];
+
+            uint HashOf(int index)
+                => table != null ? unchecked((uint)table.PathHash[index]) : Hash(nodes[index]);
+
+            bool KeyEquals(int index, object key)
+                => table != null ? NodePath.KeyEqualsRow(table, index, key) : NodePath.KeyEquals(nodes[index], key);
+
+            bool SameSource(int a, int b)
+                => table != null ? NodePath.RowsEqual(table, a, b) : NodePath.KeyEquals(nodes[a], nodes[b]);
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             static uint Hash(object key)
@@ -173,17 +210,27 @@ namespace search.Models
             internal PreparedDrive(CompactPathIndex @base, IReadOnlyList<INode> denseNodes)
             {
                 Base = @base;
-                //A duplicate textual path is one index entry. Do not expose a dense source
-                //that contains more identities than the authoritative compact table.
-                DenseNodes = denseNodes?.Count == @base.Count ? denseNodes : null;
+                //A table always keeps its dense rows - its duplicates are listed by the base.
+                //A plain list with a duplicate textual path would expose more identities than
+                //the authoritative compact table, so it is not exposed as a dense source.
+                DenseNodes = @base.Table != null ? denseNodes
+                    : denseNodes?.Count == @base.Count ? denseNodes : null;
             }
 
+            public MftTable Table => Base.Table;
             public int Count => Base.Count;
             public bool IsEmpty => Base.Count == 0;
             public IEnumerable<INode> Values
             {
                 get
                 {
+                    if (Table != null)
+                    {
+                        var hidden = Table.Count == Base.Count ? null : new HashSet<int>(Base.DuplicateRows);
+                        for (var row = 0; row < Table.Count; row++)
+                            if (hidden?.Contains(row) != true) yield return Table.Handle(row);
+                        yield break;
+                    }
                     if (DenseNodes != null)
                     {
                         foreach (var node in DenseNodes) yield return node;
@@ -199,6 +246,7 @@ namespace search.Models
             public readonly string Root;
             public readonly CompactPathIndex Base;
             public readonly IReadOnlyList<INode> DenseNodes;
+            public readonly MftTable Table;
             public readonly NonBlocking.ConcurrentDictionary<object, DeltaEntry> Delta;
             int count;
             /// <summary>
@@ -220,6 +268,7 @@ namespace search.Models
                 Root = root;
                 Base = prepared.Base;
                 DenseNodes = prepared.DenseNodes;
+                Table = prepared.Table;
                 Delta = new NonBlocking.ConcurrentDictionary<object, DeltaEntry>(NodePath.KeyComparer);
                 count = Base.Count;
             }
@@ -306,19 +355,232 @@ namespace search.Models
                     TryRemove(key, null, entry.Version, out _);
             }
 
+            /// <summary>
+            /// Dense indexes of the base that a query must skip: duplicates the compact table
+            /// hides plus every base entry the delta shadows (tombstone or replacement). Sorted.
+            /// </summary>
+            public int[] HiddenIndexes(KeyValuePair<object, DeltaEntry>[] delta)
+            {
+                if (delta.Length == 0) return Base.DuplicateRows;
+                var hidden = new HashSet<int>(Base.DuplicateRows);
+                foreach (var pair in delta)
+                    if (Base.TryGetRow(pair.Key, out var row)) hidden.Add(row);
+                var result = hidden.ToArray();
+                Array.Sort(result);
+                return result;
+            }
+
             public IEnumerable<KeyValuePair<object, INode>> Entries()
             {
-                IEnumerable<INode> source = DenseNodes is { } denseNodes
-                    ? denseNodes : Base;
-                foreach (var node in source)
+                var hidden = new HashSet<int>(HiddenIndexes(Delta.ToArray()));
+                if (Table != null)
                 {
-                    if (Delta.ContainsKey(node)) continue;
-                    yield return new KeyValuePair<object, INode>(node, node);
+                    for (var row = 0; row < Table.Count; row++)
+                    {
+                        if (hidden.Contains(row)) continue;
+                        var node = Table.Handle(row);
+                        yield return new KeyValuePair<object, INode>(node, node);
+                    }
+                }
+                else if (DenseNodes is { } denseNodes)
+                {
+                    for (var i = 0; i < denseNodes.Count; i++)
+                    {
+                        if (hidden.Contains(i)) continue;
+                        yield return new KeyValuePair<object, INode>(denseNodes[i], denseNodes[i]);
+                    }
+                }
+                else
+                {
+                    foreach (var node in Base)
+                    {
+                        if (Delta.ContainsKey(node)) continue;
+                        yield return new KeyValuePair<object, INode>(node, node);
+                    }
                 }
                 foreach (var pair in Delta)
                     if (pair.Value.Node != null)
                         yield return new KeyValuePair<object, INode>(pair.Key, pair.Value.Node);
             }
+        }
+
+        /// <summary>
+        /// A point-in-time, read-only view of every indexed node: the immutable drive rows
+        /// (minus the few the live overlay hides) followed by the overlay's own nodes.
+        /// Building one is O(overlay), never O(index) - no row is copied and no handle is
+        /// created until a specific element is asked for. Sorting and filtering sweep the
+        /// rows through <see cref="TryRow"/> and materialize only what they keep.
+        /// </summary>
+        internal sealed class Snapshot : IReadOnlyList<INode>
+        {
+            internal sealed class Segment
+            {
+                public readonly MftTable Table;
+                public readonly IReadOnlyList<INode> List;
+                public readonly int[] Hidden; //Sorted dense indexes excluded from the view
+                public readonly int Count;
+
+                public Segment(MftTable table, IReadOnlyList<INode> list, int[] hidden)
+                {
+                    Table = table;
+                    List = list;
+                    Hidden = hidden ?? Array.Empty<int>();
+                    Count = (table?.Count ?? list.Count) - Hidden.Length;
+                }
+
+                /// <summary>Dense index of the local visible position: skips the hidden indexes in O(log hidden).</summary>
+                public int IndexAt(int local)
+                {
+                    var hidden = Hidden;
+                    if (hidden.Length == 0) return local;
+                    //hidden[c] - c is non-decreasing; the first c with hidden[c] - c > local is
+                    //the number of hidden indexes before the answer.
+                    int lo = 0, hi = hidden.Length;
+                    while (lo < hi)
+                    {
+                        var mid = (lo + hi) >> 1;
+                        if (hidden[mid] - mid > local) hi = mid;
+                        else lo = mid + 1;
+                    }
+                    return local + lo;
+                }
+
+                public bool IsVisible(int index)
+                    => Hidden.Length == 0 || Array.BinarySearch(Hidden, index) < 0;
+
+                public INode NodeAt(int local)
+                {
+                    var index = IndexAt(local);
+                    return Table != null ? Table.Handle(index) : List[index];
+                }
+
+                public Segment Hiding(IEnumerable<int> more)
+                {
+                    var set = new HashSet<int>(Hidden);
+                    foreach (var index in more) set.Add(index);
+                    if (set.Count == Hidden.Length) return this;
+                    var hidden = set.ToArray();
+                    Array.Sort(hidden);
+                    return new Segment(Table, List, hidden);
+                }
+            }
+
+            readonly Segment[] segments;
+            readonly int[] starts; //Cumulative visible counts; starts[segments.Length] = first extra
+            readonly INode[] extras;
+
+            public Snapshot(Segment[] segments, INode[] extras)
+            {
+                this.segments = segments;
+                this.extras = extras ?? Array.Empty<INode>();
+                starts = new int[segments.Length + 1];
+                for (var i = 0; i < segments.Length; i++)
+                    starts[i + 1] = checked(starts[i] + segments[i].Count);
+                Count = checked(starts[^1] + this.extras.Length);
+            }
+
+            public int Count { get; }
+            internal IReadOnlyList<Segment> Segments => segments;
+            internal INode[] Extras => extras;
+
+            public INode this[int index]
+            {
+                get
+                {
+                    if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+                    var segment = Locate(index);
+                    return segment < 0 ? extras[index - starts[^1]] : segments[segment].NodeAt(index - starts[segment]);
+                }
+            }
+
+            /// <summary>The table row behind a position, when it is an MFT row (not a list node or an overlay node).</summary>
+            public bool TryRow(int index, out MftTable table, out int row)
+            {
+                var segment = Locate(index);
+                if (segment >= 0 && segments[segment].Table is { } t)
+                {
+                    table = t;
+                    row = segments[segment].IndexAt(index - starts[segment]);
+                    return true;
+                }
+                table = null;
+                row = -1;
+                return false;
+            }
+
+            int Locate(int index)
+            {
+                for (var i = 0; i < segments.Length; i++)
+                    if (index < starts[i + 1]) return i;
+                return -1;
+            }
+
+            /// <summary>
+            /// The same view with these nodes removed and those added (the cache overlay of
+            /// small membership changes). Rows hide in place; other nodes leave or join the
+            /// extras. An added node already visible in a segment is not duplicated.
+            /// </summary>
+            public Snapshot Patch(IReadOnlySet<INode> removed, IReadOnlyList<INode> added)
+            {
+                var nextSegments = (Segment[])segments.Clone();
+                var nextExtras = new List<INode>(extras.Length + added.Count);
+                if (removed.Count != 0)
+                {
+                    for (var s = 0; s < nextSegments.Length; s++)
+                    {
+                        var segment = nextSegments[s];
+                        List<int> hide = null;
+                        foreach (var node in removed)
+                        {
+                            var index = IndexIn(segment, node);
+                            if (index >= 0) (hide ??= new List<int>()).Add(index);
+                        }
+                        if (hide != null) nextSegments[s] = segment.Hiding(hide);
+                    }
+                }
+                foreach (var node in extras)
+                    if (!removed.Contains(node)) nextExtras.Add(node);
+                foreach (var node in added)
+                {
+                    if (node == null) continue;
+                    var present = false;
+                    foreach (var segment in nextSegments)
+                    {
+                        var index = IndexIn(segment, node);
+                        if (index >= 0 && segment.IsVisible(index))
+                        {
+                            present = true;
+                            break;
+                        }
+                    }
+                    if (present) continue;
+                    var duplicate = false;
+                    foreach (var existing in nextExtras)
+                        if (ReferenceEquals(existing, node))
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    if (!duplicate) nextExtras.Add(node);
+                }
+                return new Snapshot(nextSegments, nextExtras.ToArray());
+            }
+
+            static int IndexIn(Segment segment, INode node)
+            {
+                if (segment.Table != null) return segment.Table.RowOf(node);
+                var list = segment.List;
+                for (var i = 0; i < list.Count; i++)
+                    if (ReferenceEquals(list[i], node)) return i;
+                return -1;
+            }
+
+            public IEnumerator<INode> GetEnumerator()
+            {
+                for (var i = 0; i < Count; i++) yield return this[i];
+            }
+
+            IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
         }
 
         static readonly PreparedDrive EmptyPrepared = new(
@@ -373,6 +635,12 @@ namespace search.Models
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(nodes);
+            //An MFT scan is indexed straight from its columns: no node list, no handles.
+            var table = MftTable.TryFromDense(nodes) ?? MftTable.TryFromDense(denseNodes);
+            if (table != null)
+                return table.Count == 0 ? EmptyPrepared
+                    : new PreparedDrive(new CompactPathIndex(table, cancellationToken), table.DenseNodes);
+
             IReadOnlyList<INode> indexed = denseNodes ?? nodes as IReadOnlyList<INode>;
             if (indexed == null)
             {
@@ -605,7 +873,7 @@ namespace search.Models
 
         /// <summary>
         /// Zero-copy stable enumeration of unmodified drive arrays. Delta-bearing shards use
-        /// CopySnapshot, but retain their dense immutable base for cache-friendly merging.
+        /// BuildSnapshot, which layers the small delta over the dense base without a copy.
         /// </summary>
         public bool TryGetDenseSnapshot(out IReadOnlyList<INode> nodes)
         {
@@ -631,112 +899,124 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Merge immutable dense bases with their small captured delta sets. This avoids
-        /// enumerating a generic hash table after the first watcher mutation and keeps the
-        /// full-index copy cancellable.
+        /// The current membership as a <see cref="Snapshot"/>: immutable rows minus the
+        /// entries the overlay hides, plus the overlay's nodes. Costs O(overlay), copies
+        /// nothing and creates no handles. Null when canceled.
         /// </summary>
-        public IReadOnlyList<INode> CopySnapshot(Func<bool> isCanceled)
+        public Snapshot BuildSnapshot(Func<bool> isCanceled = null)
         {
-            if (TryGetDenseSnapshot(out var dense)) return dense;
-            var snapshot = shards;
-            var result = new List<INode>(Count);
-            var seen = 0;
-            foreach (var shard in snapshot)
+            var current = shards;
+            var segments = new List<Snapshot.Segment>(current.Length);
+            var extras = new List<INode>();
+            foreach (var shard in current)
             {
+                if (isCanceled?.Invoke() == true) return null;
                 var delta = shard.Delta.ToArray();
-                HashSet<object> shadowed = null;
-                if (delta.Length != 0)
+                if (shard.Table != null)
+                    segments.Add(new Snapshot.Segment(shard.Table, null, shard.HiddenIndexes(delta)));
+                else if (shard.DenseNodes is { } denseNodes)
+                    segments.Add(new Snapshot.Segment(null, denseNodes, shard.HiddenIndexes(delta)));
+                else if (shard.Base.Count != 0)
                 {
-                    shadowed = new HashSet<object>(NodePath.KeyComparer);
-                    foreach (var pair in delta) shadowed.Add(pair.Key);
-                }
-
-                IEnumerable<INode> source = shard.DenseNodes is { } denseNodes
-                    ? denseNodes : shard.Base;
-                foreach (var node in source)
-                {
-                    if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
-                    if (shadowed?.Contains(node) != true) result.Add(node);
+                    //A plain list with duplicate paths: the compact table is the authority
+                    HashSet<object> shadowed = null;
+                    if (delta.Length != 0)
+                    {
+                        shadowed = new HashSet<object>(NodePath.KeyComparer);
+                        foreach (var pair in delta) shadowed.Add(pair.Key);
+                    }
+                    var list = new List<INode>(shard.Base.Count);
+                    foreach (var node in shard.Base)
+                        if (shadowed?.Contains(node) != true) list.Add(node);
+                    segments.Add(new Snapshot.Segment(null, list, null));
                 }
                 foreach (var pair in delta)
-                {
-                    if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
-                    if (pair.Value.Node != null) result.Add(pair.Value.Node);
-                }
+                    if (pair.Value.Node is { } added) extras.Add(added);
             }
+            return isCanceled?.Invoke() == true ? null : new Snapshot(segments.ToArray(), extras.ToArray());
+        }
+
+        /// <summary>Same membership as <see cref="BuildSnapshot"/>; kept for callers that only need a list.</summary>
+        public IReadOnlyList<INode> CopySnapshot(Func<bool> isCanceled) => BuildSnapshot(isCanceled);
+
+        /// <summary>
+        /// The nodes matching a predicate, swept straight over the immutable rows plus the
+        /// overlay. MFT rows are tested through matchRow without creating a handle; only the
+        /// matches are materialized. Result order is arbitrary. Null when canceled.
+        /// </summary>
+        public List<INode> FilterSnapshot(Func<INode, bool> match, Func<MftTable, int, bool> matchRow,
+            Func<bool> isCanceled)
+        {
+            ArgumentNullException.ThrowIfNull(match);
+            matchRow ??= (table, row) => match(table.Handle(row));
+            isCanceled ??= static () => false;
+            var snapshot = BuildSnapshot(isCanceled);
+            if (snapshot == null) return null;
+            var result = new List<INode>();
+            foreach (var segment in snapshot.Segments)
+            {
+                var count = segment.Table?.Count ?? segment.List.Count;
+                if (count == 0) continue;
+                var hidden = segment.Hidden.Length == 0 ? null : new HashSet<int>(segment.Hidden);
+                var canceled = false;
+                //Partitioner.Create rejects an empty range - guarded by the count check above
+                Parallel.ForEach(Partitioner.Create(0, count, 16384), () => new List<INode>(),
+                    (range, state, local) =>
+                    {
+                        if (state.IsStopped) return local;
+                        if (isCanceled())
+                        {
+                            canceled = true;
+                            state.Stop();
+                            return local;
+                        }
+                        if (segment.Table is { } table)
+                        {
+                            for (var row = range.Item1; row < range.Item2; row++)
+                            {
+                                if (hidden?.Contains(row) == true) continue;
+                                if (matchRow(table, row)) local.Add(table.Handle(row));
+                            }
+                        }
+                        else
+                        {
+                            var list = segment.List;
+                            for (var i = range.Item1; i < range.Item2; i++)
+                            {
+                                if (hidden?.Contains(i) == true) continue;
+                                var node = list[i];
+                                if (match(node)) local.Add(node);
+                            }
+                        }
+                        return local;
+                    },
+                    local => { lock (result) result.AddRange(local); });
+                if (canceled) return null;
+            }
+            foreach (var node in snapshot.Extras)
+                if (match(node)) result.Add(node);
             return isCanceled() ? null : result;
         }
 
-        /// <summary>
-        /// The nodes matching a predicate, straight from the immutable dense arrays plus
-        /// their small deltas. A filtered query never needs the complete node list, so this
-        /// skips the multi-million-reference copy CopySnapshot would otherwise allocate on
-        /// every keystroke once the first watcher mutation has shadowed a base entry. The
-        /// dense ranges are matched in parallel; result order is arbitrary, like the index
-        /// enumeration order the callers already expect. Null when canceled.
-        /// </summary>
         public List<INode> FilterSnapshot(Func<INode, bool> match, Func<bool> isCanceled)
-        {
-            ArgumentNullException.ThrowIfNull(match);
-            isCanceled ??= static () => false;
-            var snapshot = shards;
-            var result = new List<INode>();
-            foreach (var shard in snapshot)
-            {
-                var delta = shard.Delta.ToArray();
-                HashSet<object> shadowed = null;
-                if (delta.Length != 0)
-                {
-                    shadowed = new HashSet<object>(NodePath.KeyComparer);
-                    foreach (var pair in delta) shadowed.Add(pair.Key);
-                }
+            => FilterSnapshot(match, null, isCanceled);
 
-                var dense = shard.DenseNodes;
-                //A shard can carry an EMPTY dense array with live deltas: BeginSnapshot
-                //marks a drive whose first scan is still reading the disk, and ReplaceDrive
-                //publishes an empty base when it must preserve post-watermark mutations.
-                //Partitioner.Create rejects an empty range, so only a non-empty base is
-                //partitioned - the delta pass below still runs for both.
-                if (dense == null)
-                {
-                    var seen = 0;
-                    foreach (var node in shard.Base)
-                    {
-                        if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
-                        if (shadowed?.Contains(node) == true) continue;
-                        if (match(node)) result.Add(node);
-                    }
-                }
-                else if (dense.Count != 0)
-                {
-                    var canceled = false;
-                    System.Threading.Tasks.Parallel.ForEach(
-                        System.Collections.Concurrent.Partitioner.Create(0, dense.Count, 16384),
-                        () => new List<INode>(),
-                        (range, state, local) =>
-                        {
-                            if (state.IsStopped) return local;
-                            if (isCanceled())
-                            {
-                                canceled = true;
-                                state.Stop();
-                                return local;
-                            }
-                            for (var i = range.Item1; i < range.Item2; i++)
-                            {
-                                var node = dense[i];
-                                if (shadowed?.Contains(node) == true) continue;
-                                if (match(node)) local.Add(node);
-                            }
-                            return local;
-                        },
-                        local => { lock (result) result.AddRange(local); });
-                    if (canceled) return null;
-                }
-                foreach (var pair in delta)
-                    if (pair.Value.Node is { } added && match(added)) result.Add(added);
+        /// <summary>
+        /// Rows of a table's immutable base that hold these keys (nodes or path strings). A
+        /// directory replaced in the live overlay still resolves to its scanned row, so a
+        /// subtree sweep over the rows finds the children of the path, not of an instance.
+        /// </summary>
+        public HashSet<int> ResolveRows(MftTable table, IEnumerable<object> keys)
+        {
+            var rows = new HashSet<int>();
+            foreach (var shard in shards)
+            {
+                if (!ReferenceEquals(shard.Table, table)) continue;
+                foreach (var key in keys)
+                    if (shard.Base.TryGetRow(key, out var row)) rows.Add(row);
+                break;
             }
-            return isCanceled() ? null : result;
+            return rows;
         }
 
         public IEnumerator<KeyValuePair<object, INode>> GetEnumerator()

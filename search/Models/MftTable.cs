@@ -428,10 +428,20 @@ namespace search.Models
         public IEnumerator<INode> GetEnumerator() => rows.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
+        /// <summary>The table behind a dense node list, when the list is a table's row view.</summary>
+        public static MftTable TryFromDense(IEnumerable<INode> nodes)
+            => nodes switch
+            {
+                MftTable table => table,
+                RowList list => list.Table,
+                _ => null
+            };
+
         sealed class RowList : IReadOnlyList<INode>
         {
+            public readonly MftTable Table;
             readonly MftTable table;
-            public RowList(MftTable table) => this.table = table;
+            public RowList(MftTable table) => Table = this.table = table;
             public int Count => table.Count;
             public INode this[int index] => table.Handle(index);
             public IEnumerator<INode> GetEnumerator()
