@@ -1252,8 +1252,7 @@ namespace search.Models
         /// The Name column and the leaf tie-break of the Folder column order names by the
         /// same rule - see <see cref="NodePath.NameOrder"/>.
         /// </summary>
-        internal static int CompareNames(INode a, INode b)
-            => string.Compare(a.Name, b.Name, NodePath.NameOrder);
+        internal static int CompareNames(INode a, INode b) => NodePath.CompareNames(a, b);
 
         int FoundRank(INode x) => FoundIn(x) switch { true => 1, false => 2, null => x.IsDirectory ? 4 : 3 };
 
@@ -1503,17 +1502,20 @@ namespace search.Models
                 var source = new RowSource(all, spec);
                 //Scalar keys (sizes, dates) sweep and sort densely: one column read per row,
                 //no delegate comparison, no pointer chasing across the heap in the sort phase
-                if (scalarKey != null && ScalarTop(source, scalarKey, InvertsScalarKey(spec), limit, IsCanceled) is { } top)
-                    return top;
-                if (IsCanceled?.Invoke() == true) return null;
+                if (scalarKey != null)
+                {
+                    if (ScalarTop(source, scalarKey, InvertsScalarKey(spec), limit, IsCanceled) is { } top)
+                        return top;
+                    if (IsCanceled?.Invoke() == true) return null;
+                    //The comparer orders by the very same key, so its threshold pass would hit
+                    //the same ties. The exact heap over column values costs no handles.
+                    return ScalarHeapTop(source, scalarKey, InvertsScalarKey(spec), limit, compare, IsCanceled);
+                }
                 var candidates = ThresholdCandidates(source, compare, limit, IsCanceled);
                 if (IsCanceled?.Invoke() == true) return null;
                 //Sampling could not prune (heavy ties at the threshold, unlucky sample) =>
                 //the sequential heap pass is exact for any key distribution
-                if (candidates == null)
-                    return scalarKey != null
-                        ? ScalarHeapTop(source, scalarKey, InvertsScalarKey(spec), limit, compare, IsCanceled)
-                        : HeapTop(all, compare, limit, IsCanceled);
+                if (candidates == null) return HeapTop(all, compare, limit, IsCanceled);
                 all = candidates;
             }
             //Bounded leftover (at most ~3x the window) - a parallel sort of it stays small
@@ -1638,7 +1640,16 @@ namespace search.Models
                     if (state.IsStopped || IsCanceled?.Invoke() == true) { state.Stop(); return local; }
                     var found = 0;
                     for (var i = range.Item1; i < range.Item2; i++)
+                    {
                         if (all.CompareTo(i, threshold, compare) <= 0) { local.Add(all[i]); found++; }
+                        //A tied threshold admits every element: stop this range early too, so
+                        //the overshoot (and the handles it materializes) stays small
+                        if ((found & 1023) == 1023 && Volatile.Read(ref total) + found > cap)
+                        {
+                            state.Stop();
+                            break;
+                        }
+                    }
                     //Cap enforcement is per range - the overshoot stays a few ranges' worth
                     if (Interlocked.Add(ref total, found) > cap) state.Stop();
                     return local;
@@ -3476,7 +3487,12 @@ namespace search.Models
             CancellationToken cancellationToken)
         {
             IEnumerable<INode> source = denseNodes ?? nodes;
-            if (!source.TryGetNonEnumeratedCount(out var count))
+            //An MFT table (or its row view) knows its count without enumeration - enumerating
+            //it would create a handle for every row. TryGetNonEnumeratedCount does not
+            //recognize a plain IReadOnlyCollection, so ask that first.
+            int count;
+            if (source is IReadOnlyCollection<INode> counted) count = counted.Count;
+            else if (!source.TryGetNonEnumeratedCount(out count))
             {
                 var materialized = new List<INode>();
                 var seen = 0;

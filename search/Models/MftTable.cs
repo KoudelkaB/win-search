@@ -143,12 +143,21 @@ namespace search.Models
     internal sealed class NameBlobBuilder
     {
         const int WideFlag = 0x8000;
-        readonly Dictionary<string, int> offsets = new(StringComparer.Ordinal);
+        readonly Dictionary<string, int> offsets;
         byte[] blob;
         int length;
 
-        public NameBlobBuilder(int estimatedBytes = 1 << 16)
-            => blob = new byte[Math.Max(16, estimatedBytes)];
+        /// <param name="byReference">
+        /// Deduplicate by string instance instead of content - for callers whose names are
+        /// already canonical (pooled) instances, which makes every lookup a pointer hash.
+        /// </param>
+        public NameBlobBuilder(int estimatedBytes = 1 << 16, bool byReference = false)
+        {
+            blob = new byte[Math.Max(16, estimatedBytes)];
+            offsets = byReference
+                ? new Dictionary<string, int>(ReferenceEqualityComparer.Instance)
+                : new Dictionary<string, int>(StringComparer.Ordinal);
+        }
 
         public int UniqueNames => offsets.Count;
         public int Length => length;

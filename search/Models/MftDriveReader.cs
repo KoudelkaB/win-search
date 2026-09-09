@@ -710,28 +710,39 @@ namespace search.Models
             var frn = new ulong[total];
             var pathHash = new int[total];
             var descendants = new uint[total];
-            var blob = new NameBlobBuilder(Math.Max(1 << 16, rowCount * 12));
-            var rootRow = -1;
+            //Names are pooled canonical instances, so the blob deduplicates by reference:
+            //hashing a pointer instead of 50 characters for every one of millions of rows.
+            var blob = new NameBlobBuilder(Math.Max(1 << 16, rowCount * 12), byReference: true);
+            var rootRow = count > RootEntryNumber && records.Live[RootEntryNumber]
+                ? rowByEntry[RootEntryNumber] - 1 : -1;
 
+            //The blob appends sequentially; everything else fills in parallel.
             for (var entry = 0; entry < count; entry++)
             {
                 if ((entry & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
                 var slot = rowByEntry[entry];
-                if (slot == 0) continue;
-                var row = slot - 1;
-                var parentEntry = records.Parent[entry];
-                parent[row] = parentEntry < 0 ? -1 : rowByEntry[parentEntry] - 1;
-                nameOffset[row] = blob.Add(records.Name[entry]);
-                size[row] = records.Size[entry];
-                time[row] = records.TimeTicks[entry];
-                attributes[row] = records.Attributes[entry];
-                frn[row] = ((ulong)records.Sequence[entry] << 48) | (uint)entry;
-                descendants[row] = records.Descendants[entry];
-                pathHash[row] = records.IsDirectory(entry)
-                    ? records.Depth[entry]
-                    : ChildPathHash(records, parentEntry, records.Name[entry], rootFullName);
-                if (entry == RootEntryNumber) rootRow = row;
+                if (slot != 0) nameOffset[slot - 1] = blob.Add(records.Name[entry]);
             }
+            var options = new ParallelOptions { CancellationToken = cancellationToken };
+            Parallel.ForEach(Partitioner.Create(0, count, 65536), options, range =>
+            {
+                for (var entry = range.Item1; entry < range.Item2; entry++)
+                {
+                    var slot = rowByEntry[entry];
+                    if (slot == 0) continue;
+                    var row = slot - 1;
+                    var parentEntry = records.Parent[entry];
+                    parent[row] = parentEntry < 0 ? -1 : rowByEntry[parentEntry] - 1;
+                    size[row] = records.Size[entry];
+                    time[row] = records.TimeTicks[entry];
+                    attributes[row] = records.Attributes[entry];
+                    frn[row] = ((ulong)records.Sequence[entry] << 48) | (uint)entry;
+                    descendants[row] = records.Descendants[entry];
+                    pathHash[row] = records.IsDirectory(entry)
+                        ? records.Depth[entry]
+                        : ChildPathHash(records, parentEntry, records.Name[entry], rootFullName);
+                }
+            });
 
             var aliasRows = new Dictionary<ulong, int[]>();
             var aliasRow = rowCount;
