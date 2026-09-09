@@ -205,7 +205,7 @@ namespace search.Models
         /// <returns></returns>
         public bool Matches(INode n)
         {
-            if (n is MftNode h) return Matches(h.Table, h.Row);
+            if (n is MftNode { IsAttached: true } h) return Matches(h.Table, h.Row);
             //Plain loops on purpose: this runs once per indexed node on every keystroke
             //(millions of calls). LINQ All/Any with a closure over n allocated two objects
             //per node per criterion list - hundreds of MB of garbage per filter change.

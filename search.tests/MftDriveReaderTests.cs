@@ -46,7 +46,8 @@ namespace search.Tests
             for (var i = 0; i < instances.Length; i++)
                 instances[i] = RuntimeHelpers.GetUninitializedObject(handleType);
             var handleBytes = (GC.GetAllocatedBytesForCurrentThread() - before) / count;
-            Assert.Equal(40, handleBytes);
+            //table + row + cached name + detached-row slot (filled only after the table retires)
+            Assert.Equal(48, handleBytes);
             GC.KeepAlive(instances);
 
             //Directories and files share the row layout; only directories report descendants

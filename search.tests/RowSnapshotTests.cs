@@ -155,6 +155,90 @@ namespace search.Tests
         }
 
         [Fact]
+        public void RetiredTableDetachesItsHandlesAndBecomesCollectable()
+        {
+            var (weak, file, root) = RetireScenario();
+
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            Assert.False(weak.TryGetTarget(out _)); //Nothing but the handles survived, and they let go
+            Assert.Equal(@"Q:\Docs\Sub\file001.log", file.FullName);
+            GC.KeepAlive(file);
+            GC.KeepAlive(root);
+        }
+
+        //Separate frame: a Debug JIT keeps locals alive to the end of their method
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static (WeakReference<MftTable> Weak, MftNode File, MftNode Root) RetireScenario()
+        {
+            var table = Table(20);
+            var weak = new WeakReference<MftTable>(table);
+            var file = (MftNode)table.DenseNodes.Single(n => n.Name == "file001.log"); // Q:\Docs\Sub\file001.log
+            var root = (MftNode)table.DenseNodes.Single(n => n.Name == "Q:");
+            var parentBefore = file.PathParent;
+            var expectedSize = file.Size;
+            var expectedTime = file.LastChangeTime;
+            var expectedFrn = file.Frn;
+            var expectedHash = NodePath.KeyComparer.GetHashCode(file);
+
+            table.Retire();
+
+            Assert.False(file.IsAttached);
+            Assert.Null(file.Table);
+            Assert.True(table.IsRetired);
+            //A handle handed out after retirement never pins the table
+            Assert.False(table.Handle(3).IsAttached);
+            //Everything the handle knew is still there, including its chain and identity
+            Assert.Equal("file001.log", file.Name);
+            Assert.Equal(@"Q:\Docs\Sub\file001.log", file.FullName);
+            Assert.Same(parentBefore, file.PathParent);
+            Assert.Equal(@"Q:\Docs\Sub", file.PathParent.FullName);
+            Assert.Equal("Sub", file.ParentName);
+            Assert.Equal(expectedSize, file.Size);
+            Assert.Equal(expectedTime, file.LastChangeTime);
+            Assert.Equal(expectedFrn, file.Frn);
+            Assert.Equal(expectedHash, NodePath.KeyComparer.GetHashCode(file));
+            Assert.True(NodePath.KeyComparer.Equals(file, @"Q:\Docs\Sub\file001.log"));
+            Assert.True(NodePath.IsUnder(file, root, @"Q:\"));
+            Assert.Equal(@"Q:\", root.FullName);
+            Assert.True(new NodeFilter(@"Q:\Docs\\ .log:").Matches(file));
+            //Mutations through a detached handle keep working
+            file.AddSizeDelta(10);
+            Assert.Equal(expectedSize + 10, file.Size);
+            return (weak, file, root);
+        }
+
+        [Fact]
+        public void PublishingANewScanRetiresTheOldTableButKeepsPreservedHandlesUsable()
+        {
+            var old = Table(20);
+            var index = new DriveNodeIndex();
+            index.ReplaceDrive(FakeMft.Root, DriveNodeIndex.PrepareDrive(old));
+            var watermark = index.BeginSnapshot(FakeMft.Root);
+            //A live change after the watermark on an old row: it survives the publication
+            Assert.True(index.TryGetValue(@"Q:\Docs\Sub\file001.log", out var touched));
+            touched.AddSizeDelta(5);
+            index.Touch(touched, touched);
+            var fresh = Table(20);
+
+            var superseded = index.ReplaceDrive(FakeMft.Root, DriveNodeIndex.PrepareDrive(fresh), watermark, _ => true);
+
+            Assert.Same(old, superseded);
+            superseded.Retire();
+            Assert.True(index.TryGetValue(@"Q:\Docs\Sub\file001.log", out var current));
+            Assert.Same(touched, current); //The preserved delta still wins ...
+            Assert.False(((MftNode)current).IsAttached); //... without pinning the old table
+            Assert.Equal(@"Q:\Docs\Sub\file001.log", current.FullName);
+            //And the snapshot lists it once, in place of the fresh row
+            var snapshot = index.BuildSnapshot();
+            Assert.Equal(fresh.Count, snapshot.Count);
+            Assert.Equal(1, snapshot.Count(n => n.FullName == @"Q:\Docs\Sub\file001.log"));
+            Assert.Contains(touched, snapshot);
+            Assert.Null(index.ReplaceDrive(FakeMft.Root, DriveNodeIndex.PrepareDrive(fresh))); //Same table => nothing superseded
+        }
+
+        [Fact]
         public void PatchKeepsRowsHiddenAndAdditionsUnique()
         {
             var table = Table(30);

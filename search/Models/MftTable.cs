@@ -358,7 +358,33 @@ namespace search.Models
             var existing = chunk[slot];
             if (existing != null) return existing;
             var created = new MftNode(this, row);
-            return Interlocked.CompareExchange(ref chunk[slot], created, null) ?? created;
+            var handle = Interlocked.CompareExchange(ref chunk[slot], created, null) ?? created;
+            //A retired table hands out detached handles only, so nothing new can pin it
+            if (Volatile.Read(ref retired)) handle.Detach();
+            return handle;
+        }
+
+        volatile bool retired;
+
+        /// <summary>True once <see cref="Retire"/> ran: handles no longer reference this table.</summary>
+        public bool IsRetired => retired;
+
+        /// <summary>
+        /// The scan was superseded by a newer one. Every handle that exists copies its row
+        /// (and the ancestor chain that gives it a path) into itself and lets go of the
+        /// table, so the columns and the name blob can be collected as soon as no query
+        /// holds them any more - one surviving handle must never keep 150 MB alive.
+        /// </summary>
+        public void Retire()
+        {
+            //Flag first: a handle created from now on detaches itself in Handle(); the sweep
+            //below catches everything created before the flag was visible.
+            retired = true;
+            foreach (var chunk in handles)
+            {
+                if (chunk == null) continue;
+                foreach (var handle in chunk) handle?.Detach();
+            }
         }
 
         /// <summary>The row of a handle belonging to this table, else -1.</summary>
@@ -469,57 +495,137 @@ namespace search.Models
     /// </summary>
     internal sealed class MftNode : INode
     {
-        internal readonly MftTable Table;
+        MftTable table; //null once detached - the row's values then live in `detached`
         internal readonly int Row;
         string name; //Materialized on first use; the grid and window sorts read it repeatedly
+        Detached detached;
+
+        /// <summary>
+        /// A retired table's row, copied into the handle so the table can be collected. Only
+        /// handles that outlive their scan pay for it; ancestors are detached handles too, so
+        /// the chain (and therefore the path) stays intact without the parent column.
+        /// </summary>
+        sealed class Detached
+        {
+            public string Name;
+            public MftNode Parent;
+            public string Terminal; //FullName of a path-terminal row (the drive root)
+            public ulong Size;
+            public long Ticks;
+            public uint Attributes;
+            public ulong Frn;
+            public int PathHash;
+            public uint Descendants;
+        }
 
         internal MftNode(MftTable table, int row)
         {
-            Table = table;
+            this.table = table;
             Row = row;
+        }
+
+        /// <summary>The table this handle reads, or null after the table retired.</summary>
+        internal MftTable Table => table;
+        internal bool IsAttached => table != null;
+
+        /// <summary>
+        /// Copy the row out of the table and drop the table reference. Idempotent; safe
+        /// against concurrent readers because the table's arrays are never cleared - a
+        /// reader that still holds the table reads the (identical) column value.
+        /// </summary>
+        internal void Detach()
+        {
+            var t = table;
+            if (t == null) return;
+            var parent = t.Parent[Row];
+            var copy = new Detached
+            {
+                Name = name ?? t.NameString(Row),
+                Parent = parent >= 0 ? t.Handle(parent) : null,
+                Terminal = parent >= 0 ? null : t.FullName(Row),
+                Size = Volatile.Read(ref t.Size[Row]),
+                Ticks = Volatile.Read(ref t.TimeTicks[Row]),
+                Attributes = t.Attributes[Row],
+                Frn = t.Frn[Row],
+                PathHash = t.PathHash[Row],
+                Descendants = Volatile.Read(ref t.Descendants[Row])
+            };
+            //Values first, then the switch: whoever sees table == null finds the copy ready
+            Volatile.Write(ref detached, copy);
+            Volatile.Write(ref table, null);
         }
 
         public uint EntryNumber => (uint)(Frn & 0xffffffffffff);
         public ushort SequenceNumber => (ushort)(Frn >> 48);
-        public override ulong Frn => Table.Frn[Row];
+        public override ulong Frn => table is { } t ? t.Frn[Row] : detached.Frn;
 
         public override FileAttributes Attributes
         {
-            get => (FileAttributes)Table.Attributes[Row];
-            protected set => Table.Attributes[Row] = (uint)value;
+            get => (FileAttributes)(table is { } t ? t.Attributes[Row] : detached.Attributes);
+            protected set
+            {
+                if (table is { } t) t.Attributes[Row] = (uint)value;
+                else detached.Attributes = (uint)value;
+            }
         }
 
-        public override string Name => name ??= Table.NameString(Row);
+        public override string Name => name ??= table is { } t ? t.NameString(Row) : detached.Name;
 
         public override ulong Size
         {
-            get => Volatile.Read(ref Table.Size[Row]);
-            protected set => Volatile.Write(ref Table.Size[Row], value);
+            get => table is { } t ? Volatile.Read(ref t.Size[Row]) : Volatile.Read(ref detached.Size);
+            protected set
+            {
+                if (table is { } t) Volatile.Write(ref t.Size[Row], value);
+                else Volatile.Write(ref detached.Size, value);
+            }
         }
 
         public override uint Count
         {
-            get => IsDirectory ? Volatile.Read(ref Table.Descendants[Row]) : 1U;
+            get => !IsDirectory ? 1U
+                : table is { } t ? Volatile.Read(ref t.Descendants[Row]) : Volatile.Read(ref detached.Descendants);
             protected set
             {
-                if (IsDirectory) Volatile.Write(ref Table.Descendants[Row], value);
+                if (!IsDirectory) return;
+                if (table is { } t) Volatile.Write(ref t.Descendants[Row], value);
+                else Volatile.Write(ref detached.Descendants, value);
             }
         }
 
-        public override string FullName => Table.FullName(Row);
-        public override INode PathParent => Table.Parent[Row] is var parent and >= 0 ? Table.Handle(parent) : null;
-        public override string ParentName => Table.Parent[Row] is var parent and >= 0 ? Table.NameString(parent) : "";
-        public override string Folder => Table.Parent[Row] is var parent and >= 0 ? Table.FullName(parent) : "";
+        public override string FullName => table is { } t ? t.FullName(Row)
+            : detached.Terminal ?? NodePath.Materialize(this);
+
+        public override INode PathParent => table is { } t
+            ? t.Parent[Row] is var parent and >= 0 ? t.Handle(parent) : null
+            : detached.Parent;
+
+        public override string ParentName => table is { } t
+            ? t.Parent[Row] is var parent and >= 0 ? t.NameString(parent) : ""
+            : detached.Parent?.Name ?? "";
+
+        public override string Folder => table is { } t
+            ? t.Parent[Row] is var parent and >= 0 ? t.FullName(parent) : ""
+            : detached.Parent?.FullName ?? "";
 
         public override DateTime LastChangeTime
         {
-            get => Table.TimeAt(Row);
-            protected set => Volatile.Write(ref Table.TimeTicks[Row], MftTable.TicksOf(value));
+            get
+            {
+                if (table is { } t) return t.TimeAt(Row);
+                var ticks = Volatile.Read(ref detached.Ticks);
+                return ticks == 0 ? DateTime.MinValue : new DateTime(ticks, DateTimeKind.Local);
+            }
+            protected set
+            {
+                if (table is { } t) Volatile.Write(ref t.TimeTicks[Row], MftTable.TicksOf(value));
+                else Volatile.Write(ref detached.Ticks, MftTable.TicksOf(value));
+            }
         }
 
         internal override bool TryGetPathHash(out int hash)
         {
-            hash = Table.PathHash[Row];
+            hash = table is { } t ? t.PathHash[Row] : detached.PathHash;
             return true;
         }
     }

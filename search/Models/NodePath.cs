@@ -56,12 +56,12 @@ namespace search.Models
         /// <summary>Leaf names in NameOrder, straight from the name blob for MFT rows.</summary>
         internal static int CompareNames(INode a, INode b)
         {
-            if (a is MftNode x)
+            if (a is MftNode { IsAttached: true } x)
             {
                 var xn = x.Table.NameAt(x.Row);
-                return b is MftNode y ? xn.CompareTo(y.Table.NameAt(y.Row), NameOrder) : xn.CompareTo(b.Name, NameOrder);
+                return b is MftNode { IsAttached: true } y ? xn.CompareTo(y.Table.NameAt(y.Row), NameOrder) : xn.CompareTo(b.Name, NameOrder);
             }
-            if (b is MftNode z) return -z.Table.NameAt(z.Row).CompareTo(a.Name, NameOrder);
+            if (b is MftNode { IsAttached: true } z) return -z.Table.NameAt(z.Row).CompareTo(a.Name, NameOrder);
             return string.Compare(a.Name, b.Name, NameOrder);
         }
 
@@ -69,7 +69,7 @@ namespace search.Models
         internal static int CompareNameRow(MftTable table, int row, INode other)
         {
             var name = table.NameAt(row);
-            return other is MftNode o ? name.CompareTo(o.Table.NameAt(o.Row), NameOrder) : name.CompareTo(other.Name, NameOrder);
+            return other is MftNode { IsAttached: true } o ? name.CompareTo(o.Table.NameAt(o.Row), NameOrder) : name.CompareTo(other.Name, NameOrder);
         }
 
         /// <summary>
@@ -77,7 +77,7 @@ namespace search.Models
         /// </summary>
         internal static string RootOf(INode n)
         {
-            if (n is MftNode h)
+            if (n is MftNode { IsAttached: true } h)
                 try { return Path.GetPathRoot(h.Table.Root); }
                 catch { return null; }
             var terminal = n;
@@ -94,7 +94,7 @@ namespace search.Models
         /// </summary>
         public static string Materialize(INode n)
         {
-            if (n is MftNode h) return h.Table.FullName(h.Row);
+            if (n is MftNode { IsAttached: true } h) return h.Table.FullName(h.Row);
             if (n.PathParent == null) return n.FullName;
 
             var names = new List<string>(8);
@@ -179,7 +179,7 @@ namespace search.Models
 
         internal static INode TerminalOf(INode node)
         {
-            if (node is MftNode h) return h.Table.Handle(h.Table.RootRow < 0 ? h.Row : h.Table.RootRow);
+            if (node is MftNode { IsAttached: true } h) return h.Table.Handle(h.Table.RootRow < 0 ? h.Row : h.Table.RootRow);
             for (var guard = 0; node?.PathParent != null && guard < MaxWalk; guard++)
                 node = node.PathParent;
             return node;
@@ -187,7 +187,7 @@ namespace search.Models
 
         internal static bool IsUnder(INode n, INode dir, string dirPrefixWithSlash, INode directoryTerminal)
         {
-            if (n is MftNode h) return IsUnderRow(h.Table, h.Row, dir, dirPrefixWithSlash);
+            if (n is MftNode { IsAttached: true } h) return IsUnderRow(h.Table, h.Row, dir, dirPrefixWithSlash);
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
             {
@@ -271,7 +271,7 @@ namespace search.Models
         /// </summary>
         public static bool HasParent(INode n, INode dir)
         {
-            if (n is MftNode h) return HasParentRow(h.Table, h.Row, dir);
+            if (n is MftNode { IsAttached: true } h) return HasParentRow(h.Table, h.Row, dir);
             return n.PathParent is INode p && dir != null && (ReferenceEquals(p, dir) || PathEquals(p, dir));
         }
 
@@ -290,7 +290,7 @@ namespace search.Models
         /// </summary>
         public static bool LeafEquals(INode n, string name)
         {
-            if (n is MftNode h) return h.Table.NameAt(h.Row).EqualsIgnoreCase(name);
+            if (n is MftNode { IsAttached: true } h) return h.Table.NameAt(h.Row).EqualsIgnoreCase(name);
             return n.PathParent != null
                 ? string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase)
                 : n.FullName.Length > name.Length
@@ -303,7 +303,7 @@ namespace search.Models
         /// </summary>
         public static bool LeafEndsWith(INode n, string suffix)
         {
-            if (n is MftNode h) return h.Table.NameAt(h.Row).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+            if (n is MftNode { IsAttached: true } h) return h.Table.NameAt(h.Row).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
             return (n.PathParent != null ? n.Name : n.FullName).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -313,7 +313,7 @@ namespace search.Models
         /// </summary>
         public static bool HasPathComponent(INode n, string name)
         {
-            if (n is MftNode h) return HasPathComponentRow(h.Table, h.Row, name);
+            if (n is MftNode { IsAttached: true } h) return HasPathComponentRow(h.Table, h.Row, name);
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
             {
@@ -361,7 +361,7 @@ namespace search.Models
 
         static (uint Hash, char Last) HashUp(INode n, int budget)
         {
-            if (n is MftNode h)
+            if (n is MftNode { IsAttached: true } h)
             {
                 var table = h.Table;
                 var last = table.Parent[h.Row] < 0 ? '\\' : table.NameAt(h.Row).Last;
@@ -486,7 +486,7 @@ namespace search.Models
 
             public static Cursor For(INode n)
             {
-                if (n is MftNode h) return ForRow(h.Table, h.Row);
+                if (n is MftNode { IsAttached: true } h) return ForRow(h.Table, h.Row);
                 return n.PathParent != null ? new Cursor(n, MaxWalk) : ForString(n.FullName);
             }
 
@@ -555,7 +555,7 @@ namespace search.Models
                 if (node != null)
                 {
                     var p = node.PathParent;
-                    if (p is MftNode h) return ForRow(h.Table, h.Row);
+                    if (p is MftNode { IsAttached: true } h) return ForRow(h.Table, h.Row);
                     if (p.PathParent == null) return ForString(p.FullName);
                     if (budget <= 1) return ForString(p.Name); // Cycle guard: same cut as Materialize
                     return new Cursor(p, budget - 1);

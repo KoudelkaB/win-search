@@ -800,7 +800,12 @@ namespace search.Models
         /// protected subtrees the journal reports, and an MFT read is neither atomic nor
         /// guaranteed to reflect the newest metadata writes.
         /// </summary>
-        public void ReplaceDrive(string root, PreparedDrive replacement,
+        /// <returns>
+        /// The superseded drive table, if the drive had one and it is not the replacement.
+        /// The caller retires it once every other view of the scan (the FRN map) has been
+        /// switched too, so surviving handles stop pinning its columns.
+        /// </returns>
+        public MftTable ReplaceDrive(string root, PreparedDrive replacement,
             long preserveMutationsAfter = long.MaxValue, Func<string, bool?> existsOnDisk = null)
         {
             ArgumentNullException.ThrowIfNull(replacement);
@@ -809,6 +814,8 @@ namespace search.Models
             {
                 var current = shards;
                 var at = Array.FindIndex(current, x => string.Equals(x.Root, root, StringComparison.OrdinalIgnoreCase));
+                var superseded = at < 0 ? null : current[at].Table;
+                if (ReferenceEquals(superseded, replacement.Table)) superseded = null;
                 var preserved = at < 0 || preserveMutationsAfter == long.MaxValue
                     ? Array.Empty<KeyValuePair<object, DeltaEntry>>()
                     : current[at].Delta.Where(pair => pair.Value.Version > preserveMutationsAfter
@@ -816,7 +823,7 @@ namespace search.Models
                         .OrderBy(pair => pair.Value.Version).ToArray();
                 if (replacement.IsEmpty)
                 {
-                    if (at < 0 && preserved.Length == 0) return;
+                    if (at < 0 && preserved.Length == 0) return null;
                     if (preserved.Length != 0)
                     {
                         replacement = EmptyPrepared;
@@ -829,7 +836,7 @@ namespace search.Models
                             Array.Copy(current, at + 1, reduced, at,
                                 current.Length - at - 1);
                         shards = reduced;
-                        return;
+                        return superseded;
                     }
                 }
 
@@ -843,6 +850,7 @@ namespace search.Models
                 foreach (var pair in preserved) published.ApplyPreserved(pair.Key, pair.Value);
                 next[at] = published;
                 shards = next;
+                return superseded;
             }
         }
 

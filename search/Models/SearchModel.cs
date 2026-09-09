@@ -3545,7 +3545,7 @@ namespace search.Models
                 {
                     //The completed immutable set was prepared outside the publication lock.
                     //Publish it by replacing one shard; live changes start in a fresh overlay.
-                    files.ReplaceDrive(root, prepared, preserveMutationsAfter, ExistsOnDisk);
+                    var superseded = files.ReplaceDrive(root, prepared, preserveMutationsAfter, ExistsOnDisk);
                     //files counts the streamed nodes from this very moment => deduct them from the
                     //streaming counter in the same breath, or the loading status double-counts them
                     //for as long as the archive re-add and exe recompute below take
@@ -3564,6 +3564,11 @@ namespace search.Models
                     //a create followed by a quick rename cannot lose its old path here.
                     FSChangeProcessor.PopulateFrnMap(root, frnNodes ?? prepared.Values,
                         preserveFrnMutationsAfter);
+                    //Both views now point at the new scan. Handles of the old one that survive
+                    //(preserved deltas, FRN overrides, the grid, a filter's directory) detach,
+                    //so the superseded columns are collectable - every F12 used to keep the
+                    //previous 150 MB alive through a single such reference.
+                    superseded?.Retire();
                 }
                 finally
                 {
