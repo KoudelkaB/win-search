@@ -8,11 +8,13 @@ namespace search.Models
     /// <summary>
     /// Path identity, ordering and containment for INodes without materializing full-path
     /// strings. A node's canonical path is its PathParent chain of names on top of the
-    /// terminal node's FullName ("C:\" for MFT roots/orphans, a stored path for
-    /// FileNode/ZipNode); the terminal string itself decomposes into a base prefix plus
-    /// '\'-separated segments, so two nodes with the same textual path are equal no matter
-    /// how they are represented. KeyComparer lets a single dictionary be keyed by nodes
-    /// (no path strings held) yet still be queried by plain path strings.
+    /// terminal node's FullName ("C:\" for MFT roots, a stored path for FileNode/ZipNode);
+    /// the terminal string itself decomposes into a base prefix plus '\'-separated
+    /// segments, so two nodes with the same textual path are equal no matter how they are
+    /// represented. MFT rows are walked straight through their table's parent column - no
+    /// handle is created for an ancestor just to compare or hash a path. KeyComparer lets a
+    /// single dictionary be keyed by nodes (no path strings held) yet still be queried by
+    /// plain path strings.
     /// </summary>
     internal static class NodePath
     {
@@ -48,14 +50,36 @@ namespace search.Models
             Comparer<INode>.Create((a, b) =>
             {
                 var c = CompareCursors(Cursor.Folder(a), Cursor.Folder(b));
-                return c != 0 ? c : string.Compare(a.Name, b.Name, NameOrder);
+                return c != 0 ? c : CompareNames(a, b);
             });
+
+        /// <summary>Leaf names in NameOrder, straight from the name blob for MFT rows.</summary>
+        internal static int CompareNames(INode a, INode b)
+        {
+            if (a is MftNode x)
+            {
+                var xn = x.Table.NameAt(x.Row);
+                return b is MftNode y ? xn.CompareTo(y.Table.NameAt(y.Row), NameOrder) : xn.CompareTo(b.Name, NameOrder);
+            }
+            if (b is MftNode z) return -z.Table.NameAt(z.Row).CompareTo(a.Name, NameOrder);
+            return string.Compare(a.Name, b.Name, NameOrder);
+        }
+
+        /// <summary>The row's leaf name against a node's, in NameOrder.</summary>
+        internal static int CompareNameRow(MftTable table, int row, INode other)
+        {
+            var name = table.NameAt(row);
+            return other is MftNode o ? name.CompareTo(o.Table.NameAt(o.Row), NameOrder) : name.CompareTo(other.Name, NameOrder);
+        }
 
         /// <summary>
         /// Filesystem root of a node without materializing a chained MFT path.
         /// </summary>
         internal static string RootOf(INode n)
         {
+            if (n is MftNode h)
+                try { return Path.GetPathRoot(h.Table.Root); }
+                catch { return null; }
             var terminal = n;
             for (var guard = 0; terminal.PathParent != null && guard < MaxWalk; guard++)
                 terminal = terminal.PathParent;
@@ -70,6 +94,7 @@ namespace search.Models
         /// </summary>
         public static string Materialize(INode n)
         {
+            if (n is MftNode h) return h.Table.FullName(h.Row);
             if (n.PathParent == null) return n.FullName;
 
             var names = new List<string>(8);
@@ -97,6 +122,17 @@ namespace search.Models
         public static int Compare(INode a, INode b)
             => ReferenceEquals(a, b) ? 0 : CompareCursors(Cursor.For(a), Cursor.For(b));
 
+        /// <summary>A table row's path against a node's path, in ByPath order.</summary>
+        internal static int CompareRow(MftTable table, int row, INode other)
+            => CompareCursors(Cursor.ForRow(table, row), Cursor.For(other));
+
+        /// <summary>A table row against a node in ByFolderThenName order.</summary>
+        internal static int CompareFolderThenNameRow(MftTable table, int row, INode other)
+        {
+            var c = CompareCursors(Cursor.FolderOfRow(table, row), Cursor.Folder(other));
+            return c != 0 ? c : CompareNameRow(table, row, other);
+        }
+
         static int CompareCursors(Cursor x, Cursor y) => CompareAligned(x, x.Count(), y, y.Count());
 
         static int CompareAligned(Cursor x, int dx, Cursor y, int dy)
@@ -105,14 +141,14 @@ namespace search.Models
             if (dx > dy) { var c = CompareAligned(x.Up(), dx - 1, y, dy); return c != 0 ? c : 1; }
             if (dx < dy) { var c = CompareAligned(x, dx, y.Up(), dy - 1); return c != 0 ? c : -1; }
             if (x.SameAs(y)) return 0;
-            if (dx == 0) return x.Span.CompareTo(y.Span, ComponentOrder);
+            if (dx == 0) return x.SegmentCompare(y, ComponentOrder);
 
             var parents = CompareAligned(x.Up(), dx - 1, y.Up(), dy - 1);
-            return parents != 0 ? parents : x.Span.CompareTo(y.Span, ComponentOrder);
+            return parents != 0 ? parents : x.SegmentCompare(y, ComponentOrder);
         }
 
         /// <summary>
-        /// Path equality regardless of representation (chain node, path-backed node)
+        /// Path equality regardless of representation (chain node, table row, path-backed node)
         /// </summary>
         public static bool PathEquals(INode a, INode b)
             => ReferenceEquals(a, b) || CursorsEqual(Cursor.For(a), Cursor.For(b));
@@ -125,8 +161,8 @@ namespace search.Models
             {
                 if (x.SameAs(y)) return true;
                 bool xb = x.IsBase, yb = y.IsBase;
-                if (xb || yb) return xb && yb && x.Span.Equals(y.Span, StringComparison.OrdinalIgnoreCase);
-                if (!x.Span.Equals(y.Span, StringComparison.OrdinalIgnoreCase)) return false;
+                if (xb || yb) return xb && yb && x.SegmentEquals(y);
+                if (!x.SegmentEquals(y)) return false;
                 x = x.Up();
                 y = y.Up();
             }
@@ -143,6 +179,7 @@ namespace search.Models
 
         internal static INode TerminalOf(INode node)
         {
+            if (node is MftNode h) return h.Table.Handle(h.Table.RootRow < 0 ? h.Row : h.Table.RootRow);
             for (var guard = 0; node?.PathParent != null && guard < MaxWalk; guard++)
                 node = node.PathParent;
             return node;
@@ -150,6 +187,7 @@ namespace search.Models
 
         internal static bool IsUnder(INode n, INode dir, string dirPrefixWithSlash, INode directoryTerminal)
         {
+            if (n is MftNode h) return IsUnderRow(h.Table, h.Row, dir, dirPrefixWithSlash);
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
             {
@@ -163,8 +201,28 @@ namespace search.Models
 
             //A live overlay can retain a child from the preceding scan while its
             //directory comes from the new one. Only mixed trees need path comparison.
+            return IsUnderByPath(Cursor.For(n), dir, dirPrefixWithSlash);
+        }
+
+        /// <summary>
+        /// <see cref="IsUnder(INode, INode, string, INode)"/> for a table row: ancestor
+        /// rows are compared by row number when the directory is a row of the same table,
+        /// which is conclusive for that immutable tree; anything else (a directory from
+        /// another scan generation or a path-backed node) compares paths.
+        /// </summary>
+        internal static bool IsUnderRow(MftTable table, int row, INode dir, string dirPrefixWithSlash)
+        {
+            var dirRow = dir == null ? -1 : table.RowOf(dir);
+            for (var parent = table.Parent[row]; parent >= 0; parent = table.Parent[parent])
+                if (parent == dirRow) return true;
+            if (dirRow >= 0) return false;
+            if (table.Root.StartsWith(dirPrefixWithSlash, StringComparison.OrdinalIgnoreCase)) return true;
+            return IsUnderByPath(Cursor.ForRow(table, row), dir, dirPrefixWithSlash);
+        }
+
+        static bool IsUnderByPath(Cursor cursor, INode dir, string dirPrefixWithSlash)
+        {
             var target = dir != null ? Cursor.For(dir) : Cursor.ForDirectoryPrefix(dirPrefixWithSlash);
-            var cursor = Cursor.For(n);
             for (var guard = 0; !cursor.IsBase && guard < MaxWalk * 2; guard++)
             {
                 cursor = cursor.Up();
@@ -194,27 +252,60 @@ namespace search.Models
         }
 
         /// <summary>
+        /// <see cref="IsUnderAny"/> for a table row whose directories were resolved to rows
+        /// of the same table beforehand (the caller resolves each directory path through the
+        /// drive's immutable base, so a directory replaced in the live overlay still matches).
+        /// </summary>
+        internal static bool IsUnderAnyRow(MftTable table, int row, HashSet<int> dirRows, IReadOnlyList<string> prefixes)
+        {
+            for (var parent = table.Parent[row]; parent >= 0; parent = table.Parent[parent])
+                if (dirRows.Contains(parent)) return true;
+            var root = table.Root;
+            for (var i = 0; i < prefixes.Count; i++)
+                if (root.StartsWith(prefixes[i], StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>
         /// True when the node's immediate parent is dir (by identity or by path)
         /// </summary>
         public static bool HasParent(INode n, INode dir)
-            => n.PathParent is INode p && dir != null && (ReferenceEquals(p, dir) || PathEquals(p, dir));
+        {
+            if (n is MftNode h) return HasParentRow(h.Table, h.Row, dir);
+            return n.PathParent is INode p && dir != null && (ReferenceEquals(p, dir) || PathEquals(p, dir));
+        }
+
+        internal static bool HasParentRow(MftTable table, int row, INode dir)
+        {
+            var parent = table.Parent[row];
+            if (parent < 0 || dir == null) return false;
+            var dirRow = table.RowOf(dir);
+            if (dirRow >= 0) return dirRow == parent;
+            return CursorsEqual(Cursor.ForRow(table, parent), Cursor.For(dir));
+        }
 
         /// <summary>
         /// The node's leaf name equals name; for path-backed nodes the stored path
         /// must end with '\' + name (same thing, no allocation)
         /// </summary>
         public static bool LeafEquals(INode n, string name)
-            => n.PathParent != null
+        {
+            if (n is MftNode h) return h.Table.NameAt(h.Row).EqualsIgnoreCase(name);
+            return n.PathParent != null
                 ? string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase)
                 : n.FullName.Length > name.Length
                   && n.FullName[^(name.Length + 1)] == '\\'
                   && n.FullName.EndsWith(name, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>
         /// The node's leaf name ends with the suffix (e.g. ".exe"), without allocation
         /// </summary>
         public static bool LeafEndsWith(INode n, string suffix)
-            => (n.PathParent != null ? n.Name : n.FullName).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+        {
+            if (n is MftNode h) return h.Table.NameAt(h.Row).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+            return (n.PathParent != null ? n.Name : n.FullName).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>
         /// True when some directory component of the path equals name
@@ -222,6 +313,7 @@ namespace search.Models
         /// </summary>
         public static bool HasPathComponent(INode n, string name)
         {
+            if (n is MftNode h) return HasPathComponentRow(h.Table, h.Row, name);
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
             {
@@ -230,6 +322,14 @@ namespace search.Models
                     return true;
             }
             return m.FullName.Contains($"\\{name}\\", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool HasPathComponentRow(MftTable table, int row, string name)
+        {
+            for (var parent = table.Parent[row]; parent >= 0; parent = table.Parent[parent])
+                if (table.Parent[parent] >= 0 && table.NameAt(parent).EqualsIgnoreCase(name))
+                    return true;
+            return table.Root.Contains($"\\{name}\\", StringComparison.OrdinalIgnoreCase);
         }
 
         // ------------------------------------------------------------------
@@ -247,8 +347,6 @@ namespace search.Models
 
         /// <summary>
         /// Compute a child's canonical path hash from an already finalized parent hash.
-        /// MFT finalization processes directories top-down, so this avoids walking the
-        /// complete ancestor chain independently for every one of millions of records.
         /// </summary>
         internal static int ComputeChildPathHash(INode parent, string name)
         {
@@ -263,18 +361,24 @@ namespace search.Models
 
         static (uint Hash, char Last) HashUp(INode n, int budget)
         {
+            if (n is MftNode h)
+            {
+                var table = h.Table;
+                var last = table.Parent[h.Row] < 0 ? '\\' : table.NameAt(h.Row).Last;
+                return ((uint)table.PathHash[h.Row], last);
+            }
             var prefix = n.PathParent == null ? n.FullName : budget <= 0 ? n.Name : null;
             if (prefix != null)
                 return (HashChars(FnvSeed, prefix), prefix.Length > 0 ? prefix[^1] : '\0');
 
-            var (hash, last) = HashUp(n.PathParent, budget - 1);
-            if (last != '\\')
+            var (hash, previous) = HashUp(n.PathParent, budget - 1);
+            if (previous != '\\')
             {
                 hash = (hash ^ '\\') * FnvPrime;
-                last = '\\';
+                previous = '\\';
             }
             var name = n.Name;
-            return (HashChars(hash, name), name.Length > 0 ? name[^1] : last);
+            return (HashChars(hash, name), name.Length > 0 ? name[^1] : previous);
         }
 
         internal static uint HashChars(uint hash, ReadOnlySpan<char> s)
@@ -296,6 +400,22 @@ namespace search.Models
             return false;
         }
 
+        /// <summary>Path equality of a table row against an index key (node or path string).</summary>
+        internal static bool KeyEqualsRow(MftTable table, int row, object key)
+        {
+            switch (key)
+            {
+                case MftNode h when ReferenceEquals(h.Table, table) && h.Row == row:
+                    return true;
+                case string s:
+                    return CursorsEqual(Cursor.ForRow(table, row), Cursor.ForString(s));
+                case INode n:
+                    return CursorsEqual(Cursor.ForRow(table, row), Cursor.For(n));
+                default:
+                    return false;
+            }
+        }
+
         internal static int KeyHashCode(object key) => key switch
         {
             string s => (int)HashChars(FnvSeed, s),
@@ -312,23 +432,47 @@ namespace search.Models
 
         // ------------------------------------------------------------------
         // Cursor - one path segment plus everything above it, walked leaf->root.
-        // Chain mode follows PathParent; when the terminal node is reached its
-        // FullName continues to decompose in string mode, so every node yields
-        // the same segment sequence as its materialized path.
+        // Table mode walks an MftTable's parent column; chain mode follows PathParent;
+        // when the terminal is reached its FullName continues to decompose in string
+        // mode, so every node yields the same segment sequence as its materialized path.
         // ------------------------------------------------------------------
 
         readonly struct Cursor
         {
-            readonly INode node;   // Chain mode: segment = node.Name, invariant node.PathParent != null
-            readonly int budget;   // Chain mode: remaining hops before the cycle guard cuts the chain
-            readonly string s;     // String mode: the path prefix is s[0..end)
+            readonly MftTable table; // Table mode: segment = table.NameAt(row), invariant table.Parent[row] >= 0
+            readonly int row;
+            readonly INode node;     // Chain mode: segment = node.Name, invariant node.PathParent != null
+            readonly int budget;     // Chain mode: remaining hops before the cycle guard cuts the chain
+            readonly string s;       // String mode: the path prefix is s[0..end)
             readonly int end;
-            readonly int firstSep; // Index of the first '\' in s (the root separator stays in the base)
+            readonly int firstSep;   // Index of the first '\' in s (the root separator stays in the base)
 
-            Cursor(INode node, int budget) { this.node = node; this.budget = budget; s = null; end = 0; firstSep = 0; }
+            Cursor(MftTable table, int row)
+            {
+                this.table = table;
+                this.row = row;
+                node = null;
+                budget = 0;
+                s = null;
+                end = 0;
+                firstSep = 0;
+            }
+
+            Cursor(INode node, int budget)
+            {
+                table = null;
+                row = 0;
+                this.node = node;
+                this.budget = budget;
+                s = null;
+                end = 0;
+                firstSep = 0;
+            }
 
             Cursor(string s, int end)
             {
+                table = null;
+                row = 0;
                 node = null;
                 budget = 0;
                 this.s = s;
@@ -337,7 +481,14 @@ namespace search.Models
             }
 
             public static Cursor For(INode n)
-                => n.PathParent != null ? new Cursor(n, MaxWalk) : ForString(n.FullName);
+            {
+                if (n is MftNode h) return ForRow(h.Table, h.Row);
+                return n.PathParent != null ? new Cursor(n, MaxWalk) : ForString(n.FullName);
+            }
+
+            /// <summary>A table row; a path-terminal row (the drive root) decomposes as its string.</summary>
+            public static Cursor ForRow(MftTable table, int row)
+                => table.Parent[row] >= 0 ? new Cursor(table, row) : ForString(table.FullName(row));
 
             public static Cursor ForString(string path) => new Cursor(path, path.Length);
 
@@ -356,9 +507,18 @@ namespace search.Models
                 return c.IsBase ? ForString("") : c.Up();
             }
 
-            public bool IsBase => node == null && (firstSep < 0 || end <= firstSep + 1);
+            public static Cursor FolderOfRow(MftTable table, int row)
+            {
+                var c = ForRow(table, row);
+                return c.IsBase ? ForString("") : c.Up();
+            }
 
-            public ReadOnlySpan<char> Span
+            bool IsTable => table != null;
+
+            public bool IsBase => table == null && node == null && (firstSep < 0 || end <= firstSep + 1);
+
+            /// <summary>Chars of the segment in chain or string mode (table mode uses the name blob directly)</summary>
+            ReadOnlySpan<char> Span
             {
                 get
                 {
@@ -369,11 +529,29 @@ namespace search.Models
                 }
             }
 
+            NameSpan Name => table.NameAt(row);
+
+            public bool SegmentEquals(Cursor y)
+            {
+                if (IsTable) return y.IsTable ? Name.EqualsIgnoreCase(y.Name) : Name.EqualsIgnoreCase(y.Span);
+                if (y.IsTable) return y.Name.EqualsIgnoreCase(Span);
+                return Span.Equals(y.Span, StringComparison.OrdinalIgnoreCase);
+            }
+
+            public int SegmentCompare(Cursor y, StringComparison comparison)
+            {
+                if (IsTable) return y.IsTable ? Name.CompareTo(y.Name, comparison) : Name.CompareTo(y.Span, comparison);
+                if (y.IsTable) return -y.Name.CompareTo(Span, comparison);
+                return Span.CompareTo(y.Span, comparison);
+            }
+
             public Cursor Up()
             {
+                if (table != null) return ForRow(table, table.Parent[row]);
                 if (node != null)
                 {
                     var p = node.PathParent;
+                    if (p is MftNode h) return ForRow(h.Table, h.Row);
                     if (p.PathParent == null) return ForString(p.FullName);
                     if (budget <= 1) return ForString(p.Name); // Cycle guard: same cut as Materialize
                     return new Cursor(p, budget - 1);
@@ -383,9 +561,11 @@ namespace search.Models
             }
 
             public bool SameAs(Cursor y)
-                => node != null
-                    ? ReferenceEquals(node, y.node)
-                    : y.node == null && ReferenceEquals(s, y.s) && end == y.end;
+            {
+                if (table != null) return ReferenceEquals(table, y.table) && row == y.row;
+                if (node != null) return ReferenceEquals(node, y.node);
+                return y.table == null && y.node == null && ReferenceEquals(s, y.s) && end == y.end;
+            }
 
             /// <summary>Segments above the base; O(chain depth + separators in the terminal string)</summary>
             public int Count()
@@ -401,7 +581,8 @@ namespace search.Models
             }
 
             public string MaterializeRest()
-                => node != null ? Materialize(node) : s.Substring(0, end);
+                => table != null ? table.FullName(row)
+                    : node != null ? Materialize(node) : s.Substring(0, end);
         }
     }
 }
