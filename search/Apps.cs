@@ -20,10 +20,17 @@ namespace search
         static string ProgramFilesDirX86 => Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
 
         /// <summary>
-        /// Get text viever path  - default log reader
+        /// Built-in HTML apps (WebApps next to the exe). Open() shows these in a WebAppWindow
+        /// instead of starting a process.
+        /// </summary>
+        public const string LogExplorer = "LogExplorer.html";
+        public const string HexEditor = "HexEditorAndComparer.html";
+
+        /// <summary>
+        /// Get text viever path  - built-in Log explorer (needs the WebView2 runtime)
         /// </summary>
         /// <returns></returns>
-        public static string TextViever => GetPath("logreader.exe") ?? "notepad";
+        public static string TextViever => WebAppWindow.IsAvailable ? LogExplorer : "notepad";
 
         /// <summary>
         /// Get application for editing

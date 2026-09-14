@@ -17,6 +17,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # MinVer needs the tag history
+          submodules: true
+
+      # The H (Hex editor) and L (Log explorer) pages ship inside the installer. Release with
+      # the latest upstream apps rather than the commit pinned in this repository.
+      - name: Update web apps to latest singleHtmlApps
+        shell: pwsh
+        run: |
+          git submodule update --init --remote external/singleHtmlApps
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git -C external/singleHtmlApps log -1 --format="Using singleHtmlApps %H (%cs) %s"
 
       - uses: actions/setup-dotnet@v5
         with:

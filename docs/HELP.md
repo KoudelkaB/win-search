@@ -165,6 +165,8 @@ Common commands:
 - `C`: copy selected items to the clipboard. Add `V`, `T`, `W`, or `A` to copy the file version, creation time, last write time, or last access time instead; `+` first appends to the clipboard rather than replacing it.
 - `X`: cut selected items to the clipboard.
 - `D`: compare in the configured diff tool. Available only with exactly two items selected.
+- `H`: open one file in the built-in hex editor, or compare two files. Works offline.
+- `L`: open the selected files in the built-in Log explorer. Works offline.
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
 - `A`: open selected items as administrator.
@@ -201,7 +203,7 @@ Open targets after `O` or `A`. Each entry appears only when the application was 
 - `O`: Opera.
 - `I`: Internet Explorer.
 - `A`: Adobe Reader.
-- `T`: text viewer.
+- `T`: Log explorer (Notepad when the Microsoft Edge WebView2 Runtime is missing).
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.

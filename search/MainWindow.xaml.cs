@@ -149,7 +149,7 @@ namespace search
             // Add commander
             CommandTree Enter(string hint) => (Key.None, L.Format("EnterValueKeepingKey", L.Text(hint)));
             var openIn = new CommandTree[] {
-                (Key.T, "Text viever (LogReader id installed)", n => n.AtLeast(1) && Apps.TextViever !=null),
+                (Key.T, "Log explorer", n => n.AtLeast(1) && Apps.TextViever !=null),
                 (Key.B, "File browser", n => n.AtLeast(1) && Apps.Explorer !=null),
                 (Key.W, "Web browser", n => n.AtLeast(1) && Apps.WebBrowser !=null),
                 (Key.C, "Chrome", n => n.AtLeast(1) && Apps.Chrome !=null),
@@ -210,6 +210,10 @@ namespace search
                 (Key.F1, "HintF1"),
                 (Key.F12, "HintF12"),
                 (Key.D, "Compare in diff tool", n => n.IsCount(2),  async (n,a) => await OpenDiff(n)),
+                (Key.H, "Hex editor / compare", n => (n.IsCount(1) || n.IsCount(2)) && n.All(x => !x.IsDirectory) && WebAppWindow.IsAvailable,
+                    async (n,a) => await Open(Apps.HexEditor, n.ToArray())),
+                (Key.L, "Log explorer", n => n.AtLeast(1) && WebAppWindow.IsAvailable,
+                    async (n,a) => await Open(Apps.LogExplorer, Model.ToTextNodes(n.ToArray()).ToArray())),
                 (Key.Enter, "Filter folders", async (n,a)=> await FilterFolders(n.ToArray())),
                 (Key.Delete, "Delete", async (n,a)=>await Delete(n)),
                 (Key.C, "Copy", (n,a) => Copy(n,a), new CommandTree[] {
@@ -1642,6 +1646,14 @@ namespace search
                 return;
             }
             if (path == null) nodes.ForEach(n => n.GetFileOrTempPath().Open("", elevated: asAdmin)); //Open the files directly
+            else if (WebAppWindow.IsWebApp(path.Split('\0')[0]))
+            {
+                //Built-in HTML app - its own window in this process, never elevated
+                string[] files = null;
+                await WaitFor(() => files = nodes.Where(n => !n.IsDirectory).Select(n => n.GetFileOrTempPath()).ToArray());
+                if (files.Length == 0) Model.Status = "Nothing selected";
+                else WebAppWindow.Open(path.Split('\0')[0], files);
+            }
             else
             {
                 var args = path.Split('\0');
@@ -2071,6 +2083,12 @@ namespace search
                 var diffItem = new MenuItem { Header = "Diff tool", ToolTip = diffTool };
                 diffItem.Click += async (_, __) => await OpenDiff(nodes);
                 openWith.Items.Add(diffItem);
+            }
+            if (allFiles && nodes.Length is 1 or 2 && WebAppWindow.IsAvailable)
+            {
+                var hexItem = new MenuItem { Header = nodes.Length == 2 ? "Hex compare" : "Hex editor" };
+                hexItem.Click += async (_, __) => await Open(Apps.HexEditor, nodes);
+                openWith.Items.Add(hexItem);
             }
 
             var sevenZipFileManager = Apps.SevenZipFileManager;

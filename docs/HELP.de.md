@@ -165,6 +165,8 @@ Häufige Befehle:
 - `C`: ausgewählte Elemente in die Zwischenablage kopieren. Mit `V`, `T`, `W` oder `A` werden stattdessen Dateiversion, Erstellungszeit, letzte Änderungszeit oder letzte Zugriffszeit kopiert; ein vorangestelltes `+` hängt an die Zwischenablage an, statt sie zu ersetzen.
 - `X`: ausgewählte Elemente in die Zwischenablage ausschneiden.
 - `D`: im konfigurierten Vergleichswerkzeug vergleichen. Nur verfügbar, wenn genau zwei Elemente ausgewählt sind.
+- `H`: eine Datei im integrierten Hex-Editor öffnen oder zwei Dateien vergleichen. Funktioniert offline.
+- `L`: ausgewählte Dateien im integrierten Log Explorer öffnen. Funktioniert offline.
 - `V`: Dateien aus der Zwischenablage in die ausgewählten oder übergeordneten Ordner einfügen.
 - `O`: ausgewählte Elemente in einer anderen Anwendung öffnen.
 - `A`: ausgewählte Elemente als Administrator öffnen.

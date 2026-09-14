@@ -165,6 +165,8 @@ Běžné příkazy:
 - `C`: zkopírovat vybrané položky do schránky. Přidáním `V`, `T`, `W` nebo `A` zkopírujete místo toho verzi souboru, čas vytvoření, čas poslední změny nebo čas posledního přístupu; `+` na začátku obsah schránky doplní, místo aby jej nahradil.
 - `X`: vyjmout vybrané položky do schránky.
 - `D`: porovnat v nastaveném porovnávacím nástroji. Dostupné jen při výběru přesně dvou položek.
+- `H`: otevřít jeden soubor ve vestavěném hex editoru nebo porovnat dva soubory. Funguje offline.
+- `L`: otevřít vybrané soubory ve vestavěném prohlížeči logů (Log Explorer). Funguje offline.
 - `V`: vložit soubory ze schránky do vybraných složek nebo nadřazených složek.
 - `O`: otevřít vybrané položky v jiné aplikaci.
 - `A`: otevřít vybrané položky jako správce.

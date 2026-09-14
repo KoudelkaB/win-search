@@ -116,7 +116,7 @@ while leaving any key pressed</value></data>
   <data name="insertion index" xml:space="preserve"><value>insertion index</value></data>
   <data name="string to replace" xml:space="preserve"><value>string to replace</value></data>
   <data name="folder name" xml:space="preserve"><value>folder name</value></data>
-  <data name="Text viever (LogReader id installed)" xml:space="preserve"><value>Text viewer (if LogReader is installed)</value></data>
+  
   <data name="File browser" xml:space="preserve"><value>File browser</value></data>
   <data name="Web browser" xml:space="preserve"><value>Web browser</value></data>
   <data name="Shell" xml:space="preserve"><value>Shell</value></data>
@@ -185,4 +185,6 @@ while leaving any key pressed</value></data>
   <data name="Show previous selected item" xml:space="preserve"><value>Show previous selected item</value></data>
   <data name="ShowSelectedTooltip" xml:space="preserve"><value>Show next selected item (Ctrl+J); hold Shift for the previous item</value></data>
   <data name="Selected" xml:space="preserve"><value>Selected</value></data>
+  <data name="Hex editor / compare" xml:space="preserve"><value>Hex editor / compare</value></data>
+  <data name="Log explorer" xml:space="preserve"><value>Log explorer</value></data>
 </root>

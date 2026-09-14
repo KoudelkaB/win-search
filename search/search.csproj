@@ -26,7 +26,17 @@
   <ItemGroup>
     <None Include="FodyWeavers.xsd" />
     <None Include="..\docs\HELP*.md" Link="Docs\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- HTML apps hosted by WebAppWindow, shipped next to the exe so they work offline.
+         external/singleHtmlApps is a git submodule: local builds use the pinned commit, the
+         release workflow moves it to the latest upstream commit before publishing. -->
+    <None Include="..\external\singleHtmlApps\HexEditorAndComparer.html;..\external\singleHtmlApps\LogExplorer.html" Link="WebApps\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\external\singleHtmlApps\LICENSE" Link="WebApps\LICENSE.singleHtmlApps.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- A clone made without submodules has no web apps - fetch the pinned commit instead of failing the copy -->
+  <Target Name="InitWebAppsSubmodule" BeforeTargets="BeforeBuild" Condition="!Exists('..\external\singleHtmlApps\LogExplorer.html')">
+    <Exec Command="git submodule update --init external/singleHtmlApps" WorkingDirectory="$(MSBuildProjectDirectory)\.." />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\search.core\search.core.csproj" />
@@ -40,6 +50,7 @@
     <PackageReference Include="NonBlocking" Version="2.1.2" />
     <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" PrivateAssets="All" />
     <PackageReference Include="SharpCompress" Version="0.50.4" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
 	
 </Project>

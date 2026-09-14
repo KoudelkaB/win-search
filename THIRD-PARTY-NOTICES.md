@@ -1,8 +1,24 @@
 # Third-party notices
 
 File Search Manager incorporates or is built with the following third-party components.
-Their licenses (MIT and Apache-2.0, both reproduced at the end of this document)
-are fully compatible with the MIT license of File Search Manager itself.
+Their licenses (MIT and Apache-2.0, both reproduced at the end of this document, and the
+BSD-style Microsoft WebView2 SDK license linked below) are compatible with the MIT license
+of File Search Manager itself.
+
+## singleHtmlApps (Hex Editor and Comparer, Log Explorer)
+
+- Project: https://github.com/KoudelkaB/singleHtmlApps
+- Copyright (c) 2026 KoudelkaB
+- License: MIT (also shipped as `WebApps\LICENSE.singleHtmlApps.txt`)
+
+## Microsoft.Web.WebView2 1.0.4191.47
+
+- Project: https://www.nuget.org/packages/Microsoft.Web.WebView2
+- Copyright (c) Microsoft Corporation
+- License: https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47/License
+
+Note: only the WebView2 SDK is redistributed. The Microsoft Edge WebView2 Runtime it
+uses is part of Windows and is not shipped with File Search Manager.
 
 ## NonBlocking 2.1.2
 

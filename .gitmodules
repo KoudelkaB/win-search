@@ -1,0 +1,4 @@
+[submodule "external/singleHtmlApps"]
+	path = external/singleHtmlApps
+	url = https://github.com/KoudelkaB/singleHtmlApps
+	branch = main

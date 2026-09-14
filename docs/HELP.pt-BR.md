@@ -165,6 +165,8 @@ Comandos comuns:
 - `C`: copiar os itens selecionados para a área de transferência. Acrescente `V`, `T`, `W` ou `A` para copiar em vez disso a versão do arquivo, a data de criação, a da última gravação ou a do último acesso; um `+` inicial anexa à área de transferência em vez de substituí-la.
 - `X`: recortar os itens selecionados para a área de transferência.
 - `D`: comparar na ferramenta de comparação configurada. Disponível apenas com exatamente dois itens selecionados.
+- `H`: abrir um arquivo no editor hexadecimal integrado ou comparar dois arquivos. Funciona offline.
+- `L`: abrir os arquivos selecionados no Log Explorer integrado. Funciona offline.
 - `V`: colar os arquivos da área de transferência nas pastas selecionadas ou nas pastas pai.
 - `O`: abrir os itens selecionados em outro aplicativo.
 - `A`: abrir os itens selecionados como administrador.

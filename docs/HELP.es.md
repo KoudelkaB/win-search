@@ -165,6 +165,8 @@ Comandos habituales:
 - `C`: copiar los elementos seleccionados al portapapeles. Añada `V`, `T`, `W` o `A` para copiar en su lugar la versión del archivo, la fecha de creación, la de última escritura o la de último acceso; un `+` inicial añade al portapapeles en vez de reemplazarlo.
 - `X`: cortar los elementos seleccionados al portapapeles.
 - `D`: comparar con la herramienta de comparación configurada. Solo disponible con exactamente dos elementos seleccionados.
+- `H`: abrir un archivo en el editor hexadecimal integrado o comparar dos archivos. Funciona sin conexión.
+- `L`: abrir los archivos seleccionados en el Log Explorer integrado. Funciona sin conexión.
 - `V`: pegar los archivos del portapapeles en las carpetas seleccionadas o en sus carpetas padre.
 - `O`: abrir los elementos seleccionados en otra aplicación.
 - `A`: abrir los elementos seleccionados como administrador.

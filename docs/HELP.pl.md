@@ -165,6 +165,8 @@ Typowe polecenia:
 - `C`: skopiuj zaznaczone elementy do schowka. Dodanie `V`, `T`, `W` lub `A` kopiuje zamiast tego wersję pliku, czas utworzenia, czas ostatniego zapisu albo czas ostatniego dostępu; `+` na początku dopisuje do schowka zamiast go zastępować.
 - `X`: wytnij zaznaczone elementy do schowka.
 - `D`: porównaj w skonfigurowanym narzędziu porównującym. Dostępne tylko przy zaznaczeniu dokładnie dwóch elementów.
+- `H`: otwórz jeden plik we wbudowanym edytorze szesnastkowym lub porównaj dwa pliki. Działa offline.
+- `L`: otwórz zaznaczone pliki we wbudowanym Log Explorerze. Działa offline.
 - `V`: wklej pliki ze schowka do zaznaczonych folderów lub folderów nadrzędnych.
 - `O`: otwórz zaznaczone elementy w innej aplikacji.
 - `A`: otwórz zaznaczone elementy jako administrator.

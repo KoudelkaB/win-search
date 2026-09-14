@@ -165,6 +165,8 @@ Comandi comuni:
 - `C`: copia gli elementi selezionati negli appunti. Aggiungendo `V`, `T`, `W` o `A` si copiano invece la versione del file, la data di creazione, quella di ultima scrittura o quella di ultimo accesso; un `+` iniziale accoda agli appunti anziché sostituirli.
 - `X`: taglia gli elementi selezionati negli appunti.
 - `D`: confronta nello strumento di confronto configurato. Disponibile solo con esattamente due elementi selezionati.
+- `H`: apri un file nell'editor esadecimale integrato o confronta due file. Funziona offline.
+- `L`: apri i file selezionati nel Log Explorer integrato. Funziona offline.
 - `V`: incolla i file degli appunti nelle cartelle selezionate o nelle cartelle padre.
 - `O`: apri gli elementi selezionati in un’altra applicazione.
 - `A`: apri gli elementi selezionati come amministratore.

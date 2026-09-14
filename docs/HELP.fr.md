@@ -165,6 +165,8 @@ Commandes courantes :
 - `C` : copier les éléments sélectionnés dans le presse-papiers. Ajoutez `V`, `T`, `W` ou `A` pour copier à la place la version du fichier, la date de création, la date de dernière écriture ou la date de dernier accès ; un `+` initial ajoute au presse-papiers au lieu de le remplacer.
 - `X` : couper les éléments sélectionnés dans le presse-papiers.
 - `D` : comparer dans l’outil de comparaison configuré. Disponible uniquement avec exactement deux éléments sélectionnés.
+- `H` : ouvrir un fichier dans l’éditeur hexadécimal intégré ou comparer deux fichiers. Fonctionne hors ligne.
+- `L` : ouvrir les fichiers sélectionnés dans le Log Explorer intégré. Fonctionne hors ligne.
 - `V` : coller les fichiers du presse-papiers dans les dossiers sélectionnés ou parents.
 - `O` : ouvrir les éléments sélectionnés dans une autre application.
 - `A` : ouvrir les éléments sélectionnés en tant qu’administrateur.
