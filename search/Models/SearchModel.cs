@@ -318,6 +318,9 @@ namespace search.Models
         volatile bool itemsTruncated;
         volatile bool refreshPending = false; //true => files changed and no refresh published since => Items lag behind files
         int refreshQueued = 0; //1 => a data refresh is already queued and covers all changes arriving before it runs
+        //Completed to cut the queued data refresh's change-batching delay short - a caller
+        //that needs the refresh now (a finished drive scan) must not wait out that second
+        TaskCompletionSource debounceShortcut = new(TaskCreationOptions.RunContinuationsAsynchronously);
         int deferredReconciliationQueued; //1 => a fast local sort has already queued its authoritative refresh
         int tailReconciliationQueued; //1 => one quiet-time refill of a capped window is pending
         long tailReconciliationRequestedAt;
@@ -326,6 +329,9 @@ namespace search.Models
         int reserveRefillUrgent;
         long reserveRefillRequestedAt;
         volatile Task dataRefreshPublished = Task.CompletedTask; //Completes when the queued data refresh has really hit the grid
+        //Taking refreshQueued and publishing its dataRefreshPublished is one step: the task is
+        //written before the bit, so whoever sees the bit set awaits the queue owner's task
+        readonly object refreshQueueGate = new();
         const int MaxItems = 100000; //Publish just the first 100 000 filtered items
         internal const int ResultReserveItems = 4096;
         internal const int ResultReserveLowWatermark = 1024;
@@ -481,6 +487,7 @@ namespace search.Models
             // (change storms during a load would otherwise spawn thousands of tasks per second)
             if (dataRefreshRequest && Volatile.Read(ref refreshQueued) == 1)
             {
+                if (skipDataDebounce) CutDebounceShort();
                 if (!healthRecovery) return;
                 //A refresh can own the queue bit for a few instructions before publishing
                 //its completion task. Wait without recursive polling; degraded mode prevents
@@ -508,18 +515,34 @@ namespace search.Models
                     //Coalesce data refreshes - the single queued one covers all changes arriving before it runs
                     //and it never cancels a running update (a canceled publish would leave Items partial forever
                     //under a steady stream of file system events)
-                    if (Interlocked.Exchange(ref refreshQueued, 1) == 1) return;
+                    Task shortcut = null;
+                    lock (refreshQueueGate)
+                    {
+                        if (Volatile.Read(ref refreshQueued) == 0)
+                        {
+                            //Captured before the queue bit: a CutDebounceShort that saw the bit
+                            //set completes this very instance
+                            shortcut = Volatile.Read(ref debounceShortcut).Task;
+                            //This run owns the queued refresh - its end is the moment the
+                            //refreshed data is really on the grid, which the "Loaded" status and
+                            //a finished drive scan wait for
+                            published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                            dataRefreshPublished = published.Task;
+                            Volatile.Write(ref refreshQueued, 1);
+                        }
+                    }
+                    if (published == null)
+                    {
+                        if (skipDataDebounce) CutDebounceShort();
+                        return;
+                    }
                     //Items lag behind files until a refresh from files really publishes - a user
                     //update superseding this one must refilter, never resort the stale window in place
                     refreshPending = true;
-                    //This run owns the queued refresh - its end is the moment the refreshed
-                    //data is really on the grid, which the "Loaded" status waits for
-                    published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    dataRefreshPublished = published.Task;
                     if (!skipDataDebounce)
                     {
                         var delayWatch = Stopwatch.StartNew();
-                        await Task.Delay(1000); //Batch bursts of changes
+                        await Task.WhenAny(Task.Delay(1000), shortcut); //Batch bursts of changes
                         plannedDelayMs = delayWatch.ElapsedMilliseconds;
                     }
                 }
@@ -745,6 +768,10 @@ namespace search.Models
                 }
             });
         }
+
+        void CutDebounceShort()
+            => Interlocked.Exchange(ref debounceShortcut,
+                new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
 
         internal static bool CanResortPublishedItems(bool dataRefresh, bool filterChanged, bool sortChanged,
             bool complete, bool truncated, bool refreshPending)
@@ -3187,8 +3214,17 @@ namespace search.Models
                         if (drivePublished && !scanToken.IsCancellationRequested)
                         {
                             var phase = Stopwatch.StartNew();
-                            var updateTask = Update();
-                            try { await updateTask.WaitAsync(scanToken); }
+                            //The one-second change-batching delay is for bursts of file system
+                            //events; a published drive is shown at once (it was most of "grid")
+                            var updateTask = UpdateCore(null, null, healthRecovery: false,
+                                skipDataDebounce: true);
+                            try
+                            {
+                                await updateTask.WaitAsync(scanToken);
+                                //An already queued refresh may carry this drive instead - "grid"
+                                //ends when the rows are really published, as "Loaded" does
+                                await dataRefreshPublished.WaitAsync(scanToken);
+                            }
                             catch (OperationCanceledException)
                             {
                                 ObserveAbandoned(updateTask);

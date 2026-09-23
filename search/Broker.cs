@@ -293,9 +293,11 @@ namespace search
             {
                 var header = ReadLine(s);
                 var parts = header?.Split(' ');
-                if (parts?.Length != 2 || !int.TryParse(parts[0], out var bytesPerRecord) || !long.TryParse(parts[1], out var length))
+                if (parts?.Length is not (2 or 3) || !int.TryParse(parts[0], out var bytesPerRecord) || !long.TryParse(parts[1], out var length)
+                    || parts.Length == 3 && parts[2] != "frames")
                     throw new Exception(header ?? "Broker pipe closed.");
-                nodes = Models.MftDriveReader.GetNodes(s, bytesPerRecord, length, volumeMountPoint,
+                var payload = parts.Length == 3 ? new MftFrameStream(s, length) : s;
+                nodes = Models.MftDriveReader.GetNodes(payload, bytesPerRecord, length, volumeMountPoint,
                     cancellationToken: cancellationToken, drainOnCancellation: true);
             });
             return nodes;
@@ -574,10 +576,12 @@ namespace search
                 throw new ArgumentException($"'{volume}' is not a volume mount point.");
 
             using var raw = RawMft.Open(volume);
-            WriteLine(s, $"{raw.BytesPerMftRecord} {raw.Length}");
+            //Framed: free records are not sent (MftFrameStream)
+            WriteLine(s, $"{raw.BytesPerMftRecord} {raw.Length} frames");
             try
             {
-                raw.CopyTo((chunk, count) => s.Write(chunk, 0, count));
+                raw.CopyTo((chunk, count) => MftFrameStream.WriteData(s, chunk, count),
+                    count => MftFrameStream.WriteZeros(s, count));
                 s.Flush();
             }
             catch (Exception e)

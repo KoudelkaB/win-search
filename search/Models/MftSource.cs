@@ -136,13 +136,25 @@ namespace search.Models
         }
 
         /// <summary>
-        /// Request the raw $MFT from the WinSearchService and parse it as it streams in.
+        /// Request the $MFT from the WinSearchService and parse it as it streams in -
+        /// framed, so its free records never cross the pipe. A service older than the
+        /// app (e.g. a local build run against the installed one) closes the connection
+        /// on the unknown version; the raw protocol is then requested once more.
         /// Returns null when the service is not installed/running (fast connect timeout).
         /// </summary>
         static IEnumerable<INode> FromService(string volume,
             CancellationToken cancellationToken, out string failure)
         {
             failure = "none";
+            return FromService(volume, ServicePipe.MftFramesProtocolVersion, cancellationToken, ref failure)
+                ?? (failure == "unsupported"
+                    ? FromService(volume, ServicePipe.ProtocolVersion, cancellationToken, ref failure)
+                    : null);
+        }
+
+        static IEnumerable<INode> FromService(string volume, byte version,
+            CancellationToken cancellationToken, ref string failure)
+        {
             using var pipe = new NamedPipeClientStream(".", ServicePipe.PipeName, PipeDirection.InOut);
             try
             {
@@ -157,11 +169,24 @@ namespace search.Models
                 return null;
             }
 
-            pipe.WriteByte(ServicePipe.ProtocolVersion);
-            ServicePipe.WriteString(pipe, volume);
-            pipe.Flush();
-
-            var status = pipe.ReadByte();
+            int status;
+            try
+            {
+                pipe.WriteByte(version);
+                ServicePipe.WriteString(pipe, volume);
+                pipe.Flush();
+                status = pipe.ReadByte();
+            }
+            catch (IOException) when (version != ServicePipe.ProtocolVersion)
+            {
+                // An old service may close before the request is even written
+                status = -1;
+            }
+            if (status < 0 && version != ServicePipe.ProtocolVersion)
+            {
+                failure = "unsupported";
+                return null;
+            }
             if (status < 0)
                 throw new IOException("The service pipe closed unexpectedly.");
             if (status != ServicePipe.StatusOk)
@@ -173,7 +198,9 @@ namespace search.Models
                 throw new InvalidDataException($"Invalid MFT header from the service: {bytesPerRecord}/{length}.");
 
             // GetNodes consumes the whole payload before returning, so disposing the pipe here is safe
-            return MftDriveReader.GetNodes(pipe, bytesPerRecord, length, volume,
+            Stream payload = version == ServicePipe.MftFramesProtocolVersion
+                ? new MftFrameStream(pipe, length) : pipe;
+            return MftDriveReader.GetNodes(payload, bytesPerRecord, length, volume,
                 cancellationToken: cancellationToken, drainOnCancellation: false);
         }
 

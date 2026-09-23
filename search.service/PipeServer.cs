@@ -13,7 +13,8 @@ namespace search.Service
     /// Serves raw $MFT bytes and batched file-reference metadata over a named pipe
     /// to local authenticated users.
     /// One request per connection (parallel drive scans open parallel connections);
-    /// the $MFT is streamed in 1 MB chunks and never buffered in this process.
+    /// the $MFT is streamed in 8 MB chunks (framed: free records are not sent) and never
+    /// buffered whole in this process.
     /// The service only ever opens volumes read-only and never parses anything.
     /// </summary>
     static class PipeServer
@@ -138,11 +139,18 @@ namespace search.Service
                         pipe.WriteByte(ServicePipe.StatusOk);
                         ServicePipe.WriteInt32(pipe, raw.BytesPerMftRecord);
                         ServicePipe.WriteInt64(pipe, raw.Length);
-                        raw.CopyTo((chunk, count) =>
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            pipe.Write(chunk, 0, count);
-                        });
+                        if (version == ServicePipe.MftFramesProtocolVersion)
+                            raw.CopyTo((chunk, count) =>
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                MftFrameStream.WriteData(pipe, chunk, count);
+                            }, count => MftFrameStream.WriteZeros(pipe, count));
+                        else
+                            raw.CopyTo((chunk, count) =>
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                pipe.Write(chunk, 0, count);
+                            });
                         pipe.Flush();
                         pipe.WaitForPipeDrain();
                     }
@@ -165,6 +173,7 @@ namespace search.Service
             {
                 var version = pipe.ReadByte();
                 if (version != ServicePipe.ProtocolVersion
+                    && version != ServicePipe.MftFramesProtocolVersion
                     && version != ServicePipe.MetadataProtocolVersion)
                     return ((byte Version, string Volume)?)null;
                 return (Version: (byte)version, Volume: ServicePipe.ReadString(pipe));

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using search.Core;
 
 namespace search.Models
 {
@@ -12,6 +13,8 @@ namespace search.Models
     /// processed concurrently - the parse keeps up with the read instead of
     /// starting after it. Every chunk holds whole records only; any record size is
     /// supported, a chunk exceeding ChunkBytes only when a single record is larger.
+    /// Free records a stream reports ahead (IMftZeroSpans) are skipped without being
+    /// read, zeroed or handed to process.
     /// </summary>
     internal static class MftChunkReader
     {
@@ -37,6 +40,7 @@ namespace search.Models
             var buffers = new byte[2][];
             var pending = new[] { Task.CompletedTask, Task.CompletedTask };
             var consumed = 0L;
+            var zeros = stream as IMftZeroSpans;
             try
             {
                 var index = 0;
@@ -44,6 +48,14 @@ namespace search.Models
                 while (index < recordCount)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    var free = zeros == null ? 0 : Math.Min(zeros.ZeroBytesAhead / bytesPerRecord, recordCount - index);
+                    if (free > 0)
+                    {
+                        zeros.SkipZeros(free * bytesPerRecord);
+                        consumed += free * bytesPerRecord;
+                        index += (int)free;
+                        continue;
+                    }
                     var records = Math.Min(recordsPerChunk, recordCount - index);
 
                     // The buffer was handed to process two chunks ago - wait before overwriting
@@ -90,8 +102,17 @@ namespace search.Models
         {
             if (count <= 0) return;
             var buffer = new byte[(int)Math.Min(count, 1 << 16)];
+            var zeros = stream as IMftZeroSpans;
             while (count > 0)
             {
+                var ahead = zeros?.ZeroBytesAhead ?? 0;
+                if (ahead > 0)
+                {
+                    var skip = Math.Min(ahead, count);
+                    zeros.SkipZeros(skip);
+                    count -= skip;
+                    continue;
+                }
                 var read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, count));
                 if (read <= 0) throw new EndOfStreamException("The $MFT stream ended prematurely.");
                 count -= read;

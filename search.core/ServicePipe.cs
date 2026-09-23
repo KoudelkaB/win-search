@@ -11,6 +11,9 @@ namespace search.Core
     /// Shared by the server and the client so the framing cannot drift.
     ///
     /// MFT request: version byte, length-prefixed UTF-8 volume mount point (e.g. "C:\").
+    /// MftFramesProtocolVersion is the same request answered with MftFrameStream frames
+    /// instead of raw bytes - free records are not sent. A service older than that closes
+    /// the connection without a status byte; the client then repeats with ProtocolVersion.
     /// Metadata request: metadata-version byte, volume, count, then count FRNs.
     /// Response: status byte; on error a length-prefixed UTF-8 message. An MFT success
     /// carries bytesPerMftRecord, length and raw bytes. A metadata success carries count
@@ -22,6 +25,7 @@ namespace search.Core
         public const string PipeName = "WinSearchMft";
         public const byte ProtocolVersion = 1;
         public const byte MetadataProtocolVersion = 2;
+        public const byte MftFramesProtocolVersion = 3;
         public const byte StatusOk = 0;
         public const byte StatusError = 1;
         public const int MaxMetadataBatch = 4096;
