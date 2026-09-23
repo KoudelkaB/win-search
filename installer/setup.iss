@@ -170,7 +170,6 @@ Source: "..\LICENSE"; DestDir: "{app}"; Check: NotModifying
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Check: NotModifying
 Source: "..\README.md"; DestDir: "{app}"; Check: NotModifying
 Source: "..\docs\HELP*.md"; DestDir: "{app}\Docs"; Check: NotModifying
-Source: "..\docs\WINGET.md"; DestDir: "{app}\Docs"; Check: NotModifying
 
 [InstallDelete]
 ; Remove main-binary names left by releases before the File Search Manager rename.
@@ -201,7 +200,9 @@ Name: "{autoprograms}\File Search Manager"; Filename: "{app}\File Search Manager
 Name: "{autoprograms}\{cm:HelpShortcut}"; Filename: "{app}\File Search Manager.exe"; Parameters: "--help"
 
 [UninstallRun]
-Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcStop"
+; net stop (unlike sc stop) waits until the service has exited, so its binaries are unlocked
+; before the uninstaller deletes {app}\service
+Filename: "{sys}\net.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcStop"
 Filename: "{sys}\sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; RunOnceId: "SvcDelete"
 
 [Code]
@@ -329,13 +330,14 @@ procedure InstallService();
 var
   Code: Integer;
 begin
-  { sc.exe REQUIRES the space after each option= }
+  { sc.exe REQUIRES the space after each option=. The path is wrapped in escaped quotes so the
+    registry keeps them - sc strips one level, and an unquoted path with spaces is CWE-428. }
   Code := Exec2(ExpandConstant('{sys}\sc.exe'),
-    'create {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') +
-    '" start= auto obj= LocalSystem DisplayName= "File Search Manager MFT Service"');
+    'create {#MyServiceName} binPath= "\"' + ExpandConstant('{#MyServiceExe}') +
+    '\"" start= auto obj= LocalSystem DisplayName= "File Search Manager MFT Service"');
   if Code = 1073 then { ERROR_SERVICE_EXISTS - upgrade: repoint the binary }
     Code := Exec2(ExpandConstant('{sys}\sc.exe'),
-      'config {#MyServiceName} binPath= "' + ExpandConstant('{#MyServiceExe}') + '" start= auto');
+      'config {#MyServiceName} binPath= "\"' + ExpandConstant('{#MyServiceExe}') + '\"" start= auto');
   if Code = 0 then
   begin
     Exec2(ExpandConstant('{sys}\sc.exe'),

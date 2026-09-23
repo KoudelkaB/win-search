@@ -188,6 +188,56 @@ namespace search.Tests
             Assert.Equal(Enumerable.Repeat((byte)0xaa, 16).Concat(Enumerable.Repeat((byte)0xbb, 16)), bits);
         }
 
+        /// <summary>A non-resident $DATA extent of one cluster run at lcn</summary>
+        static byte[] DataExtent(ulong startVcn, ulong lastVcn, short lcn, byte clusters, ulong size)
+        {
+            var attribute = BitmapExtent(startVcn, lastVcn, lcn, clusters, size);
+            BitConverter.GetBytes(0x80u).CopyTo(attribute, 0);
+            return attribute;
+        }
+
+        [Fact]
+        public void MftDataRunsContinueInListedExtensionRecords()
+        {
+            const long Cluster = 16;
+            var list = ListEntry(0x80, 0, 0).Concat(ListEntry(0x80, 2, 11)).ToArray();
+            var baseRecord = FixedUp(FakeMft.Record(1024, attributes: new[]
+            {
+                FakeMft.Resident(0x20, list),
+                DataExtent(0, 1, 100, 2, 4 * Cluster)
+            }));
+            var extension = FixedUp(FakeMft.Record(1024, baseReference: 1UL << 48, attributes: new[]
+            {
+                DataExtent(2, 3, 300, 2, 0)
+            }));
+
+            var (runs, size) = RawMft.MftDataRuns(baseRecord,
+                (index, baseRuns) =>
+                {
+                    // The extension record is located through the base record's own runs
+                    Assert.Single(baseRuns);
+                    return index == 11 ? extension : null;
+                },
+                (position, buffer, offset, count) => throw new InvalidOperationException(), Cluster);
+
+            Assert.Equal(4UL * Cluster, size);
+            Assert.Equal(new[] { (100L, 2UL), (300L, 2UL) }, runs.Select(r => (r.Lcn, r.Clusters)));
+        }
+
+        [Fact]
+        public void MftDataRunsWithAnUnreadableExtensionRecordFail()
+        {
+            var list = ListEntry(0x80, 0, 0).Concat(ListEntry(0x80, 2, 11)).ToArray();
+            var baseRecord = FixedUp(FakeMft.Record(1024, attributes: new[]
+            {
+                FakeMft.Resident(0x20, list),
+                DataExtent(0, 1, 100, 2, 64)
+            }));
+
+            Assert.Throws<System.IO.InvalidDataException>(() => RawMft.MftDataRuns(baseRecord, (_, _) => null,
+                (position, buffer, offset, count) => throw new InvalidOperationException(), 16));
+        }
+
         [Fact]
         public void BitmapWithAMissingListedExtentIsNotUsed()
         {

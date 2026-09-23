@@ -30,4 +30,7 @@
   <data name="Show previous selected item" xml:space="preserve"><value>显示上一个选中项</value></data>
   <data name="ShowSelectedTooltip" xml:space="preserve"><value>显示下一个选中项（Ctrl+J）；按住 Shift 显示上一个选中项</value></data>
   <data name="Selected" xml:space="preserve"><value>已选择</value></data>
+  <data name="ItemToFolders" xml:space="preserve"><value>{0} 到 {1} 个文件夹:</value></data>
+  <data name="Hex editor / compare" xml:space="preserve"><value>十六进制编辑器 / 比较</value></data>
+  <data name="Log explorer" xml:space="preserve"><value>日志浏览器</value></data>
 </root>

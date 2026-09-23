@@ -2239,7 +2239,9 @@ namespace search.Models
                 // result list for every keystroke.
                 Interlocked.Exchange(ref lastFind, null)?.Cancel();
                 if (searched.IsEmpty && !Searching) return;
-                searched.Clear();
+                // A fresh map, not Clear(): workers of the cancelled search may still be
+                // finishing a file and must not bring their result back
+                searched = new();
                 Searching = false;
                 UIRefreshRequested?.Invoke();
                 return;
@@ -2248,14 +2250,19 @@ namespace search.Models
             // Stop previous and start new find
             var thisFind = new CancellationTokenSource();
             Interlocked.Exchange(ref lastFind, thisFind)?.Cancel();
-            searched.Clear();
+            var results = new NonBlocking.ConcurrentDictionary<INode, bool?>();
+            searched = results;
             Searching = true;
             var watch = Stopwatch.StartNew();
 
             // Search
             var update = ContinualUpdate(thisFind.Token, () =>
-                Status = search.L.Format("StatusSearching", text, searched.Count, watch.Elapsed.TotalSeconds));
-            var searchText = caseInsensitive ? text.ToLowerInvariant() : text;
+                Status = search.L.Format("StatusSearching", text, results.Count, watch.Elapsed.TotalSeconds));
+            // Case folding applies to text searches only; HEX matches raw bytes. The file side
+            // folds ASCII only, so the needle must too - a full Unicode lowering would turn
+            // "Řeka" into "řeka", which the unfolded "Ř" bytes in the file can never match.
+            var fold = caseInsensitive && encoding != "HEX";
+            var searchText = fold ? AsciiToLower(text) : text;
 
             // Convert search text to bytes based on encoding
             ReadOnlyMemory<byte> toFind;
@@ -2272,18 +2279,25 @@ namespace search.Models
 
             // Snapshot on the calling (UI) thread - Items can be exchanged/appended during the search
             var nodes = Items.Where(x => !x.IsDirectory).ToArray();
+            // Items then holds only the first MaxItems rows - Search covers every filtered file
+            var fullFilter = itemsTruncated ? nodeFilter : null;
             try
             {
+                if (fullFilter != null)
+                    nodes = await Task.Run(() => files
+                        .FilterSnapshot(n => !n.IsDirectory && fullFilter.Matches(n), () => thisFind.IsCancellationRequested)
+                        ?.ToArray()) ?? nodes;
                 await Task.Run(() => nodes.AsParallel().WithCancellation(thisFind.Token)
                     .ForAll(
-                    n => searched[n] = FindFileContents(n.FullName, toFind, caseInsensitive)
+                    n => results[n] = FindFileContents(n.FullName, toFind, fold,
+                        utf16: encoding == "UTF-16", cancellationToken: thisFind.Token)
                     ));
             }
             catch (OperationCanceledException) { }
 
             // Show results
             var result = search.L.Text(thisFind.IsCancellationRequested ? "SearchCanceled" : "SearchDone");
-            var counts = searched.Values.GroupBy(x => x).ToDictionary(x => $"{x.Key}", x => x.Count()); // null can not be key in dictionary => string
+            var counts = results.Values.GroupBy(x => x).ToDictionary(x => $"{x.Key}", x => x.Count()); // null can not be key in dictionary => string
             thisFind.Cancel();
             await update;
             if (ReferenceEquals(thisFind, lastFind)) //Do not overwrite state of a newer search
@@ -2299,7 +2313,20 @@ namespace search.Models
             }
         }
 
-        internal static bool? FindFileContents(string path, ReadOnlyMemory<byte> search, bool caseInsensitive = false)
+        static string AsciiToLower(string text) => string.Create(text.Length, text, (dest, source) =>
+        {
+            for (int i = 0; i < source.Length; i++)
+                dest[i] = source[i] is >= 'A' and <= 'Z' ? (char)(source[i] | 0x20) : source[i];
+        });
+
+        /// <summary>
+        /// True when the file contains the bytes, null when it cannot be read. caseInsensitive
+        /// folds ASCII A-Z. With utf16 only whole UTF-16LE code units are folded - an 'A'..'Z'
+        /// low byte at an even file offset with a zero high byte. Folding single bytes would
+        /// also change bytes inside other characters: 'Ł' (41 01) would become 'š' (61 01).
+        /// </summary>
+        internal static bool? FindFileContents(string path, ReadOnlyMemory<byte> search, bool caseInsensitive = false,
+            bool utf16 = false, CancellationToken cancellationToken = default)
         {
             const int StackBufferLength = 1 << 16;
             byte[] rented = null;
@@ -2320,15 +2347,30 @@ namespace search.Models
                     rented = ArrayPool<byte>.Shared.Rent(bufferLength);
                     buf = rented.AsSpan(0, bufferLength);
                 }
-                using var s = File.OpenRead(path);
+                // Share with writers too: logs that are still being written are a typical target
+                using var s = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
                 int start = 0; //Overlap kept from the previous block
+                long bufferOffset = 0; //File offset of buf[0] - UTF-16 units start at even offsets
                 while (true)
                 {
+                    // A multi-GB file must not keep the disk busy after the search was cancelled
+                    if (cancellationToken.IsCancellationRequested) return null;
                     var read = s.Read(buf.Slice(start));
                     var len = start + read;
                     var bufSlice = buf.Slice(0, len);
 
-                    if (caseInsensitive)
+                    if (caseInsensitive && utf16)
+                    {
+                        // A unit whose high byte is not read yet stays unfolded for now: it is
+                        // part of the retained overlap and folded, whole, after the next read
+                        for (int i = (int)(bufferOffset & 1); i + 1 < len; i += 2)
+                        {
+                            var b = bufSlice[i];
+                            if (b >= 'A' && b <= 'Z' && bufSlice[i + 1] == 0) bufSlice[i] = (byte)(b + ('a' - 'A'));
+                        }
+                    }
+                    else if (caseInsensitive)
                     {
                         // Fold in place: the original bytes are not needed after matching,
                         // and the retained overlap may safely remain folded for the next read.
@@ -2344,6 +2386,7 @@ namespace search.Models
                     // Keep the tail that could contain the start of a match crossing the block boundary
                     start = Math.Min(search.Length - 1, len);
                     bufSlice.Slice(len - start).CopyTo(buf);
+                    bufferOffset += len - start;
                 }
             }
             catch

@@ -78,7 +78,7 @@ namespace search.Models
             var errors = new List<string>();
             try
             {
-                if (overwrite) dest.DeletePathIfExists();
+                if (overwrite) dest.DeletePathIfExistsKeeping(file);
                 if (System.IO.Directory.Exists(file))
                 {
                     // Hardlink to directory i.e. NTFS Junction
@@ -116,7 +116,7 @@ namespace search.Models
             var errors = new List<string>();
             try
             {
-                if (overwrite) dest.DeletePathIfExists();
+                if (overwrite) dest.DeletePathIfExistsKeeping(file);
                 if (System.IO.Directory.Exists(file))
                 {
                     // Create symbolic link for directory
@@ -238,9 +238,25 @@ namespace search.Models
                 {
                     if (move)
                     {
-                        // Move the directory to a new path
-                        if (overwrite) dest.DeletePathIfExists();
-                        System.IO.Directory.Move(file, dest);
+                        // Only a real link (junction, symlink) - other reparse points such as
+                        // cloud placeholders are ordinary folders to move
+                        var isLink = a.HasFlag(FileAttributes.ReparsePoint)
+                            && new DirectoryInfo(file).LinkTarget != null;
+                        if (!OnSameVolume(file, dest))
+                            errors.AddRange(MoveDirectoryAcrossVolumes(
+                                file, dest, overwrite, isLink, cancellationToken, nativeCancellation));
+                        else
+                        {
+                            try { MoveDirectory(file, dest, overwrite); }
+                            // The volume check can be wrong both ways: one volume under two
+                            // roots (D:\ and C:\Mount) is refused by Directory.Move's root check,
+                            // and a failed volume query assumed "same" - copy and delete then
+                            catch (IOException e) when (e.HResult == ErrorNotSameDevice || !SameRoot(file, dest))
+                            {
+                                errors.AddRange(MoveDirectoryAcrossVolumes(
+                                    file, dest, overwrite, isLink, cancellationToken, nativeCancellation));
+                            }
+                        }
                     }
                     else if (a.HasFlag(FileAttributes.ReparsePoint))
                         errors.AddRange(CopyDirectoryLink(
@@ -300,7 +316,7 @@ namespace search.Models
             try
             {
                 if (overwrite)
-                    destination.DeletePathIfExists();
+                    destination.DeletePathIfExistsKeeping(source.FullName);
                 var rawTarget = source.LinkTarget;
                 if (string.IsNullOrEmpty(rawTarget))
                     throw new IOException($"Cannot read the target of directory link '{source.FullName}'.");
@@ -468,6 +484,161 @@ namespace search.Models
                 _ = batched
                     ? FSChangeProcessor.PostBatched(change)
                     : FSChangeProcessor.Echo(change);
+        }
+
+        const int ErrorNotSameDevice = unchecked((int)0x80070011); // ERROR_NOT_SAME_DEVICE
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool GetVolumePathName(string lpszFileName, StringBuilder lpszVolumePathName, int cchBufferLength);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool GetVolumeNameForVolumeMountPoint(string lpszVolumeMountPoint, StringBuilder lpszVolumeName, int cchBufferLength);
+
+        /// <summary>
+        /// True when both paths lie on the same volume. Comparing path roots is not enough: a
+        /// volume mounted in a folder (C:\Mount) shares the C:\ root with the volume it is
+        /// mounted on. The volume GUID also matches one volume reached through two mount points.
+        /// </summary>
+        internal static bool OnSameVolume(string first, string second)
+        {
+            try
+            {
+                return string.Equals(VolumeOf(first), VolumeOf(second), StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return true; } // Directory.Move then reports ERROR_NOT_SAME_DEVICE if it is not
+        }
+
+        static bool SameRoot(string first, string second) => string.Equals(
+            Path.GetPathRoot(Path.GetFullPath(first)),
+            Path.GetPathRoot(Path.GetFullPath(second)),
+            StringComparison.OrdinalIgnoreCase);
+
+        static string VolumeOf(string path)
+        {
+            // The destination does not exist yet - its nearest existing ancestor has the volume
+            var existing = Path.GetFullPath(path);
+            while (!System.IO.Directory.Exists(existing) && !File.Exists(existing)
+                && Path.GetDirectoryName(existing) is { } parent)
+                existing = parent;
+            var mountPoint = new StringBuilder(1024);
+            if (!GetVolumePathName(existing, mountPoint, mountPoint.Capacity))
+                return Path.GetPathRoot(existing);
+            var volume = new StringBuilder(64);
+            return GetVolumeNameForVolumeMountPoint(mountPoint.ToString(), volume, volume.Capacity)
+                ? volume.ToString()
+                : mountPoint.ToString(); // Network shares and subst drives have no volume GUID
+        }
+
+        /// <summary>
+        /// Directory.Move cannot cross volumes, so copy and delete - with the semantics of a
+        /// move: an existing destination is replaced (overwrite) or refused, never merged, and a
+        /// directory link stays a link instead of becoming a copy of its target. The copy is
+        /// built beside the destination and swapped in by a same-volume move, so a failed or
+        /// cancelled copy leaves the destination untouched; the source goes only after that.
+        /// </summary>
+        static List<string> MoveDirectoryAcrossVolumes(
+            string source,
+            string dest,
+            bool overwrite,
+            bool isLink,
+            CancellationToken cancellationToken,
+            NativeCopyCancellation nativeCancellation)
+        {
+            if (!overwrite && (System.IO.Directory.Exists(dest) || File.Exists(dest)))
+                throw new IOException($"Cannot move '{source}': '{dest}' already exists.");
+            var staged = dest.TrimEnd(Path.DirectorySeparatorChar) + ".~" + Guid.NewGuid().ToString("N")[..8];
+            List<string> errors;
+            try
+            {
+                errors = isLink
+                    ? CopyDirectoryLink(new DirectoryInfo(source), staged, overwrite: false)
+                    : new DirectoryInfo(source).CopyFolder(
+                        new DirectoryInfo(staged), false, cancellationToken, nativeCancellation);
+            }
+            catch
+            {
+                DeleteDirectoryOrLink(staged, isLink);
+                throw;
+            }
+            if (errors.Count > 0)
+            {
+                // The source is still complete - drop the partial copy
+                DeleteDirectoryOrLink(staged, isLink);
+                return errors;
+            }
+            MoveDirectory(staged, dest, overwrite);
+            // A link is removed as the link itself - never recursively through its target
+            if (isLink) System.IO.Directory.Delete(source);
+            else System.IO.Directory.Delete(source, true);
+            return errors;
+        }
+
+        /// <summary>The cross-volume move on its own - it works within one volume too (tests)</summary>
+        internal static List<string> MoveDirectoryAcrossVolumes(string source, string dest, bool overwrite)
+            => MoveDirectoryAcrossVolumes(source, dest, overwrite,
+                new DirectoryInfo(source).LinkTarget != null, CancellationToken.None, null);
+
+        static void DeleteDirectoryOrLink(string path, bool isLink)
+        {
+            try
+            {
+                if (!System.IO.Directory.Exists(path)) return;
+                if (isLink) System.IO.Directory.Delete(path);
+                else System.IO.Directory.Delete(path, true);
+            }
+            catch (Exception e) { $"Could not remove staged copy '{path}': {e.Message}".Debug(); }
+        }
+
+        /// <summary>
+        /// Directory.Move has no overwrite overload. The replaced directory is only set aside
+        /// until the move succeeds, so a failed move (locked file, access denied) keeps it.
+        /// </summary>
+        internal static void MoveDirectory(string source, string dest, bool overwrite)
+        {
+            if (!overwrite || PathsReferToSameLocation(source, dest))
+            {
+                System.IO.Directory.Move(source, dest);
+                return;
+            }
+            if (File.Exists(dest)) File.Delete(dest);
+            if (!System.IO.Directory.Exists(dest))
+            {
+                System.IO.Directory.Move(source, dest);
+                return;
+            }
+            var aside = dest.TrimEnd(Path.DirectorySeparatorChar) + ".~" + Guid.NewGuid().ToString("N")[..8];
+            System.IO.Directory.Move(dest, aside);
+            try { System.IO.Directory.Move(source, dest); }
+            catch
+            {
+                System.IO.Directory.Move(aside, dest);
+                throw;
+            }
+            // The move itself succeeded - a leftover that cannot be removed must not report it failed
+            try { System.IO.Directory.Delete(aside, true); }
+            catch (Exception e) { $"Could not remove replaced directory '{aside}': {e.Message}".Debug(); }
+        }
+
+        /// <summary>
+        /// Delete an existing destination that is about to be replaced - unless it is the source
+        /// itself or a folder containing it (a link pasted next to its own target, a nested folder
+        /// flattened into its parent). Deleting it would destroy the very data being transferred.
+        /// </summary>
+        internal static void DeletePathIfExistsKeeping(this string dest, string source)
+        {
+            if (PathsReferToSameLocation(source, dest) || IsInside(source, dest))
+                throw new IOException($"'{dest}' cannot be replaced: it is or contains the source '{source}'.");
+            dest.DeletePathIfExists();
+        }
+
+        static bool IsInside(string path, string folder)
+        {
+            try
+            {
+                var parent = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return Path.GetFullPath(path).StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         /// <summary>

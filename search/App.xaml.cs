@@ -109,13 +109,18 @@ namespace search
                 return;
             }
             var picker = new LanguageSelectionWindow(initial);
+            // The picker is the only window yet - closing it would shut the app down with
+            // OnLastWindowClose before the StartupUri main window is even created
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var selected = picker.ShowDialog() == true ? picker.SelectedCulture : "en";
+            ShutdownMode = ShutdownMode.OnLastWindowClose;
             LanguageSettingsStore.Save(selected);
             ApplyCulture(selected);
         }
 
         internal static void ApplyCulture(string name)
         {
+            L.CaptureRegional();
             var culture = CultureInfo.GetCultureInfo(name);
             CultureInfo.DefaultThreadCurrentCulture = culture;
             CultureInfo.DefaultThreadCurrentUICulture = culture;

@@ -85,6 +85,40 @@ namespace search.Models
                          _ => throw new InvalidOperationException("Unknown pattern position")
                      }, Ex.Constant(x.Trim(':')), cmp)).Aggregate((s, n) => Ex.OrElse(s, n)), text);
                 Matches = (Func<string, bool>)ex.Compile();
+
+                // ':' binds to a path component boundary exactly like it binds to the
+                // start/end of a name, so "\" stands in for it on "\<path>\"
+                pathAlternatives = pattern.Split('|').Distinct()
+                    .Select(x => ((x.StartsWith(':') ? "\\" : "") + x.Trim(':') + (x.EndsWith(':') ? "\\" : ""),
+                        x.EndsWith(':')))
+                    .ToArray();
+            }
+
+            readonly (string Needle, bool Ends)[] pathAlternatives;
+
+            /// <summary>
+            /// The '\'-crossing pattern matched against a path, its anchors bound to component
+            /// boundaries - ":Docs\Sub" is a component starting "Docs" followed by one starting
+            /// "Sub", and ":C:\Work" starts the path because "C:" can only be the first
+            /// component. endInLastComponent restricts the match to end in the path's last
+            /// component (the single-'\' form: ":C:\Work\" = the parent is C:\Work* itself,
+            /// not a folder somewhere below it).
+            /// </summary>
+            public bool MatchesPathText(string path, bool endInLastComponent)
+            {
+                var text = "\\" + path.TrimEnd('\\') + "\\";
+                foreach (var (needle, ends) in pathAlternatives)
+                {
+                    // The latest occurrence ends latest - if any ends in the last component, it does
+                    var at = endInLastComponent
+                        ? text.LastIndexOf(needle, StringComparison.OrdinalIgnoreCase)
+                        : text.IndexOf(needle, StringComparison.OrdinalIgnoreCase);
+                    if (at < 0) continue;
+                    if (!endInLastComponent) return true;
+                    var end = at + needle.Length - (ends ? 1 : 0);
+                    if (text.IndexOf('\\', end) == text.Length - 1) return true;
+                }
+                return false;
             }
             public override string ToString() => pattern;
 
@@ -166,8 +200,10 @@ namespace search.Models
                 {
                     // Name filter tokens:
                     //  trailing 0 backslashes => inName (matches file/dir name)
-                    //  trailing 1 backslash  => inParentName (matches immediate parent directory name)
+                    //  trailing 1 backslash  => inParentName (matches immediate parent directory name;
+                    //                           a '\'-crossing term matches the parent path, ending in its name)
                     //  trailing >=2          => inParentsName (matches any parent in full path)
+                    //  A leading ':' makes a drive path (":C:\Work\") a pattern, not a folder
                     int trailing = 0;
                     for (int i = val.Length - 1; i >= 0 && val[i] == '\\'; i--) trailing++;
                     var core = raw.TrimEnd('\\');
@@ -226,22 +262,31 @@ namespace search.Models
             }
             if (inParentName.Count > 0)
             {
-                var parentName = n.ParentName;
+                string parentName = null, parentPath = null;
                 for (var i = 0; i < inParentName.Count; i++)
-                    if (!inParentName[i].Matches(parentName)) return false;
+                {
+                    var p = inParentName[i];
+                    if (p.ComponentMatch)
+                    {
+                        if (!p.Matches(parentName ??= n.ParentName)) return false;
+                    }
+                    //A '\'-crossing pattern ends in the parent's own name: ":C:\Work\" = items
+                    //directly inside C:\Work, C:\Working, ... - not in their subfolders
+                    else if ((parentPath ??= ParentPath(n)) == null || !p.MatchesPathText(parentPath, true))
+                        return false;
+                }
             }
             for (var i = 0; i < inParentsName.Count; i++)
                 if (!MatchesPath(inParentsName[i], n)) return false;
 
             if (dirs.Count == 0) return true;
 
-            //With a name term every directory criterion means "somewhere below"; without
-            //one a single '\' means the immediate parent only.
-            var alwaysRecursive = inName.Count > 0;
+            //A directory term means the same whatever else the filter holds: a single '\'
+            //is the immediate parent only, a double one the whole subtree
             for (var i = 0; i < dirs.Count; i++)
             {
                 var d = dirs[i];
-                if ((alwaysRecursive || d.Recursive) ? IsUnder(n, d) : HasParent(n, d)) return true;
+                if (d.Recursive ? IsUnder(n, d) : HasParent(n, d)) return true;
             }
             return false;
         }
@@ -255,7 +300,7 @@ namespace search.Models
         /// </summary>
         static bool MatchesPath(Pattern p, INode n)
         {
-            if (!p.ComponentMatch) return p.Matches(n.FullName);
+            if (!p.ComponentMatch) return p.MatchesPathText(n.FullName, false);
 
             var m = n;
             for (var guard = 0; m.PathParent != null && guard < 512; guard++)
@@ -277,6 +322,9 @@ namespace search.Models
         /// </summary>
         static bool IsUnder(INode n, DirCriterion d) => NodePath.IsUnder(n, d.Node, d.Prefix, d.Terminal);
 
+        static string ParentPath(INode n)
+            => n.PathParent?.FullName ?? Path.GetDirectoryName(n.FullName);
+
         /// <summary>
         /// The directory is the node's immediate parent
         /// </summary>
@@ -293,7 +341,8 @@ namespace search.Models
         /// <returns></returns>
         public override string ToString()
         {
-            var tokens = dirs.Select(d => d.Path + (d.Recursive ? "\\\\" : ""))
+            // A bare "C:" would read back as a name term - a drive root keeps its backslash
+            var tokens = dirs.Select(d => d.Path + (d.Recursive ? "\\\\" : d.Path.EndsWith(':') ? "\\" : ""))
                 .Concat(inParentsName.Select(x => $"{x}\\\\"))
                 .Concat(inParentName.Select(x => $"{x}\\"))
                 .Concat(inName.Select(x => $"{x}"));

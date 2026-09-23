@@ -47,6 +47,21 @@ namespace search.Tests
         }
 
         [Fact]
+        public void StartupCleanupKeepsOtherApplicationsSearchFolders()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var foreign = Directory.CreateDirectory(Path.Combine(root, "search.index"));
+
+                StorageMaintenance.CleanupTempFolders(root, null, DateTime.UtcNow);
+
+                Assert.True(foreign.Exists);
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
+        [Fact]
         public void OversizedLogIsRotatedAndBackupWindowIsBounded()
         {
             var root = CreateRoot();

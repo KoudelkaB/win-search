@@ -41,8 +41,11 @@ Ordnerabgleich:
 - `src\` trifft auf Elemente zu, deren unmittelbarer übergeordneter Ordner `src` heißt.
 - `src\\` trifft auf Elemente zu, die `src` an beliebiger Stelle im vollständigen Pfad haben.
 - Namensanker gelten je Pfadkomponente, `:src:\\` findet also Elemente mit einem Ordner, der an beliebiger Stelle im Pfad genau `src` heißt.
+- Auch in Mustern mit mehreren Ordnern binden Anker an Ordnernamen: `:Docs\Sub\\` trifft auf einen mit `Docs` beginnenden Ordner zu, auf den ein mit `Sub` beginnender folgt, an beliebiger Stelle im Pfad.
 - `"C:\Work"` trifft auf Elemente direkt in `C:\Work` zu.
 - `"C:\Work\\"` trifft rekursiv auf Elemente unterhalb von `C:\Work` zu.
+- `:C:\Work\` trifft auf Elemente direkt in Ordnern unter `C:\` zu, deren Name mit `Work` beginnt, z. B. `C:\Working\log.txt`, aber nicht `C:\Working\next\log.txt`.
+- `:C:\Work\\` trifft auf Elemente zu, deren vollständiger Pfad mit `C:\Work` beginnt, einschließlich `C:\Working\example`.
 
 Verlauf:
 

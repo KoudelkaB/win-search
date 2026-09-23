@@ -36,6 +36,13 @@ namespace search.Tests
             => nodes.Where(new NodeFilter(filter).Matches).Select(n => n.Name)
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
 
+        [Theory]
+        [InlineData("C:\\")]
+        [InlineData("C:\\\\")]
+        [InlineData("C:\\Work")]
+        public void DirectoryFilterTextRoundTrips(string filter)
+            => Assert.Equal(filter, new NodeFilter(filter).ToString());
+
         [Fact]
         public void NameFilterMatchesLeafNames()
         {
@@ -88,10 +95,45 @@ namespace search.Tests
         }
 
         [Fact]
-        public void DirCombinedWithNameFilterSearchesTheSubtree()
+        public void DirTermMeansTheSameWithANameTerm()
         {
-            Assert.Equal(new[] { "a.txt", "b.txt" }, Matching(@"Q:\Docs .txt:"));
-            Assert.Equal(new[] { "b.txt" }, Matching(@"Q:\Docs b.txt"));
+            // A name term does not widen a single-backslash folder to its subtree
+            Assert.Equal(new[] { "a.txt" }, Matching(@"Q:\Docs .txt:"));
+            Assert.Empty(Matching(@"Q:\Docs b.txt"));
+            Assert.Equal(new[] { "a.txt", "b.txt" }, Matching(@"Q:\Docs\\ .txt:"));
+            Assert.Equal(new[] { "b.txt" }, Matching(@"Q:\Docs\\ b.txt"));
+        }
+
+        [Fact]
+        public void AnchoredFullPathTermMatchesAPathPrefix()
+        {
+            // ":Q:\Do\\" = a full path starting with "Q:\Do" - Docs itself and everything below it
+            Assert.Equal(new[] { "a.txt", "b.txt", "Docs", "Sub" }, Matching(@":Q:\Do\\"));
+        }
+
+        [Fact]
+        public void AnchoredPathTermWithSingleBackslashEndsInTheParentName()
+        {
+            // ":Q:\Do\" = directly inside a folder under Q:\ whose name starts with "Do" -
+            // Docs\a.txt and Docs\Sub, but not Docs\Sub\b.txt
+            Assert.Equal(new[] { "a.txt", "Sub" }, Matching(@":Q:\Do\"));
+            Assert.Equal(new[] { "a.txt", "Sub" }, Matching(@":Q:\Docs:\"));
+            Assert.Empty(Matching(@":Q:\Do:\"));
+            Assert.Equal(new[] { "a.txt" }, Matching(@":Q:\Do\ .txt:"));
+            // Unanchored: the match still has to end in the parent's name
+            Assert.Equal(new[] { "b.txt" }, Matching(@"ocs\Su\"));
+        }
+
+        [Fact]
+        public void PathTermAnchorsBindToComponentBoundaries()
+        {
+            // ':' is a component boundary anywhere in the path, not only the path start
+            Assert.Equal(new[] { "b.txt", "Sub" }, Matching(@":Docs\Sub\\"));
+            Assert.Equal(new[] { "b.txt" }, Matching(@":Docs\Su\"));
+            Assert.Empty(Matching(@":ocs\Sub\\"));
+            Assert.Equal(new[] { "b.txt", "Sub" }, Matching(@"ocs\Sub\\"));
+            Assert.Equal(new[] { "b.txt", "Sub" }, Matching(@"Docs\Sub:\\"));
+            Assert.Empty(Matching(@"Docs\Su:\\"));
         }
 
         [Fact]

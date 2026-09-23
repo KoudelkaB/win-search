@@ -26,6 +26,8 @@ namespace search
             public string Root { get; set; }    //"C:\"
             public string Details { get; set; }
             public bool IsChecked { get; set; }
+            public bool Known { get; set; }     //The user made an explicit choice earlier
+            public bool Probed { get; set; }    //The default for an unknown drive is settled
         }
 
         readonly ObservableCollection<DriveChoice> choices = new();
@@ -51,7 +53,8 @@ namespace search
                     Key = key,
                     Root = drive.Name,
                     Details = L.Text("Checking"),
-                    IsChecked = known && enabled
+                    IsChecked = known && enabled,
+                    Known = known
                 };
                 choices.Add(choice);
 
@@ -59,7 +62,7 @@ namespace search
                 //block in SMB timeouts, and the startup drive scans may be saturating the pool
                 new Thread(() =>
                 {
-                    string format = null;
+                    string format = null, label = null;
                     long size = 0;
                     try
                     {
@@ -67,6 +70,8 @@ namespace search
                         {
                             format = drive.DriveFormat;
                             size = drive.TotalSize;
+                            //The label is a volume query too - never on the UI thread
+                            label = drive.VolumeLabelSafe();
                         }
                     }
                     catch { }
@@ -75,8 +80,9 @@ namespace search
                     {
                         choice.Details = $"{format ?? L.Text("NotReady")} · {TypeName(drive.DriveType)}"
                             + (size > 0 ? $" · {size >> 30} GB" : "")
-                            + (drive.VolumeLabelSafe() is string l && l.Length > 0 ? $" · {l}" : "");
+                            + (label is { Length: > 0 } ? $" · {label}" : "");
                         if (!known) choice.IsChecked = defaultEnabled; //No explicit choice => local NTFS only
+                        choice.Probed = true;
                     });
                 })
                 { IsBackground = true }.Start();
@@ -96,8 +102,12 @@ namespace search
         void Ok_Click(object sender, RoutedEventArgs e)
         {
             var selection = DriveSelectionStore.Load();
+            //A drive still showing "Checking…" is unchecked only because its default is not
+            //known yet - saving that would switch a slow USB NTFS drive off for good. Keep it
+            //untouched unless the user checked it.
             ChangedRoots = DriveSelectionStore.ApplyChoices(selection,
-                choices.Select(c => (c.Key, c.Root, c.IsChecked)));
+                choices.Where(c => c.Known || c.Probed || c.IsChecked)
+                    .Select(c => (c.Key, c.Root, c.IsChecked)));
             DriveSelectionStore.Save(selection, ChangedRoots);
             DialogResult = true;
         }

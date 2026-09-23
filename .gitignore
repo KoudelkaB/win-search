@@ -21,3 +21,9 @@ obj/
 # Generated winget manifests - the source of truth is tools/New-WingetManifest.ps1
 # plus tools/winget-locales.json; the output belongs in a winget-pkgs fork, not here.
 /packaging/
+
+# Per-user runtime data and logs left by running the app from its build folder
+/search/Filters
+/search/SearchTerms
+/search/*.log
+/search/*.log.bak

@@ -25,10 +25,24 @@ uses is part of Windows and is not shipped with File Search Manager.
 - Project: https://github.com/VSadov/NonBlocking
 - Copyright (c) 2023 Vladimir Sadov
 
-## SharpCompress 0.49.1
+## SharpCompress 0.50.4
 
 - Project: https://github.com/adamhathcock/sharpcompress
 - Copyright (c) 2014 Adam Hathcock
+
+## System.ServiceProcess.ServiceController 10.0.11
+
+- Project: https://github.com/dotnet/runtime
+- Copyright (c) .NET Foundation and Contributors
+- License: MIT
+
+## .NET runtime 10
+
+Both executables are published self-contained and carry the .NET runtime.
+
+- Project: https://github.com/dotnet/runtime
+- Copyright (c) .NET Foundation and Contributors
+- License: MIT
 
 ## PropertyChanged.Fody 4.1.0
 

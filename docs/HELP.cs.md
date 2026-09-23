@@ -41,8 +41,11 @@ Porovnávání složek:
 - `src\` odpovídá položkám, jejichž bezprostřední nadřazená složka se jmenuje `src`.
 - `src\\` odpovídá položkám, které mají `src` kdekoli v celé cestě.
 - Kotvy názvu platí pro každou složku cesty, takže `:src:\\` najde položky se složkou pojmenovanou přesně `src` kdekoli v cestě.
+- Kotvy se vážou na jména složek i ve vzorech s více složkami: `:Docs\Sub\\` odpovídá složce začínající na `Docs`, po které následuje složka začínající na `Sub`, kdekoli v cestě.
 - `"C:\Work"` odpovídá položkám přímo v `C:\Work`.
 - `"C:\Work\\"` odpovídá položkám rekurzivně pod `C:\Work`.
+- `:C:\Work\` odpovídá položkám přímo ve složkách pod `C:\`, jejichž jméno začíná na `Work`, např. `C:\Working\log.txt`, ale ne `C:\Working\next\log.txt`.
+- `:C:\Work\\` odpovídá položkám, jejichž celá cesta začíná na `C:\Work`, včetně `C:\Working\example`.
 
 Historie:
 

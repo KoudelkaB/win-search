@@ -294,6 +294,21 @@ namespace search
             filesView.SelectionChanged += (o, e) => globalCmd.OnChange();
             globalCmd.OnChange();
 
+            // A key released elsewhere never reaches the commander. Left in keysDown it would
+            // later complete a stale sequence - a stuck Shift plus Delete becomes Shift+Delete
+            // (permanent delete) on the next Shift tap. Forget held keys once focus is gone.
+            filesView.LostKeyboardFocus += (o, e) =>
+            {
+                // Also raised (bubbled) when focus just moves between rows
+                if (e.NewFocus is not System.Windows.Media.Visual next || !filesView.IsAncestorOf(next))
+                    filesViewCmd.Cancel();
+            };
+            Deactivated += (o, e) =>
+            {
+                filesViewCmd.Cancel();
+                globalCmd.Cancel();
+            };
+
             // Preserver selection on Items update
             INode[] selected = null;
             INode focused = null;
@@ -1659,9 +1674,14 @@ namespace search
                 var args = path.Split('\0');
                 var workingDir = nodes.FirstOrDefault(n => n.IsDirectory)?.FullName
                     ?? System.IO.Path.GetDirectoryName(nodes.First().FullName);
-                var q = args[0] == Apps.Powershell ? "'" : "\"";
+                var powershell = args[0] == Apps.Powershell;
+                // PowerShell doubles a quote inside '...'. Elsewhere a trailing backslash (a
+                // drive root "C:\") must be doubled, or \" escapes the closing quote.
+                string Quote(string p) => powershell
+                    ? $"'{p.Replace("'", "''")}'"
+                    : $"\"{(p.EndsWith('\\') ? p + "\\" : p)}\"";
                 await WaitFor(() => args[0].Open(
-                string.Join(" ", args.Skip(1).Concat(nodes.Select(n => $"{q}{n.GetFileOrTempPath()}{q}"))), workingDir, asAdmin));
+                string.Join(" ", args.Skip(1).Concat(nodes.Select(n => Quote(n.GetFileOrTempPath())))), workingDir, asAdmin));
             }
         }
 
@@ -2841,7 +2861,7 @@ namespace search
             string name = "", ext = "", subStr = "";
             int index = 0;
             var e = arg.GetEnumerator();
-            bool overwrite = e.MoveNext() && e.Current == Key.O, replace = false;
+            bool overwrite = e.MoveNext() && e.Current == Key.O, replace = false, removeExt = false;
             if (overwrite) e.MoveNext();
             switch (e.Current)
             {
@@ -2853,8 +2873,9 @@ namespace search
                 case Key.N: // Add extension
                     name = e.ReadTill();
                     break;
-                case Key.E: // Change extension
-                    ext = e.ReadTill();
+                case Key.E: // Change extension, E <Del> removes it
+                    ext = e.ReadTill(Key.Delete);
+                    removeExt = ext.Length == 0 && e.Current == Key.Delete;
                     break;
                 case Key.OemPeriod: // Add extension
                     ext = e.ReadTill();
@@ -2892,7 +2913,7 @@ namespace search
                             {
                                 case Key.V: // Time from clipboard
                                     var text = Clipboard.GetText();
-                                    if (!DateTime.TryParse(text, out time))
+                                    if (!L.TryParseDate(text?.Trim(), out time))
                                     {
                                         MessageBox.Show($"Invalid date/time format in clipboard: {text}", "Error");
                                         return;
@@ -2937,7 +2958,8 @@ namespace search
                 }
                 else if (string.IsNullOrEmpty(dest))
                 {
-                    if (!string.IsNullOrEmpty(ext))
+                    if (removeExt) dest = System.IO.Path.ChangeExtension(x.FullName, null);
+                    else if (!string.IsNullOrEmpty(ext))
                     {
                         if (index == 0) dest = System.IO.Path.ChangeExtension(x.FullName, "." + ext);
                         else dest = x.FullName + "." + ext;

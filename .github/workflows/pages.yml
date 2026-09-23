@@ -30,10 +30,17 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
+      # Publish only the site itself - docs/ also holds help sources and internal notes
+      # (reviews, maintainer checklists) that must not end up on the public website
+      - name: Stage website
+        run: |
+          mkdir _site
+          cp -r docs/index.html docs/styles.css docs/script.js docs/.nojekyll docs/assets _site/
+
       - name: Upload website
         uses: actions/upload-pages-artifact@v4
         with:
-          path: docs
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment

@@ -41,8 +41,11 @@ Dopasowanie folderów:
 - `src\` pasuje do elementów, których bezpośredni folder nadrzędny nazywa się `src`.
 - `src\\` pasuje do elementów mających `src` w dowolnym miejscu pełnej ścieżki.
 - Kotwice nazwy działają dla każdego składnika ścieżki, więc `:src:\\` znajduje elementy z folderem o dokładnej nazwie `src` w dowolnym miejscu ścieżki.
+- Również we wzorcach z wieloma folderami kotwice dotyczą nazw folderów: `:Docs\Sub\\` pasuje do folderu zaczynającego się od `Docs`, po którym następuje folder zaczynający się od `Sub`, w dowolnym miejscu ścieżki.
 - `"C:\Work"` pasuje do elementów bezpośrednio w `C:\Work`.
 - `"C:\Work\\"` pasuje rekurencyjnie do elementów poniżej `C:\Work`.
+- `:C:\Work\` pasuje do elementów bezpośrednio w folderach pod `C:\`, których nazwa zaczyna się od `Work`, np. `C:\Working\log.txt`, ale nie `C:\Working\next\log.txt`.
+- `:C:\Work\\` pasuje do elementów, których pełna ścieżka zaczyna się od `C:\Work`, w tym `C:\Working\example`.
 
 Historia:
 

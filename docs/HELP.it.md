@@ -41,8 +41,11 @@ Corrispondenza delle cartelle:
 - `src\` corrisponde agli elementi la cui cartella padre immediata si chiama `src`.
 - `src\\` corrisponde agli elementi che hanno `src` in qualsiasi punto del percorso completo.
 - Gli ancoraggi del nome si applicano a ogni componente del percorso, quindi `:src:\\` trova gli elementi con una cartella chiamata esattamente `src` in qualsiasi punto del percorso.
+- Anche nei modelli con più cartelle gli ancoraggi si applicano ai nomi delle cartelle: `:Docs\Sub\\` corrisponde a una cartella che inizia con `Docs` seguita da una che inizia con `Sub`, in qualsiasi punto del percorso.
 - `"C:\Work"` corrisponde agli elementi direttamente dentro `C:\Work`.
 - `"C:\Work\\"` corrisponde in modo ricorsivo agli elementi sotto `C:\Work`.
+- `:C:\Work\` corrisponde agli elementi direttamente dentro le cartelle sotto `C:\` il cui nome inizia con `Work`, ad es. `C:\Working\log.txt`, ma non `C:\Working\next\log.txt`.
+- `:C:\Work\\` corrisponde agli elementi il cui percorso completo inizia con `C:\Work`, incluso `C:\Working\example`.
 
 Cronologia:
 

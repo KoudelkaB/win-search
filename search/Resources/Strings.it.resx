@@ -30,4 +30,7 @@
   <data name="Show previous selected item" xml:space="preserve"><value>Mostra l'elemento selezionato precedente</value></data>
   <data name="ShowSelectedTooltip" xml:space="preserve"><value>Mostra l'elemento selezionato successivo (Ctrl+J); tieni premuto Maiusc per quello precedente</value></data>
   <data name="Selected" xml:space="preserve"><value>Selezionati</value></data>
+  <data name="ItemToFolders" xml:space="preserve"><value>{0} in {1} cartella/e:</value></data>
+  <data name="Hex editor / compare" xml:space="preserve"><value>Editor esadecimale / confronto</value></data>
+  <data name="Log explorer" xml:space="preserve"><value>Esplora log</value></data>
 </root>

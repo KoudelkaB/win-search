@@ -210,7 +210,7 @@ namespace search
         {
             if (source == dest) return;
             $"CopyFromElevated '{source}' => '{dest}'".Debug();
-            if (overwrite) dest.DeletePathIfExists();
+            if (overwrite) Models.Extensions.DeletePathIfExistsKeeping(dest, source);
             Run(Command.GET_FILE, s => WriteLine(s, source), s => ReceivePayload(s, dest));
             if (move) DeleteElevated(source);
         }
@@ -297,8 +297,18 @@ namespace search
                     || parts.Length == 3 && parts[2] != "frames")
                     throw new Exception(header ?? "Broker pipe closed.");
                 var payload = parts.Length == 3 ? new MftFrameStream(s, length) : s;
-                nodes = Models.MftDriveReader.GetNodes(payload, bytesPerRecord, length, volumeMountPoint,
-                    cancellationToken: cancellationToken, drainOnCancellation: true);
+                try
+                {
+                    nodes = Models.MftDriveReader.GetNodes(payload, bytesPerRecord, length, volumeMountPoint,
+                        cancellationToken: cancellationToken, drainOnCancellation: true);
+                }
+                catch (OperationCanceledException)
+                {
+                    // The payload was drained, but the status line still follows - leaving it
+                    // unread would make every later command read the previous one's reply
+                    ReadLine(s);
+                    throw;
+                }
             });
             return nodes;
         }
@@ -498,12 +508,8 @@ namespace search
 
         static void MovePath(string source, string dest, bool overwrite)
         {
-            if (Directory.Exists(source))
-            {
-                // Directory.Move has no overwrite overload
-                if (overwrite) dest.DeletePathIfExists();
-                Directory.Move(source, dest);
-            }
+            // MoveDirectory keeps a replaced destination until the move has succeeded
+            if (Directory.Exists(source)) Models.Extensions.MoveDirectory(source, dest, overwrite);
             else File.Move(source, dest, overwrite);
         }
 

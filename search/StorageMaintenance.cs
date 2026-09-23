@@ -170,7 +170,8 @@ namespace search
                     ? name.Substring("search.clipboard.".Length)
                     : name.Substring("search.".Length);
                 var parts = marker.Split('.');
-                if (!int.TryParse(parts[0], out var processId)) return false;
+                // Not named <pid>.<ticks> => another application's search.* folder, never ours to delete
+                if (!int.TryParse(parts[0], out var processId)) return true;
 
                 using var process = Process.GetProcessById(processId);
                 if (parts.Length < 2 || !long.TryParse(parts[1], out var startTicks))

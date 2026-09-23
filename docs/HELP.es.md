@@ -41,8 +41,11 @@ Coincidencia de carpetas:
 - `src\` coincide con elementos cuya carpeta padre inmediata se llama `src`.
 - `src\\` coincide con elementos que tienen `src` en cualquier lugar de la ruta completa.
 - Los anclajes de nombre se aplican a cada componente de la ruta, por lo que `:src:\\` encuentra elementos con una carpeta llamada exactamente `src` en cualquier lugar de la ruta.
+- Los anclajes también se aplican a nombres de carpeta en patrones con varias carpetas: `:Docs\Sub\\` coincide con una carpeta que empieza por `Docs` seguida de otra que empieza por `Sub`, en cualquier lugar de la ruta.
 - `"C:\Work"` coincide con elementos directamente dentro de `C:\Work`.
 - `"C:\Work\\"` coincide de forma recursiva con elementos bajo `C:\Work`.
+- `:C:\Work\` coincide con elementos directamente dentro de carpetas bajo `C:\` cuyo nombre empieza por `Work`, p. ej. `C:\Working\log.txt`, pero no `C:\Working\next\log.txt`.
+- `:C:\Work\\` coincide con elementos cuya ruta completa empieza por `C:\Work`, incluido `C:\Working\example`.
 
 Historial:
 

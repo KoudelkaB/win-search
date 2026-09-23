@@ -6,7 +6,7 @@
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/bin/Debug/net10.0-windows/search.dll",
+            "program": "${workspaceFolder}/bin/Debug/net10.0-windows/File Search Manager.dll",
             "args": ["ui"],
             "cwd": "${workspaceFolder}",
             "stopAtEntry": false,

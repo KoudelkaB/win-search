@@ -54,7 +54,7 @@ Press `F1` anywhere to open the complete keyboard help. Press `F12` to refresh t
 
 Deletion first attempts each selected folder as one fast operation. If a locked or inaccessible item prevents that, File Search Manager continues with the largest removable subtrees and leaves only the blocked items and their required parent folders. Recycle Bin items retain their attributes and original locations; use **Restore** to put a partially recycled tree back. `Shift+Delete` uses the same best-effort behavior permanently and clears the `ReadOnly` attribute when necessary.
 
-The user interface follows the Windows display language. English is used as a fallback; Czech, German, French, Spanish, and Polish are also included.
+The user interface follows the Windows display language and can be switched with the language picker. English is used as a fallback; Czech, German, French, Spanish, Italian, Polish, Brazilian Portuguese, Japanese, Korean, and Simplified Chinese are also included.
 
 See [docs/HELP.md](docs/HELP.md) for filter syntax and detailed controls.
 

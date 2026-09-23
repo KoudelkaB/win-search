@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using search.Models;
@@ -344,6 +345,89 @@ namespace search.Tests
         }
 
         [Fact]
+        public void CrossVolumeMoveReplacesTheDestinationInsteadOfMerging()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Directory.CreateDirectory(Path.Combine(root, "source"));
+                File.WriteAllText(Path.Combine(source.FullName, "new.txt"), "new");
+                var destination = Directory.CreateDirectory(Path.Combine(root, "destination"));
+                File.WriteAllText(Path.Combine(destination.FullName, "old.txt"), "old");
+
+                Assert.Empty(Models.Extensions.MoveDirectoryAcrossVolumes(
+                    source.FullName, destination.FullName, overwrite: true));
+
+                Assert.False(Directory.Exists(source.FullName));
+                Assert.Equal(new[] { "new.txt" },
+                    Directory.GetFiles(destination.FullName).Select(Path.GetFileName).ToArray());
+                Assert.Single(Directory.GetDirectories(root)); // No staged copy left behind
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void CrossVolumeMoveWithoutOverwriteRefusesAnExistingDestination()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Directory.CreateDirectory(Path.Combine(root, "source"));
+                File.WriteAllText(Path.Combine(source.FullName, "new.txt"), "new");
+                var destination = Directory.CreateDirectory(Path.Combine(root, "destination"));
+                File.WriteAllText(Path.Combine(destination.FullName, "old.txt"), "old");
+
+                Assert.Throws<IOException>(() => Models.Extensions.MoveDirectoryAcrossVolumes(
+                    source.FullName, destination.FullName, overwrite: false));
+
+                Assert.True(File.Exists(Path.Combine(source.FullName, "new.txt")));
+                Assert.Equal(new[] { "old.txt" },
+                    Directory.GetFiles(destination.FullName).Select(Path.GetFileName).ToArray());
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void CrossVolumeMoveKeepsADirectoryLinkALink()
+        {
+            var root = CreateRoot();
+            var sourceLink = Path.Combine(root, "link");
+            var movedLink = Path.Combine(root, "moved");
+            try
+            {
+                var target = Directory.CreateDirectory(Path.Combine(root, "target"));
+                File.WriteAllText(Path.Combine(target.FullName, "payload.txt"), "payload");
+                Assert.Empty(target.FullName.Hardlink(sourceLink)); // A junction
+
+                Assert.Empty(Models.Extensions.MoveDirectoryAcrossVolumes(sourceLink, movedLink, overwrite: false));
+
+                Assert.False(Directory.Exists(sourceLink));
+                Assert.True(File.GetAttributes(movedLink).HasFlag(FileAttributes.ReparsePoint));
+                Assert.Equal(target.FullName,
+                    new DirectoryInfo(movedLink).ResolveLinkTarget(returnFinalTarget: false)?.FullName,
+                    ignoreCase: true);
+                Assert.True(File.Exists(Path.Combine(target.FullName, "payload.txt"))); // Target untouched
+            }
+            finally
+            {
+                foreach (var link in new[] { movedLink, sourceLink })
+                    if (Directory.Exists(link)) Directory.Delete(link);
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void VolumeCheckTreatsANotYetCreatedDestinationAsItsAncestorsVolume()
+        {
+            var root = CreateRoot();
+            try
+            {
+                Assert.True(Models.Extensions.OnSameVolume(root, Path.Combine(root, "not", "created")));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
         public void DirectoryCopyStillCopiesNestedFilesWithBatchedChildNotifications()
         {
             var root = CreateRoot();
@@ -419,6 +503,63 @@ namespace search.Tests
             {
                 Directory.Delete(root, recursive: true);
             }
+        }
+
+        [Fact]
+        public void LinkOverwriteNeverDeletesItsOwnSource()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Path.Combine(root, "source.txt");
+                File.WriteAllText(source, "payload");
+
+                Assert.NotEmpty(source.Softlink(source, overwrite: true));
+                Assert.NotEmpty(source.Hardlink(source, overwrite: true));
+
+                Assert.Equal("payload", File.ReadAllText(source));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void DirectoryMoveOverwriteKeepsAParentThatContainsTheSource()
+        {
+            var root = CreateRoot();
+            try
+            {
+                // Flattening proj\proj into its parent must not delete the parent first
+                var outer = Directory.CreateDirectory(Path.Combine(root, "proj"));
+                var inner = Directory.CreateDirectory(Path.Combine(outer.FullName, "proj"));
+                File.WriteAllText(Path.Combine(inner.FullName, "payload.txt"), "payload");
+
+                Assert.NotEmpty(inner.FullName.UniversalCopyOrMove(outer.FullName, overwrite: true, move: true));
+
+                Assert.Equal("payload", File.ReadAllText(Path.Combine(inner.FullName, "payload.txt")));
+                Assert.Single(Directory.GetDirectories(root));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void DirectoryMoveOverwriteReplacesTheDestination()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Directory.CreateDirectory(Path.Combine(root, "source"));
+                File.WriteAllText(Path.Combine(source.FullName, "new.txt"), "new");
+                var destination = Directory.CreateDirectory(Path.Combine(root, "destination"));
+                File.WriteAllText(Path.Combine(destination.FullName, "old.txt"), "old");
+
+                Assert.Empty(source.FullName.UniversalCopyOrMove(destination.FullName, overwrite: true, move: true));
+
+                Assert.False(Directory.Exists(source.FullName));
+                Assert.Equal(new[] { "new.txt" },
+                    Directory.GetFiles(destination.FullName).Select(Path.GetFileName).ToArray());
+                Assert.Single(Directory.GetDirectories(root));
+            }
+            finally { Directory.Delete(root, recursive: true); }
         }
 
         static string CreateRoot()

@@ -109,6 +109,8 @@ namespace search
             }
             catch when (tolerateFailure)
             {
+                // The next save would overwrite the unreadable file for good - keep a copy
+                try { File.Copy(path, path + ".corrupt", overwrite: true); } catch { }
                 return new WorkspaceSettings();
             }
         }
@@ -123,7 +125,10 @@ namespace search
             var parent = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(parent))
                 Directory.CreateDirectory(parent);
-            File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
+            // Write aside and swap, so a crash mid-write cannot leave a truncated file behind
+            var temporary = path + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(settings, JsonOptions));
+            File.Move(temporary, path, overwrite: true);
         }
 
         internal static void Validate(WorkspaceSettings settings)

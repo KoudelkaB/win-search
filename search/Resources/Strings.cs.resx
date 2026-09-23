@@ -45,4 +45,5 @@ a ponechte libovolnou klávesu stisknutou</value></data>
   <data name="ShowSelectedTooltip" xml:space="preserve"><value>Zobrazit dal&#353;&#237; vybranou polo&#382;ku (Ctrl+J); se Shiftem p&#345;edchoz&#237;</value></data>
   <data name="Hex editor / compare" xml:space="preserve"><value>Hex editor / porovnání</value></data>
   <data name="Log explorer" xml:space="preserve"><value>Prohlížeč logů</value></data>
+  <data name="ItemToFolders" xml:space="preserve"><value>{0} do {1} složek:</value></data>
 </root>

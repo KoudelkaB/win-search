@@ -41,8 +41,11 @@ Correspondência de pastas:
 - `src\` corresponde a itens cuja pasta pai imediata se chama `src`.
 - `src\\` corresponde a itens com `src` em qualquer lugar do caminho completo.
 - As âncoras de nome se aplicam a cada componente do caminho, portanto `:src:\\` encontra itens com uma pasta chamada exatamente `src` em qualquer lugar do caminho.
+- Em padrões com várias pastas, as âncoras também se aplicam a nomes de pasta: `:Docs\Sub\\` corresponde a uma pasta que começa com `Docs` seguida de outra que começa com `Sub`, em qualquer lugar do caminho.
 - `"C:\Work"` corresponde a itens diretamente dentro de `C:\Work`.
 - `"C:\Work\\"` corresponde recursivamente a itens abaixo de `C:\Work`.
+- `:C:\Work\` corresponde a itens diretamente dentro de pastas sob `C:\` cujo nome começa com `Work`, por ex. `C:\Working\log.txt`, mas não `C:\Working\next\log.txt`.
+- `:C:\Work\\` corresponde a itens cujo caminho completo começa com `C:\Work`, incluindo `C:\Working\example`.
 
 Histórico:
 

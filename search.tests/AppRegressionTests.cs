@@ -993,6 +993,83 @@ namespace search.Tests
         }
 
         [Fact]
+        public void ContentSearchReadsFilesStillOpenForWriting()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                using var writer = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+                writer.Write(Encoding.ASCII.GetBytes("live log line"));
+                writer.Flush();
+
+                Assert.True(SearchModel.FindFileContents(path, Encoding.ASCII.GetBytes("log")) == true);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
+        public void CancelledContentSearchStopsWithoutAResult()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(path, "needle");
+                using var cancelled = new CancellationTokenSource();
+                cancelled.Cancel();
+
+                Assert.Null(SearchModel.FindFileContents(path, Encoding.ASCII.GetBytes("needle"),
+                    cancellationToken: cancelled.Token));
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
+        public void CaseInsensitiveUtf16SearchFoldsUnitsSplitAcrossReads()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                // The second 64 KiB block starts after the 7 retained needle bytes, at an odd
+                // offset, so its end splits a UTF-16 unit: "AbCd" at 131062 spans that split
+                var text = new string('x', 131062 / 2) + "AbCd" + new string('x', 100);
+                File.WriteAllBytes(path, Encoding.Unicode.GetBytes(text));
+
+                Assert.True(SearchModel.FindFileContents(path, Encoding.Unicode.GetBytes("abcd"),
+                    caseInsensitive: true, utf16: true) == true);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
+        public void CaseInsensitiveUtf16SearchFoldsNoBytesInsideOtherCharacters()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                // 'Ł' is 41 01 - folding its low byte alone would turn it into 'š' (61 01)
+                File.WriteAllBytes(path, Encoding.Unicode.GetBytes("xŁx"));
+
+                Assert.True(SearchModel.FindFileContents(path, Encoding.Unicode.GetBytes("š"),
+                    caseInsensitive: true, utf16: true) == false);
+                Assert.True(SearchModel.FindFileContents(path, Encoding.Unicode.GetBytes("Ł"),
+                    caseInsensitive: true, utf16: true) == true);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
         public void CaseInsensitiveContentSearchMatchesAcrossBufferBoundary()
         {
             var path = Path.GetTempFileName();

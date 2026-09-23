@@ -59,6 +59,8 @@ jobs:
             installer/Output/FileSearchManager-Setup-${{ env.VERSION }}.exe
             installer/Output/SHA256SUMS.txt
           generate_release_notes: true
+          # v1.2.3-rc1 style tags must never become "Latest" - the site and README link there
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
   # Opens the manifest-update PR against microsoft/winget-pkgs. This only works once the
   # package already exists there - the very first version has to be submitted by hand

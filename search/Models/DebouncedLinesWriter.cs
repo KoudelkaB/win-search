@@ -103,7 +103,12 @@ namespace search.Models
             wake.Dispose();
         }
 
-        static Task WriteAllLinesAsync(string path, string[] lines)
-            => File.WriteAllLinesAsync(path, lines);
+        // Write aside and swap: the app killed mid-write must not truncate the history
+        static async Task WriteAllLinesAsync(string path, string[] lines)
+        {
+            var temporary = path + ".tmp";
+            await File.WriteAllLinesAsync(temporary, lines);
+            File.Move(temporary, path, overwrite: true);
+        }
     }
 }

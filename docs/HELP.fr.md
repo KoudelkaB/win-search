@@ -41,8 +41,11 @@ Correspondance des dossiers :
 - `src\` correspond aux éléments dont le dossier parent immédiat s’appelle `src`.
 - `src\\` correspond aux éléments ayant `src` n’importe où dans le chemin complet.
 - Les ancres de nom s’appliquent à chaque composant du chemin ; `:src:\\` trouve donc les éléments dont un dossier s’appelle exactement `src`, où qu’il soit dans le chemin.
+- Dans les motifs à plusieurs dossiers aussi, les ancres s’appliquent aux noms de dossier : `:Docs\Sub\\` correspond à un dossier commençant par `Docs` suivi d’un dossier commençant par `Sub`, où qu’il soit dans le chemin.
 - `"C:\Work"` correspond aux éléments directement dans `C:\Work`.
 - `"C:\Work\\"` correspond aux éléments situés récursivement sous `C:\Work`.
+- `:C:\Work\` correspond aux éléments directement dans les dossiers sous `C:\` dont le nom commence par `Work`, par ex. `C:\Working\log.txt`, mais pas `C:\Working\next\log.txt`.
+- `:C:\Work\\` correspond aux éléments dont le chemin complet commence par `C:\Work`, y compris `C:\Working\example`.
 
 Historique :
 

@@ -30,4 +30,7 @@
   <data name="Show previous selected item" xml:space="preserve"><value>이전 선택 항목 표시</value></data>
   <data name="ShowSelectedTooltip" xml:space="preserve"><value>다음 선택 항목 표시 (Ctrl+J); Shift 키를 누르면 이전 항목 표시</value></data>
   <data name="Selected" xml:space="preserve"><value>선택됨</value></data>
+  <data name="ItemToFolders" xml:space="preserve"><value>{0}을(를) {1}개 폴더로:</value></data>
+  <data name="Hex editor / compare" xml:space="preserve"><value>16진수 편집기 / 비교</value></data>
+  <data name="Log explorer" xml:space="preserve"><value>로그 탐색기</value></data>
 </root>

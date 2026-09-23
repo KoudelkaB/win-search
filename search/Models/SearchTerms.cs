@@ -45,7 +45,7 @@ namespace search.Models
                         if (values.Length != 3 ||
                             !int.TryParse(values[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var times) ||
                             !(DateTime.TryParseExact(values[1], "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastUsed) ||
-                              DateTime.TryParse(values[1], out lastUsed))) continue;
+                              L.TryParseDate(values[1], out lastUsed))) continue;
                         items[values[2]] = new Info { TimesUsed = times, LastUsed = lastUsed };
                     }
                 }

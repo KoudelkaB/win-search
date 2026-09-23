@@ -325,6 +325,11 @@ namespace search.Models
 
                 //Sheets
                 string Value(XElement e) => e.Element(ns + "v")?.Value ?? "";
+                // Date-formatted cells are often empty (<c s="3"/>) - keep such a value as is
+                string Date(XElement e, string format) =>
+                    double.TryParse(Value(e), NumberStyles.Float, CultureInfo.InvariantCulture, out var oa)
+                        ? DateTime.FromOADate(oa).ToString(format, CultureInfo.InvariantCulture)
+                        : Value(e);
                 foreach (var sheet in a.Entries.Where(x => x.Key.StartsWith("xl/worksheets/sheet")).OrderBy(x => x.Key))
                 {
                     using var s = sheet.Load();
@@ -340,8 +345,8 @@ namespace search.Models
                             "inlineStr" => x.Value,
                             _ => FormatCode(x.Attribute("s")?.Value) switch
                             {
-                                "YYYY-MM-DD" => DateTime.FromOADate(double.Parse(Value(x), CultureInfo.InvariantCulture)).ToString("yyyy-MM-dd"),
-                                "YYYY-MM-DD\\ HH:MM:SS" => DateTime.FromOADate(double.Parse(Value(x), CultureInfo.InvariantCulture)).ToString("yyyy-MM-dd HH:mm:ss"),
+                                "YYYY-MM-DD" => Date(x, "yyyy-MM-dd"),
+                                "YYYY-MM-DD\\ HH:MM:SS" => Date(x, "yyyy-MM-dd HH:mm:ss"),
                                 _ => Value(x) //Unknown leave as it is
                             }
                         }))));

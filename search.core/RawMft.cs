@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -55,7 +56,10 @@ namespace search.Core
                 if (!MftFixup.Apply(record))
                     throw new InvalidDataException("The $MFT file record is corrupt.");
 
-                var (runs, dataSize) = MftDataRuns(record);
+                var (runs, dataSize) = MftDataRuns(record,
+                    (index, baseRuns) => ReadMftRecord(volume, baseRuns, index),
+                    (position, buffer, offset, count) => volume.Read(checked((ulong)position), buffer, offset, count),
+                    (long)volume.BytesPerCluster);
                 var length = checked((long)dataSize);
                 return new RawMft(volume, runs, length, TryReadBitmap(volume, record, runs, length));
             }
@@ -324,7 +328,7 @@ namespace search.Core
         /// <summary>
         /// One fixed-up FILE record of the $MFT by index, or null when it cannot be read
         /// </summary>
-        static byte[] ReadMftRecord(NativeVolume volume, List<DataRun> mftRuns, long index)
+        static byte[] ReadMftRecord(NativeVolume volume, IReadOnlyList<DataRun> mftRuns, long index)
         {
             var bytesPerRecord = volume.BytesPerMftRecord;
             var offset = checked(index * bytesPerRecord);
@@ -429,6 +433,65 @@ namespace search.Core
             return filled == value.Length ? value : null;
         }
 
+        /// <summary>
+        /// The $MFT's own $DATA runs from all its extents. A $MFT fragmented enough to need an
+        /// attribute list keeps the runs that no longer fit the base record in extension records;
+        /// with only the base record's runs the stream ended early ("do not cover the whole
+        /// $MFT") and the drive fell back to the folder walk. NTFS keeps those extension records
+        /// within the part the base record maps, so readRecord(index, baseRuns) can locate them.
+        /// </summary>
+        internal static (List<DataRun> Runs, ulong DataSize) MftDataRuns(byte[] baseRecord,
+            Func<long, IReadOnlyList<DataRun>, byte[]> readRecord, VolumeReader read, long bytesPerCluster)
+        {
+            var (baseRuns, dataSize) = MftDataRuns(baseRecord);
+            if (FindUnnamedAttributes(baseRecord, AttributeAttributeList).Count == 0)
+                return (baseRuns, dataSize);
+            var list = ReadAttributeValue(new[] { baseRecord }, AttributeAttributeList, read, bytesPerCluster);
+            if (list == null)
+                return (baseRuns, dataSize);
+
+            var records = new List<byte[]> { baseRecord };
+            foreach (var index in AttributeListRecords(list, AttributeData))
+            {
+                if (index == 0) continue;
+                records.Add(readRecord(index, baseRuns)
+                    ?? throw new InvalidDataException($"The $MFT extension record {index} cannot be read."));
+            }
+            if (records.Count == 1)
+                return (baseRuns, dataSize);
+
+            var extents = new List<(ulong StartVcn, List<DataRun> Runs)>();
+            foreach (var record in records)
+                foreach (var at in FindUnnamedAttributes(record, AttributeData))
+                {
+                    var length = (int)U32(record.AsSpan(at + 4));
+                    if (record[at + 8] == 0 || length < 64)
+                        throw new InvalidDataException("The $MFT data attribute is not non-resident.");
+                    var runOffset = (int)U16(record.AsSpan(at + 32));
+                    if (runOffset >= length)
+                        throw new InvalidDataException("The $MFT data runs are corrupt.");
+                    extents.Add((U64(record.AsSpan(at + 16)), DecodeDataRuns(record.AsSpan(at + runOffset, length - runOffset))));
+                }
+
+            // Extents chain by starting VCN; a gap or overlap means a list that cannot be trusted
+            var runs = new List<DataRun>();
+            var nextVcn = 0UL;
+            foreach (var (startVcn, extentRuns) in extents.OrderBy(x => x.StartVcn))
+            {
+                if (startVcn != nextVcn)
+                    throw new InvalidDataException("The $MFT data extents are not contiguous.");
+                foreach (var run in extentRuns)
+                {
+                    runs.Add(run);
+                    nextVcn = checked(nextVcn + run.Clusters);
+                }
+            }
+            return (runs, dataSize);
+        }
+
+        /// <summary>
+        /// Runs and data size of the first unnamed $DATA instance in the record (VCN 0 in a base record)
+        /// </summary>
         static (List<DataRun> Runs, ulong DataSize) MftDataRuns(ReadOnlySpan<byte> record)
         {
             var offset = (int)U16(record[20..]);
@@ -511,7 +574,7 @@ namespace search.Core
         static uint U32(ReadOnlySpan<byte> bytes) => BinaryPrimitives.ReadUInt32LittleEndian(bytes);
         static ulong U64(ReadOnlySpan<byte> bytes) => BinaryPrimitives.ReadUInt64LittleEndian(bytes);
 
-        sealed record DataRun(long Lcn, ulong Clusters, bool IsSparse);
+        internal sealed record DataRun(long Lcn, ulong Clusters, bool IsSparse);
 
         sealed class NativeVolume : IDisposable
         {
@@ -578,8 +641,12 @@ namespace search.Core
                     throw new InvalidDataException("This is not an NTFS disk.");
 
                 var bytesPerSector = BinaryPrimitives.ReadUInt16LittleEndian(boot.AsSpan(11));
-                var sectorsPerCluster = boot[13];
-                var bytesPerCluster = checked((ulong)bytesPerSector * sectorsPerCluster);
+                // Clusters above 64 KB (Windows 10 1709+) store the count as a negative power of two
+                var rawSectorsPerCluster = boot[13];
+                var sectorsPerCluster = rawSectorsPerCluster > 0x80
+                    ? 1 << (256 - rawSectorsPerCluster)
+                    : rawSectorsPerCluster;
+                var bytesPerCluster = checked((ulong)bytesPerSector * (ulong)sectorsPerCluster);
                 var mftStartLcn = BinaryPrimitives.ReadUInt64LittleEndian(boot.AsSpan(48));
                 var clustersPerMftRecord = boot[64];
                 var bytesPerMftRecord = clustersPerMftRecord >= 128
