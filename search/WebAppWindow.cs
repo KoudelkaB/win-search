@@ -50,6 +50,13 @@ namespace search
         static volatile bool handoffUnsupported;
 
         /// <summary>
+        /// The pages are styled for a browser (16 px text); this brings them close to the 12 px
+        /// UI of the main window, leaving more of the window to the file content.
+        /// Ctrl+wheel changes it and the choice is kept per app (see ZoomStore).
+        /// </summary>
+        internal const double DefaultZoom = 0.8;
+
+        /// <summary>
         /// One browser environment (and user data folder) shared by all windows. The default
         /// data folder sits next to the exe, which is not writable under Program Files.
         /// </summary>
@@ -166,6 +173,8 @@ namespace search
                 environment ??= CoreWebView2Environment.CreateAsync(null, UserDataPaths.For("WebView2"));
                 await view.EnsureCoreWebView2Async(await environment);
                 core = view.CoreWebView2;
+                view.ZoomFactor = ZoomStore.Load(page);
+                view.ZoomFactorChanged += (_, __) => ZoomStore.Save(page, view.ZoomFactor);
                 core.SetVirtualHostNameToFolderMapping(HostName,
                     Path.Combine(AppContext.BaseDirectory, "WebApps"), CoreWebView2HostResourceAccessKind.Deny);
                 await core.AddScriptToExecuteOnDocumentCreatedAsync(FileHandoffScript);
@@ -249,6 +258,41 @@ namespace search
             {
                 // Not a handoff report - the page itself never posts to the host
             }
+        }
+    }
+
+    /// <summary>
+    /// Zoom chosen with Ctrl+wheel in each web app, e.g. {"LogExplorer.html":0.8}
+    /// </summary>
+    internal static class ZoomStore
+    {
+        static readonly string Path = UserDataPaths.For("webapp-zoom.json");
+        static readonly object gate = new();
+
+        public static double Load(string page)
+        {
+            lock (gate)
+                return Read().TryGetValue(page, out var zoom) && zoom is >= 0.25 and <= 5 ? zoom : WebAppWindow.DefaultZoom;
+        }
+
+        public static void Save(string page, double zoom)
+        {
+            lock (gate)
+            {
+                try
+                {
+                    var all = Read();
+                    all[page] = Math.Round(zoom, 2);
+                    File.WriteAllText(Path, JsonSerializer.Serialize(all));
+                }
+                catch (Exception e) { $"saving web app zoom failed: {e.Message}".Debug(); }
+            }
+        }
+
+        static Dictionary<string, double> Read()
+        {
+            try { return JsonSerializer.Deserialize<Dictionary<string, double>>(File.ReadAllText(Path)) ?? new(); }
+            catch { return new(); }
         }
     }
 }
