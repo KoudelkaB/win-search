@@ -26,6 +26,12 @@ namespace search
         public Func<IEnumerable<string>> SuggestionList { get; set; }
 
         /// <summary>
+        /// Select the first suggestion while typing, so Enter takes it. For a box that applies
+        /// its text as typed (filter); where Enter uses the typed text (search) it stays off.
+        /// </summary>
+        public bool SelectFirstSuggestion { get; set; }
+
+        /// <summary>
         /// Callback to delete an item from the suggestion list
         /// </summary>
         public Action<string> DeleteItem { get; set; }
@@ -133,7 +139,9 @@ namespace search
                     if (string.IsNullOrWhiteSpace(text)) CloseList();
                     else if (autoList.Items.Count > 0 && TextBox.IsKeyboardFocusWithin)
                     {
-                        autoList.SelectedIndex = 0; // Select first item automatically
+                        // Unless SelectFirstSuggestion, only offer - Enter keeps the typed text until
+                        // a suggestion is chosen with the arrows (Down selects the first one)
+                        autoList.SelectedIndex = SelectFirstSuggestion ? 0 : -1;
                         OpenList();
                     }
                     else CloseList(); // No suggestions => do not show an empty popup
@@ -244,11 +252,7 @@ namespace search
                     }
                     break;
                 case Key.Return:
-                    if (autoList.IsVisible)
-                    {
-                        autoList_Clicked(null, null);
-                        e.Handled = true;
-                    }
+                    if (AcceptSuggestion()) e.Handled = true;
                     break;
                 case Key.Delete:
                     if (autoList.IsVisible && autoList.SelectedItem != null && DeleteItem != null)
@@ -285,6 +289,19 @@ namespace search
                     }
                     break;
             }
+        }
+
+        /// <summary>
+        /// Take the suggestion chosen in the open list as the text and close the list.
+        /// False when no suggestion was chosen - the typed text stays.
+        /// </summary>
+        public bool AcceptSuggestion()
+        {
+            if (!autoList.IsVisible) return false;
+            var chosen = autoList.SelectedItem != null;
+            autoList_Clicked(null, null);
+            CloseList(); // Also when nothing was chosen - the list must not outlive the key
+            return chosen;
         }
 
         private void autoList_Clicked(object sender, MouseButtonEventArgs e)

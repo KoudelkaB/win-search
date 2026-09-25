@@ -110,10 +110,20 @@ namespace search
                 const shown = id => { const e = document.getElementById(id); return e && getComputedStyle(e).display !== 'none'; };
                 const until = async test => { for (let i = 0; i < 1200 && !test(); i++) await new Promise(r => setTimeout(r, 50)); };
                 const transfer = files => { const dt = new DataTransfer(); files.forEach(f => dt.items.add(f)); return dt; };
+                // A File is a snapshot: reading it fails once the file changes on disk (a log being
+                // written). Take the content at once and retry with a fresh snapshot a few times.
+                const read = async h => {
+                    for (let attempt = 1; ; attempt++) {
+                        const file = await h.getFile();
+                        try { return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified }); }
+                        catch (error) { if (attempt >= 5 || error.name !== 'NotReadableError') throw error; }
+                        await new Promise(r => setTimeout(r, 50 * attempt));
+                    }
+                };
                 chrome.webview.addEventListener('message', async e => {
                     const m = e.data || {};
                     const handles = Array.from(e.additionalObjects || []);
-                    const results = await Promise.allSettled(handles.map(h => Promise.resolve().then(() => h.getFile())));
+                    const results = await Promise.allSettled(handles.map(h => Promise.resolve().then(() => read(h))));
                     const files = [], paths = [], failed = [];
                     results.forEach((r, index) => r.status === 'fulfilled'
                         ? (files.push(r.value), paths.push(((m.logExplorer || {}).paths || [])[index]))

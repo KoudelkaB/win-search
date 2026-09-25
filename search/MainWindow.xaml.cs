@@ -140,6 +140,7 @@ namespace search
                 PrewarmWebAppsAfterLoad();
             }, DispatcherPriority.ApplicationIdle);
             ShowSortIndicator(Models.SearchModel.DefaultSort);
+            filterTextBox.SelectFirstSuggestion = true; // The filter applies as typed, Enter picks the top one
             filterTextBox.SuggestionList = () => Keyboard.Modifiers == ModifierKeys.Control ? filters.LastUsed : filters.MostUsed;
             filterTextBox.TextSelected += t => filters.Add2History(filterTextBox.Text);
             filterTextBox.DeleteItem = item => filters.Delete(item);
@@ -1593,7 +1594,13 @@ namespace search
             switch (e.Key)
             {
                 case Key.Enter:
-                    // Start searching on Enter
+                    // Start searching on Enter and hand the keyboard to the results, so the
+                    // following keys (G = show in files, ...) are commands, not search text.
+                    // Handling the key keeps it from the inner text box, so a suggestion
+                    // chosen from the history is taken here first.
+                    findTextBox.AcceptSuggestion();
+                    e.Handled = true;
+                    filesView.Focus();
                     await StartSearching();
                     break;
                 default:
@@ -1612,6 +1619,8 @@ namespace search
                     filesView.Focus(); // Usually done by mouse
                     break;
                 case Key.Enter:
+                    // A filter chosen from the history applies before the search starts
+                    filterTextBox.AcceptSuggestion();
                     await StartSearching();
                     break;
             }

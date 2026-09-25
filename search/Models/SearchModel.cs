@@ -73,6 +73,26 @@ namespace search.Models
     }
 
     /// <summary>
+    /// The newest of a series of tasks where a later one supersedes the earlier (the filter/sort
+    /// updates). Settled once the newest known one has finished, whatever it ended with.
+    /// </summary>
+    internal sealed class LatestWork
+    {
+        volatile Task latest = Task.CompletedTask;
+
+        public Task Track(Task work) => latest = work;
+
+        public async Task Settled()
+        {
+            for (var pending = latest; !pending.IsCompleted; pending = latest)
+            {
+                try { await pending; }
+                catch { } // Reported by whoever started it - only its end matters here
+            }
+        }
+    }
+
+    /// <summary>
     /// Thread-safe one-shot action used to release startup work after the first rendered frame.
     /// Dispose can cancel it before the dispatcher callback runs, and duplicate window events
     /// can never start filesystem processing twice.
@@ -478,7 +498,15 @@ namespace search.Models
         }
 
         public Task Update(string newFilter = null, string newSort = null)
-            => UpdateCore(newFilter, newSort, healthRecovery: false, skipDataDebounce: false);
+        {
+            var update = UpdateCore(newFilter, newSort, healthRecovery: false, skipDataDebounce: false);
+            return (newFilter ?? newSort) == null ? update : userUpdates.Track(update);
+        }
+
+        /// <summary>
+        /// Filter/sort changes - Items follow one only after its debounced update publishes them
+        /// </summary>
+        readonly LatestWork userUpdates = new();
 
         async Task UpdateCore(string newFilter, string newSort, bool healthRecovery, bool skipDataDebounce)
         {
@@ -2308,6 +2336,11 @@ namespace search.Models
                 Searching = false;
                 return;
             }
+
+            // A filter changed just before (Enter taking a filter from the history) - search the
+            // files it shows, not those of the previous filter still on the grid
+            await userUpdates.Settled();
+            if (thisFind.IsCancellationRequested) return;
 
             // Snapshot on the calling (UI) thread - Items can be exchanged/appended during the search
             var nodes = Items.Where(x => !x.IsDirectory).ToArray();
