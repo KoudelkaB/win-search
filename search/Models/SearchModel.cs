@@ -2212,6 +2212,21 @@ namespace search.Models
         /// <returns></returns>
         public bool? FoundIn(INode n) => searched.TryGetValue(n, out var v) ? v : null;
 
+        /// <summary>
+        /// Files containing the searched text in list order, followed by those beyond the result
+        /// window (a capped list is searched as a whole) ordered by path
+        /// </summary>
+        public INode[] FoundFiles() => FoundFiles(Items, searched);
+
+        internal static INode[] FoundFiles(IEnumerable<INode> items, IEnumerable<KeyValuePair<INode, bool?>> results)
+        {
+            var found = results.Where(x => x.Value == true && !x.Key.IsDirectory).Select(x => x.Key)
+                .ToHashSet(ReferenceEqualityComparer.Instance);
+            var shown = items.Where(found.Contains).ToArray();
+            found.ExceptWith(shown);
+            return shown.Concat(found.Cast<INode>().OrderBy(n => n.FullName, StringComparer.OrdinalIgnoreCase)).ToArray();
+        }
+
         // Keyed by node identity - result rows are the same instances, and no path strings are held
         NonBlocking.ConcurrentDictionary<INode, bool?> searched = new();
 

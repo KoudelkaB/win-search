@@ -20,13 +20,26 @@ jobs:
           submodules: true
 
       # The H (Hex editor) and L (Log explorer) pages ship inside the installer. Release with
-      # the latest upstream apps rather than the commit pinned in this repository.
+      # the latest upstream apps rather than the commit pinned in this repository - but never
+      # with an older one: the app relies on what the pinned commit provides (the Log explorer
+      # embedding API for full paths, the load mode and the Show in files filter), so an
+      # upstream branch that does not contain it yet fails the release instead of shipping
+      # pages that silently ignore those options.
       - name: Update web apps to latest singleHtmlApps
         shell: pwsh
         run: |
+          $pinned = (git ls-tree HEAD external/singleHtmlApps).Split()[2]
+          if ((git -C external/singleHtmlApps rev-parse --is-shallow-repository) -eq 'true') {
+            git -C external/singleHtmlApps fetch --unshallow origin
+          }
           git submodule update --init --remote external/singleHtmlApps
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git -C external/singleHtmlApps log -1 --format="Using singleHtmlApps %H (%cs) %s"
+          git -C external/singleHtmlApps merge-base --is-ancestor $pinned HEAD
+          if ($LASTEXITCODE) {
+            Write-Error "singleHtmlApps upstream does not contain the pinned commit $pinned - merge it upstream before releasing"
+            exit 1
+          }
 
       - uses: actions/setup-dotnet@v5
         with:

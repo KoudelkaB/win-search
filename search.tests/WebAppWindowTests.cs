@@ -80,6 +80,22 @@ namespace search.Tests
         }
 
         [Fact]
+        public void ShowInFilesTakesMatchesBeyondTheResultWindowToo()
+        {
+            INode shownMatch = File("z.log", 1), shownMiss = File("y.log", 1), beyondB = File("b.log", 1), beyondA = File("a.log", 1);
+            var results = new System.Collections.Generic.Dictionary<INode, bool?>
+            {
+                [beyondB] = true, [shownMiss] = false, [shownMatch] = true, [beyondA] = true
+            };
+
+            var found = SearchModel.FoundFiles(new[] { shownMiss, shownMatch }, results);
+
+            // Shown rows keep the list order, the rest follow by path
+            Assert.Equal(new[] { shownMatch, beyondA, beyondB }, found);
+            Assert.Empty(SearchModel.FoundFiles(new[] { shownMatch }, new System.Collections.Generic.Dictionary<INode, bool?>()));
+        }
+
+        [Fact]
         public void PagesOpenInTheApplicationLanguage()
         {
             var previous = System.Globalization.CultureInfo.CurrentUICulture;

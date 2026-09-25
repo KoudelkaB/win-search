@@ -1727,11 +1727,10 @@ namespace search
                    Title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
 
         /// <summary>
-        /// Files of the list containing the searched text (green rows)
+        /// Select the shown files containing the searched text (green rows) - rows beyond the
+        /// result window cannot be selected
         /// </summary>
-        INode[] FoundFiles() => Items.Where(n => !n.IsDirectory && Model.FoundIn(n) == true).ToArray();
-
-        void SelectFound() => filesView.Select(FoundFiles());
+        void SelectFound() => filesView.Select(Items.Where(n => !n.IsDirectory && Model.FoundIn(n) == true));
 
         /// <summary>
         /// Open the files containing the searched text in one Log explorer window, appended and
@@ -1739,7 +1738,7 @@ namespace search
         /// </summary>
         async Task ShowInFiles()
         {
-            var found = FoundFiles();
+            var found = Model.FoundFiles();
             var query = Model.LastFind;
             if (found.Length == 0 || query == null)
             {
