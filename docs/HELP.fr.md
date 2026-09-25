@@ -82,6 +82,8 @@ Couleurs des résultats après une recherche dans le contenu :
 - Noir : l’élément n’a pas été recherché ou la recherche a été effacée.
 - Bleu : dossier.
 
+**Afficher dans les fichiers** (`G` dans la liste des résultats) ouvre toutes les lignes vertes dans une fenêtre de l'explorateur de journaux, réunies dans une seule vue et filtrées sur les lignes contenant le texte recherché.
+
 Saisir autre chose que `Enter` dans le champ de recherche efface l’état actuel des résultats de la recherche dans le contenu.
 
 ## Actions à la souris
@@ -169,7 +171,8 @@ Commandes courantes :
 - `X` : couper les éléments sélectionnés dans le presse-papiers.
 - `D` : comparer dans l’outil de comparaison configuré. Disponible uniquement avec exactement deux éléments sélectionnés.
 - `H` : ouvrir un fichier dans l’éditeur hexadécimal intégré ou comparer deux fichiers. Fonctionne hors ligne.
-- `L` : ouvrir les fichiers sélectionnés dans le Log Explorer intégré. Fonctionne hors ligne.
+- `L` : ouvrir les fichiers sélectionnés dans le Log Explorer intégré. Fonctionne hors ligne. Demande d’abord confirmation si les fichiers dépassent 100 Mo au total ou sont plus de 500, car le Log Explorer les garde en mémoire.
+- `G` : afficher dans les fichiers — ouvrir les fichiers contenant le texte recherché (lignes vertes) dans une fenêtre de l'explorateur de journaux, mis bout à bout et filtrés sur les lignes contenant ce texte. Également le bouton **Afficher dans les fichiers** à côté de l'option de casse et le menu contextuel.
 - `V` : coller les fichiers du presse-papiers dans les dossiers sélectionnés ou parents.
 - `O` : ouvrir les éléments sélectionnés dans une autre application.
 - `A` : ouvrir les éléments sélectionnés en tant qu’administrateur.
@@ -225,7 +228,7 @@ Commandes de sélection après `S` :
 - `D` : sélectionner les répertoires.
 - `F` : sélectionner les fichiers.
 - `I` : inverser la sélection.
-- `G` : sélectionner les lignes vertes.
+- `G` : sélectionner les fichiers trouvés (lignes vertes). Aussi **Sélectionner les fichiers trouvés** dans le menu contextuel.
 - `R` : sélectionner les lignes rouges.
 - `B` : sélectionner les lignes noires.
 

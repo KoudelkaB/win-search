@@ -82,6 +82,8 @@ Cores dos resultados após uma pesquisa no conteúdo:
 - Preto: o item não foi pesquisado ou a pesquisa foi limpa.
 - Azul: pasta.
 
+**Mostrar nos arquivos** (`G` na lista de resultados) abre todas as linhas verdes em uma janela do explorador de logs, concatenadas em uma única exibição e filtradas às linhas que contêm o texto pesquisado.
+
 Digitar qualquer coisa que não seja `Enter` no campo de pesquisa limpa o estado atual dos resultados da pesquisa no conteúdo.
 
 ## Ações com o mouse
@@ -169,7 +171,8 @@ Comandos comuns:
 - `X`: recortar os itens selecionados para a área de transferência.
 - `D`: comparar na ferramenta de comparação configurada. Disponível apenas com exatamente dois itens selecionados.
 - `H`: abrir um arquivo no editor hexadecimal integrado ou comparar dois arquivos. Funciona offline.
-- `L`: abrir os arquivos selecionados no Log Explorer integrado. Funciona offline.
+- `L`: abrir os arquivos selecionados no Log Explorer integrado. Funciona offline. Pergunta antes quando os arquivos somam mais de 100 MB ou passam de 500, porque o Log Explorer mantém tudo na memória.
+- `G`: mostrar nos arquivos — abrir os arquivos que contêm o texto pesquisado (linhas verdes) em uma janela do explorador de logs, concatenados e filtrados às linhas com o texto. Também o botão **Mostrar nos arquivos** ao lado da opção de maiúsculas e o menu de contexto.
 - `V`: colar os arquivos da área de transferência nas pastas selecionadas ou nas pastas pai.
 - `O`: abrir os itens selecionados em outro aplicativo.
 - `A`: abrir os itens selecionados como administrador.
@@ -225,7 +228,7 @@ Comandos de seleção após `S`:
 - `D`: selecionar diretórios.
 - `F`: selecionar arquivos.
 - `I`: inverter a seleção.
-- `G`: selecionar linhas verdes.
+- `G`: selecionar arquivos encontrados (linhas verdes). Também **Selecionar arquivos encontrados** no menu de contexto.
 - `R`: selecionar linhas vermelhas.
 - `B`: selecionar linhas pretas.
 

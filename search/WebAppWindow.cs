@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -7,6 +8,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -17,8 +20,8 @@ namespace search
     /// exe (from the external/singleHtmlApps submodule, https://github.com/KoudelkaB/singleHtmlApps) in WebView2.
     /// Pages are served from a virtual https host mapped to the local folder, so they need no
     /// network and keep their localStorage (Log explorer profiles) between runs. The selected
-    /// files reach the page as FileSystemFileHandles and are handed to the page's own file input
-    /// or drop handler - the HTML files stay unmodified copies of the upstream apps.
+    /// files reach the page as FileSystemFileHandles and are handed to the page's own file input,
+    /// drop handler or embedding API - the HTML files stay unmodified copies of the upstream apps.
     /// </summary>
     internal sealed class WebAppWindow : Window
     {
@@ -52,7 +55,7 @@ namespace search
         /// <summary>
         /// The pages are styled for a browser (16 px text); this brings them close to the 12 px
         /// UI of the main window, leaving more of the window to the file content.
-        /// Ctrl+wheel changes it and the choice is kept per app (see ZoomStore).
+        /// Ctrl+wheel changes it and the choice is kept per app with the window size (WebAppLayoutStore).
         /// </summary>
         internal const double DefaultZoom = 0.8;
 
@@ -63,13 +66,43 @@ namespace search
         static Task<CoreWebView2Environment> environment;
 
         /// <summary>
+        /// A hidden WebView kept for the whole session. Starting the WebView2 browser process
+        /// took seconds, and it ended again with the last window - so the first window of every
+        /// batch opened blank. While this one lives the process stays up and windows open at once.
+        /// </summary>
+        static CoreWebView2Controller warmController;
+
+        /// <summary>
+        /// Start the browser process in the background (see warmController). Does nothing without
+        /// a usable runtime; a failure only leaves the first window slower.
+        /// </summary>
+        internal static async void Prewarm(Window host)
+        {
+            if (warmController != null || !IsAvailable) return;
+            try
+            {
+                environment ??= CoreWebView2Environment.CreateAsync(null, UserDataPaths.For("WebView2"));
+                var controller = await (await environment).CreateCoreWebView2ControllerAsync(new WindowInteropHelper(host).EnsureHandle());
+                controller.IsVisible = false;
+                warmController = controller;
+            }
+            catch (Exception e)
+            {
+                if (environment?.IsFaulted == true) environment = null;
+                $"WebView2 prewarm failed: {e.Message}".Debug();
+            }
+        }
+
+        /// <summary>
         /// Runs in every page before its own scripts. Waits for the host message and feeds the
         /// readable files to the page the way a user would; unreadable ones are reported back
         /// as {failed:[{index,error}]} and do not block the rest.
         /// "inputs" - one file per &lt;input type=file&gt;; "after" delays a step until that
         ///            element is shown (Hex editor resets the comparison pane while loading
         ///            the first file, so the second one must wait for it);
-        /// "drop"   - all files in one drop event on the document (Log explorer multi-file input).
+        /// "drop"   - all files in one drop event on the document (Log explorer multi-file input);
+        /// "logExplorer" - options for window.logExplorer.open(files, options) of the page (full
+        ///            paths, combine mode and a starting filter), the drop is the fallback without it.
         /// </summary>
         const string FileHandoffScript = """
             (() => {
@@ -81,12 +114,16 @@ namespace search
                     const m = e.data || {};
                     const handles = Array.from(e.additionalObjects || []);
                     const results = await Promise.allSettled(handles.map(h => Promise.resolve().then(() => h.getFile())));
-                    const files = [], failed = [];
+                    const files = [], paths = [], failed = [];
                     results.forEach((r, index) => r.status === 'fulfilled'
-                        ? files.push(r.value)
+                        ? (files.push(r.value), paths.push(((m.logExplorer || {}).paths || [])[index]))
                         : failed.push({ index, error: String((r.reason && (r.reason.message || r.reason.name)) || r.reason) }));
                     if (failed.length) chrome.webview.postMessage({ failed });
                     if (!files.length) return;
+                    if (m.logExplorer && window.logExplorer) {
+                        await window.logExplorer.open(files, { ...m.logExplorer, paths });
+                        return;
+                    }
                     if (m.drop) {
                         document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer(files) }));
                         return;
@@ -107,6 +144,8 @@ namespace search
         readonly Border noticeBar;
         readonly string page;
         readonly string[] files;
+        readonly LogExplorerLoad load;
+        readonly DispatcherTimer saveLayout;
 
         /// <summary>
         /// The installed runtime can host the apps with the selected files loaded
@@ -120,24 +159,36 @@ namespace search
         public static bool IsWebApp(string app) => app is Apps.LogExplorer or Apps.HexEditor;
 
         /// <summary>
-        /// Show the app in a new window with the files loaded
+        /// Show the app in a new window with the files loaded. Log explorer takes them as one
+        /// appended source with the filter when load is given, otherwise it asks how to combine them.
         /// </summary>
-        public static void Open(string page, string[] files) => new WebAppWindow(page, files).Show();
+        public static void Open(string page, string[] files, LogExplorerLoad load = null)
+            => new WebAppWindow(page, files, load).Show();
 
         /// <summary>
         /// Problem shown above the page, null while there is none
         /// </summary>
         internal string NoticeText => noticeBar.Visibility == Visibility.Visible ? notice.Text : null;
 
-        WebAppWindow(string page, string[] files)
+        WebAppWindow(string page, string[] files, LogExplorerLoad load)
         {
             this.page = page;
             this.files = files;
+            this.load = load;
             Title = TitleFor(null);
             Icon = Application.Current?.MainWindow?.Icon;
-            Width = 1280;
-            Height = 860;
+            var layout = WebAppLayoutStore.Load(page);
+            var workArea = SystemParameters.WorkArea;
+            Width = Math.Min(layout.Width is > 200 ? layout.Width : 1280, workArea.Width);
+            Height = Math.Min(layout.Height is > 150 ? layout.Height : 860, workArea.Height);
+            if (layout.Maximized) WindowState = WindowState.Maximized;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            // Kept on every resize, not only on close - the main window can end the process first
+            saveLayout = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background,
+                (_, __) => SaveLayout(), Dispatcher) { IsEnabled = false };
+            SizeChanged += (_, __) => LayoutChanged();
+            StateChanged += (_, __) => LayoutChanged();
+            Closing += (_, __) => { if (saveLayout.IsEnabled) SaveLayout(); };
             notice.SetResourceReference(TextBlock.ForegroundProperty, SystemColors.InfoTextBrushKey);
             noticeBar = new Border { Child = notice, Visibility = Visibility.Collapsed };
             noticeBar.SetResourceReference(Border.BackgroundProperty, SystemColors.InfoBrushKey);
@@ -150,14 +201,62 @@ namespace search
             Closed += (_, __) => view.Dispose();
         }
 
-        string TitleFor(string documentTitle) => string.Join(" - ",
-            files.Select(Path.GetFileName).Append(string.IsNullOrWhiteSpace(documentTitle)
+        void LayoutChanged()
+        {
+            saveLayout.Stop();
+            if (IsLoaded) saveLayout.Start(); // Not for the size set while opening
+        }
+
+        void SaveLayout()
+        {
+            saveLayout.Stop();
+            if (WindowState == WindowState.Minimized) return; // Would forget that it was maximized
+            var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+            if (bounds.IsEmpty) return;
+            WebAppLayoutStore.Update(page, layout =>
+            {
+                layout.Width = Math.Round(bounds.Width);
+                layout.Height = Math.Round(bounds.Height);
+                layout.Maximized = WindowState == WindowState.Maximized;
+            });
+        }
+
+        /// <summary>
+        /// The file names (the first few when there are many) and the page title
+        /// </summary>
+        string TitleFor(string documentTitle)
+        {
+            var names = files.Select(Path.GetFileName);
+            if (files.Length > 4) names = names.Take(3).Append($"+{files.Length - 3}");
+            return string.Join(" - ", names.Append(string.IsNullOrWhiteSpace(documentTitle)
                 ? Path.GetFileNameWithoutExtension(page)
                 : documentTitle));
+        }
 
-        string Message => page == Apps.HexEditor
+        string Message => MessageFor(page, files, load);
+
+        /// <summary>
+        /// The host message telling FileHandoffScript how to hand the files to the page. Log
+        /// explorer gets their full paths too - a browser File carries only the name.
+        /// </summary>
+        internal static string MessageFor(string page, string[] files, LogExplorerLoad load) => page == Apps.HexEditor
             ? """{"inputs":[{"id":"file-input-1"},{"id":"file-input-2","after":"main-content"}]}"""
-            : """{"drop":true}""";
+            : JsonSerializer.Serialize(new
+            {
+                drop = true,
+                logExplorer = new
+                {
+                    paths = files,
+                    combine = load == null ? null : "append",
+                    filter = string.IsNullOrEmpty(load?.Filter) ? null : new { text = load.Filter, caseSensitive = load.CaseSensitive }
+                }
+            });
+
+        /// <summary>
+        /// The page in the UI language of the application (Log explorer is localized)
+        /// </summary>
+        internal static string UrlFor(string page)
+            => Origin + page + "?lang=" + Uri.EscapeDataString(CultureInfo.CurrentUICulture.Name);
 
         void ShowNotice(string text)
         {
@@ -173,8 +272,9 @@ namespace search
                 environment ??= CoreWebView2Environment.CreateAsync(null, UserDataPaths.For("WebView2"));
                 await view.EnsureCoreWebView2Async(await environment);
                 core = view.CoreWebView2;
-                view.ZoomFactor = ZoomStore.Load(page);
-                view.ZoomFactorChanged += (_, __) => ZoomStore.Save(page, view.ZoomFactor);
+                view.ZoomFactor = WebAppLayoutStore.Load(page).Zoom;
+                view.ZoomFactorChanged += (_, __) =>
+                    WebAppLayoutStore.Update(page, layout => layout.Zoom = Math.Round(view.ZoomFactor, 2));
                 core.SetVirtualHostNameToFolderMapping(HostName,
                     Path.Combine(AppContext.BaseDirectory, "WebApps"), CoreWebView2HostResourceAccessKind.Deny);
                 await core.AddScriptToExecuteOnDocumentCreatedAsync(FileHandoffScript);
@@ -219,7 +319,7 @@ namespace search
                 }
                 view.Focus();
             };
-            core.Navigate(Origin + page);
+            core.Navigate(UrlFor(page));
         }
 
         /// <summary>
@@ -262,36 +362,59 @@ namespace search
     }
 
     /// <summary>
-    /// Zoom chosen with Ctrl+wheel in each web app, e.g. {"LogExplorer.html":0.8}
+    /// What a Log explorer window starts with: the files appended as one source, filtered to
+    /// the lines containing Filter (none when empty)
     /// </summary>
-    internal static class ZoomStore
+    internal sealed record LogExplorerLoad(string Filter, bool CaseSensitive);
+
+    /// <summary>
+    /// Zoom and window size of one web app, kept when the user changes them
+    /// </summary>
+    internal sealed class WebAppLayout
     {
-        static readonly string Path = UserDataPaths.For("webapp-zoom.json");
+        public double Zoom { get; set; } = WebAppWindow.DefaultZoom;
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public bool Maximized { get; set; }
+    }
+
+    /// <summary>
+    /// WebAppLayout per app page, e.g. {"LogExplorer.html":{"Zoom":0.8,"Width":1280,...}}
+    /// </summary>
+    internal static class WebAppLayoutStore
+    {
+        static readonly string Path = UserDataPaths.For("webapp-windows.json");
         static readonly object gate = new();
 
-        public static double Load(string page)
+        public static WebAppLayout Load(string page)
         {
             lock (gate)
-                return Read().TryGetValue(page, out var zoom) && zoom is >= 0.25 and <= 5 ? zoom : WebAppWindow.DefaultZoom;
+            {
+                var layout = Read().GetValueOrDefault(page) ?? new WebAppLayout();
+                if (layout.Zoom is < 0.25 or > 5) layout.Zoom = WebAppWindow.DefaultZoom;
+                return layout;
+            }
         }
 
-        public static void Save(string page, double zoom)
+        public static void Update(string page, Action<WebAppLayout> change)
         {
             lock (gate)
             {
                 try
                 {
                     var all = Read();
-                    all[page] = Math.Round(zoom, 2);
+                    var layout = all.GetValueOrDefault(page) ?? new WebAppLayout();
+                    change(layout);
+                    all[page] = layout;
                     File.WriteAllText(Path, JsonSerializer.Serialize(all));
                 }
-                catch (Exception e) { $"saving web app zoom failed: {e.Message}".Debug(); }
+                catch (Exception e) { $"saving web app layout failed: {e.Message}".Debug(); }
             }
         }
 
-        static Dictionary<string, double> Read()
+        static Dictionary<string, WebAppLayout> Read()
         {
-            try { return JsonSerializer.Deserialize<Dictionary<string, double>>(File.ReadAllText(Path)) ?? new(); }
+            try { return JsonSerializer.Deserialize<Dictionary<string, WebAppLayout>>(File.ReadAllText(Path)) ?? new(); }
             catch { return new(); }
         }
     }

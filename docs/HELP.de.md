@@ -82,6 +82,8 @@ Ergebnisfarben nach einer Inhaltssuche:
 - Schwarz: das Element wurde nicht durchsucht oder die Suche wurde zurückgesetzt.
 - Blau: Ordner.
 
+**In Dateien anzeigen** (`G` in der Ergebnisliste) öffnet alle grünen Zeilen in einem Log-Explorer-Fenster, zu einer Ansicht aneinandergehängt und auf die Zeilen mit dem gesuchten Text gefiltert.
+
 Jede andere Eingabe als `Enter` im Suchfeld setzt den aktuellen Ergebniszustand der Inhaltssuche zurück.
 
 ## Mausaktionen
@@ -169,7 +171,8 @@ Häufige Befehle:
 - `X`: ausgewählte Elemente in die Zwischenablage ausschneiden.
 - `D`: im konfigurierten Vergleichswerkzeug vergleichen. Nur verfügbar, wenn genau zwei Elemente ausgewählt sind.
 - `H`: eine Datei im integrierten Hex-Editor öffnen oder zwei Dateien vergleichen. Funktioniert offline.
-- `L`: ausgewählte Dateien im integrierten Log Explorer öffnen. Funktioniert offline.
+- `L`: ausgewählte Dateien im integrierten Log Explorer öffnen. Funktioniert offline. Fragt vorher nach, wenn die Dateien zusammen mehr als 100 MB haben oder mehr als 500 sind, weil der Log Explorer alles im Speicher hält.
+- `G`: in Dateien anzeigen — die Dateien mit dem gesuchten Text (grüne Zeilen) in einem Log-Explorer-Fenster öffnen, aneinandergehängt und auf die Zeilen mit dem Text gefiltert. Ebenso die Schaltfläche **In Dateien anzeigen** neben der Groß-/Kleinschreibungsoption und das Kontextmenü.
 - `V`: Dateien aus der Zwischenablage in die ausgewählten oder übergeordneten Ordner einfügen.
 - `O`: ausgewählte Elemente in einer anderen Anwendung öffnen.
 - `A`: ausgewählte Elemente als Administrator öffnen.
@@ -225,7 +228,7 @@ Auswahlbefehle nach `S`:
 - `D`: Verzeichnisse auswählen.
 - `F`: Dateien auswählen.
 - `I`: Auswahl umkehren.
-- `G`: grüne Zeilen auswählen.
+- `G`: gefundene Dateien auswählen (grüne Zeilen). Auch **Gefundene Dateien auswählen** im Kontextmenü.
 - `R`: rote Zeilen auswählen.
 - `B`: schwarze Zeilen auswählen.
 

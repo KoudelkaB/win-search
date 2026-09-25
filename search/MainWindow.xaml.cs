@@ -133,6 +133,12 @@ namespace search
             //not grid application, owning the startup red interval.
             DataContext = new Models.SearchModel(startFileSystem: false);
             ContentRendered += StartFileSystemAfterFirstRender;
+            // The runtime check reads the installed WebView2 version - kept off the first render
+            ContentRendered += (_, __) => Dispatcher.BeginInvoke(() =>
+            {
+                showInFilesButton.Visibility = WebAppWindow.IsAvailable ? Visibility.Visible : Visibility.Collapsed;
+                PrewarmWebAppsAfterLoad();
+            }, DispatcherPriority.ApplicationIdle);
             ShowSortIndicator(Models.SearchModel.DefaultSort);
             filterTextBox.SuggestionList = () => Keyboard.Modifiers == ModifierKeys.Control ? filters.LastUsed : filters.MostUsed;
             filterTextBox.TextSelected += t => filters.Add2History(filterTextBox.Text);
@@ -214,6 +220,7 @@ namespace search
                     async (n,a) => await Open(Apps.HexEditor, n.ToArray())),
                 (Key.L, "Log explorer", n => n.AtLeast(1) && WebAppWindow.IsAvailable,
                     async (n,a) => await Open(Apps.LogExplorer, Model.ToTextNodes(n.ToArray()).ToArray())),
+                (Key.G, "Show in files", n => Model.HasFound && WebAppWindow.IsAvailable, async (n,a) => await ShowInFiles()),
                 (Key.Enter, "Filter folders", async (n,a)=> await FilterFolders(n.ToArray())),
                 (Key.Delete, "Delete", async (n,a)=>await Delete(n)),
                 (Key.C, "Copy", (n,a) => Copy(n,a), new CommandTree[] {
@@ -239,7 +246,7 @@ namespace search
                     (Key.D, "Directories", (n,a) => filesView.Select(Items.Where(n => n.IsDirectory))),
                     (Key.F, "Files",  (n,a) => filesView.Select(Items.Where(n => !n.IsDirectory))),
                     (Key.I, "Invert selection", (n,a) => InvertSelection()),
-                    (Key.G, "Green rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == true))),
+                    (Key.G, "Found files (green rows)", (n,a) => SelectFound()),
                     (Key.R, "Red rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == false))),
                     (Key.B, "Black rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == null))),
                 }),
@@ -405,6 +412,19 @@ namespace search
                 //Off-screen rows need nothing: virtualization binds them when realized.
                 foreach (var row in rows.ToArray()) RefreshRow(row, inlineRenameNode);
             });
+        }
+
+        /// <summary>
+        /// Start the WebView2 browser process once the first index load is done - it never
+        /// competes with the MFT read, and the first Log explorer window skips the cold start
+        /// </summary>
+        async void PrewarmWebAppsAfterLoad()
+        {
+            var waited = Stopwatch.StartNew();
+            // Loading turns on only after the first render - give it a moment before trusting "false"
+            while (waited.Elapsed < TimeSpan.FromSeconds(60) && (waited.Elapsed < TimeSpan.FromSeconds(3) || Model?.Loading == true))
+                await Task.Delay(500);
+            if (IsLoaded) WebAppWindow.Prewarm(this);
         }
 
         void StartFileSystemAfterFirstRender(object sender, EventArgs e)
@@ -1653,7 +1673,7 @@ namespace search
         /// </summary>
         /// <param name="n"></param>
         /// <returns></returns>
-        async Task Open(string path, INode[] nodes, bool asAdmin = false)
+        async Task Open(string path, INode[] nodes, bool asAdmin = false, LogExplorerLoad load = null)
         {
             if (nodes.Length == 0)
             {
@@ -1664,10 +1684,11 @@ namespace search
             else if (WebAppWindow.IsWebApp(path.Split('\0')[0]))
             {
                 //Built-in HTML app - its own window in this process, never elevated
+                if (path == Apps.LogExplorer && !ConfirmLogExplorerLoad(nodes)) return;
                 string[] files = null;
                 await WaitFor(() => files = nodes.Where(n => !n.IsDirectory).Select(n => n.GetFileOrTempPath()).ToArray());
                 if (files.Length == 0) Model.Status = "Nothing selected";
-                else WebAppWindow.Open(path.Split('\0')[0], files);
+                else WebAppWindow.Open(path.Split('\0')[0], files, load);
             }
             else
             {
@@ -1684,6 +1705,54 @@ namespace search
                 string.Join(" ", args.Skip(1).Concat(nodes.Select(n => Quote(n.GetFileOrTempPath())))), workingDir, asAdmin));
             }
         }
+
+        /// <summary>
+        /// Log explorer holds every file in memory as text, several times its size on disk.
+        /// Above these limits it asks before loading - however the files were chosen.
+        /// </summary>
+        internal const ulong LogExplorerConfirmBytes = 100UL * 1024 * 1024;
+        internal const int LogExplorerConfirmFiles = 500;
+
+        internal static bool NeedsLogExplorerConfirmation(INode[] nodes, out int count, out ulong bytes)
+        {
+            var files = nodes.Where(n => !n.IsDirectory).ToArray();
+            count = files.Length;
+            bytes = files.Aggregate(0UL, (sum, n) => sum + n.Size);
+            return bytes > LogExplorerConfirmBytes || count > LogExplorerConfirmFiles;
+        }
+
+        bool ConfirmLogExplorerLoad(INode[] nodes)
+            => !NeedsLogExplorerConfirmation(nodes, out var count, out var bytes) ||
+               MessageBox.Show(this, L.Format("LogExplorerLarge", count, TransferProgressWindow.FormatBytes((long)Math.Min(bytes, long.MaxValue))),
+                   Title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+
+        /// <summary>
+        /// Files of the list containing the searched text (green rows)
+        /// </summary>
+        INode[] FoundFiles() => Items.Where(n => !n.IsDirectory && Model.FoundIn(n) == true).ToArray();
+
+        void SelectFound() => filesView.Select(FoundFiles());
+
+        /// <summary>
+        /// Open the files containing the searched text in one Log explorer window, appended and
+        /// filtered to the lines with the text. A HEX search has no text to filter by.
+        /// </summary>
+        async Task ShowInFiles()
+        {
+            var found = FoundFiles();
+            var query = Model.LastFind;
+            if (found.Length == 0 || query == null)
+            {
+                Model.Status = L.Text("NoFoundFiles");
+                return;
+            }
+            var load = new LogExplorerLoad(query.Encoding == "HEX" ? null : query.Text, !query.CaseInsensitive);
+            await Open(Apps.LogExplorer, Model.ToTextNodes(found).ToArray(), load: load);
+        }
+
+        async void ShowInFiles_Click(object sender, RoutedEventArgs e) => await ShowInFiles();
+
+        void ContextSelectFound_Click(object sender, RoutedEventArgs e) => SelectFound();
 
         async void ListViewItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
@@ -2058,6 +2127,10 @@ namespace search
                 addTarget.InputGestureText = contextTargetColumn == "Folder" ? "Alt+F" : "Alt+N";
             }
             PopulateOpenWith(menu, nodes);
+            foreach (var item in menu.Items.OfType<Control>().Where(i => i.Tag is "Found" or "ShowInFiles"))
+                item.Visibility = Model.HasFound && (item.Tag is "Found" || WebAppWindow.IsAvailable)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
             var canZip = nodes.Length > 0 &&
                 nodes.All(n => File.Exists(n.FullName) || Directory.Exists(n.FullName));
             foreach (var item in menu.Items.OfType<MenuItem>().Where(i => Equals(i.Tag, "Zip")))

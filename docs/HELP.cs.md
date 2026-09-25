@@ -82,6 +82,8 @@ Barvy výsledků po hledání v obsahu:
 - Černá: položka nebyla prohledána nebo bylo hledání vymazáno.
 - Modrá: složka.
 
+**Zobrazit v souborech** (`G` v seznamu výsledků) otevře všechny zelené řádky v jednom okně prohlížeče logů, spojené do jednoho pohledu a s filtrem na řádky obsahující hledaný text.
+
 Napsání čehokoli jiného než `Enter` do pole hledání vymaže aktuální stav výsledků hledání v obsahu.
 
 ## Práce s myší
@@ -169,7 +171,8 @@ Běžné příkazy:
 - `X`: vyjmout vybrané položky do schránky.
 - `D`: porovnat v nastaveném porovnávacím nástroji. Dostupné jen při výběru přesně dvou položek.
 - `H`: otevřít jeden soubor ve vestavěném hex editoru nebo porovnat dva soubory. Funguje offline.
-- `L`: otevřít vybrané soubory ve vestavěném prohlížeči logů (Log Explorer). Funguje offline.
+- `L`: otevřít vybrané soubory ve vestavěném prohlížeči logů (Log Explorer). Funguje offline. Pokud mají soubory dohromady víc než 100 MB nebo je jich víc než 500, nejdřív se zeptá, protože prohlížeč logů drží vše v paměti.
+- `G`: zobrazit v souborech — otevřít soubory obsahující hledaný text (zelené řádky) v jednom okně prohlížeče logů, spojené za sebou a s filtrem na řádky s tímto textem. Totéž dělá tlačítko **Zobrazit v souborech** vedle **Nerozlišovat velikost písmen** a kontextová nabídka.
 - `V`: vložit soubory ze schránky do vybraných složek nebo nadřazených složek.
 - `O`: otevřít vybrané položky v jiné aplikaci.
 - `A`: otevřít vybrané položky jako správce.
@@ -225,7 +228,7 @@ Příkazy výběru po `S`:
 - `D`: vybrat adresáře.
 - `F`: vybrat soubory.
 - `I`: invertovat výběr.
-- `G`: vybrat zelené řádky.
+- `G`: vybrat nalezené soubory (zelené řádky). Také **Vybrat nalezené soubory** v kontextové nabídce.
 - `R`: vybrat červené řádky.
 - `B`: vybrat černé řádky.
 

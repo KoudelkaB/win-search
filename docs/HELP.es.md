@@ -82,6 +82,8 @@ Colores de los resultados tras una búsqueda en el contenido:
 - Negro: el elemento no se buscó o se borró la búsqueda.
 - Azul: carpeta.
 
+**Mostrar en archivos** (`G` en la lista de resultados) abre todas las filas verdes en una ventana del explorador de registros, unidas en una vista y filtradas a las líneas que contienen el texto buscado.
+
 Escribir cualquier cosa distinta de `Enter` en el campo de búsqueda borra el estado actual de los resultados de la búsqueda en el contenido.
 
 ## Acciones con el ratón
@@ -169,7 +171,8 @@ Comandos habituales:
 - `X`: cortar los elementos seleccionados al portapapeles.
 - `D`: comparar con la herramienta de comparación configurada. Solo disponible con exactamente dos elementos seleccionados.
 - `H`: abrir un archivo en el editor hexadecimal integrado o comparar dos archivos. Funciona sin conexión.
-- `L`: abrir los archivos seleccionados en el Log Explorer integrado. Funciona sin conexión.
+- `L`: abrir los archivos seleccionados en el Log Explorer integrado. Funciona sin conexión. Pregunta antes si los archivos suman más de 100 MB o son más de 500, porque el Log Explorer los mantiene en memoria.
+- `G`: mostrar en archivos — abrir los archivos que contienen el texto buscado (filas verdes) en una ventana del explorador de registros, unidos y filtrados a las líneas con el texto. También el botón **Mostrar en archivos** junto a la opción de mayúsculas y el menú contextual.
 - `V`: pegar los archivos del portapapeles en las carpetas seleccionadas o en sus carpetas padre.
 - `O`: abrir los elementos seleccionados en otra aplicación.
 - `A`: abrir los elementos seleccionados como administrador.
@@ -225,7 +228,7 @@ Comandos de selección tras `S`:
 - `D`: seleccionar directorios.
 - `F`: seleccionar archivos.
 - `I`: invertir la selección.
-- `G`: seleccionar filas verdes.
+- `G`: seleccionar archivos encontrados (filas verdes). También **Seleccionar archivos encontrados** en el menú contextual.
 - `R`: seleccionar filas rojas.
 - `B`: seleccionar filas negras.
 

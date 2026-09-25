@@ -135,6 +135,16 @@ namespace search.Models
         public bool Searching { get; private set; }
 
         /// <summary>
+        /// The content search whose results are marked in the list (green/red rows), null without one
+        /// </summary>
+        public FindQuery LastFind { get; private set; }
+
+        /// <summary>
+        /// Some file of the last content search contains the text (a green row)
+        /// </summary>
+        public bool HasFound { get; private set; }
+
+        /// <summary>
         /// True while the file system is being (re)loaded from the NTFS MFT
         /// </summary>
         public bool Loading { get; private set; }
@@ -2243,6 +2253,8 @@ namespace search.Models
                 // finishing a file and must not bring their result back
                 searched = new();
                 Searching = false;
+                LastFind = null;
+                HasFound = false;
                 UIRefreshRequested?.Invoke();
                 return;
             }
@@ -2253,11 +2265,16 @@ namespace search.Models
             var results = new NonBlocking.ConcurrentDictionary<INode, bool?>();
             searched = results;
             Searching = true;
+            LastFind = new FindQuery(text, caseInsensitive, encoding);
+            HasFound = false;
             var watch = Stopwatch.StartNew();
 
             // Search
             var update = ContinualUpdate(thisFind.Token, () =>
-                Status = search.L.Format("StatusSearching", text, results.Count, watch.Elapsed.TotalSeconds));
+            {
+                Status = search.L.Format("StatusSearching", text, results.Count, watch.Elapsed.TotalSeconds);
+                if (ReferenceEquals(thisFind, lastFind)) HasFound = results.Values.Any(v => v == true);
+            });
             // Case folding applies to text searches only; HEX matches raw bytes. The file side
             // folds ASCII only, so the needle must too - a full Unicode lowering would turn
             // "Řeka" into "řeka", which the unfolded "Ř" bytes in the file can never match.
@@ -2303,6 +2320,7 @@ namespace search.Models
             if (ReferenceEquals(thisFind, lastFind)) //Do not overwrite state of a newer search
             {
                 Searching = false;
+                HasFound = counts.Get("True") > 0;
                 Status = search.L.Format("StatusSearchFinished", text, result, counts.Get("True"), counts.Get("False"), counts.Get(""), watch.Elapsed.TotalSeconds);
                 UIRefreshRequested?.Invoke();
 
@@ -3837,4 +3855,8 @@ namespace search.Models
         }
     }
 
+    /// <summary>
+    /// A content search: the text, whether ASCII case was ignored, and the encoding (UTF-8, UTF-16 or HEX)
+    /// </summary>
+    record FindQuery(string Text, bool CaseInsensitive, string Encoding);
 }

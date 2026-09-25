@@ -352,8 +352,13 @@
                 <ComboBoxItem Content="UTF-16"/>
                 <ComboBoxItem Content="HEX"/>
             </ComboBox>
-            <CheckBox Grid.Row="2" Grid.Column="3" x:Name="caseInsensitive" Content="{local:Loc Key=CaseInsensitive}"
-                      VerticalAlignment="Center" Margin="3,0,0,0"/>
+            <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal">
+                <CheckBox x:Name="caseInsensitive" Content="{local:Loc Key=CaseInsensitive}"
+                          VerticalAlignment="Center" Margin="3,0,0,0"/>
+                <Button x:Name="showInFilesButton" Content="{local:Loc Key='Show in files'}" Click="ShowInFiles_Click"
+                        IsEnabled="{Binding HasFound}" Margin="6,0,0,0" Padding="6,0"
+                        ToolTip="{local:Loc Key=ShowInFilesTip}"/>
+            </StackPanel>
         </Grid>
         <Border x:Name="inlineActionBar" DockPanel.Dock="Top" Visibility="Collapsed"
                 Background="#FFFFF7D6" BorderBrush="#FFD8B24A" BorderThickness="0,1"
@@ -385,6 +390,9 @@
                     <MenuItem Header="{local:Loc Key=Open}" InputGestureText="Enter" Click="ContextOpen_Click"/>
                     <MenuItem Header="{local:Loc Key=OpenWith}" Tag="OpenWith"/>
                     <MenuItem Header="{local:Loc Key=OpenFolder}" Click="ContextOpenFolder_Click"/>
+                    <Separator Tag="Found"/>
+                    <MenuItem Header="{local:Loc Key='Show in files'}" InputGestureText="G" Tag="ShowInFiles" Click="ShowInFiles_Click"/>
+                    <MenuItem Header="{local:Loc Key=SelectFound}" InputGestureText="S, G" Tag="Found" Click="ContextSelectFound_Click"/>
                     <Separator/>
                     <MenuItem Header="{local:Loc Key=Copy}" InputGestureText="Ctrl+C" Click="ContextCopy_Click"/>
                     <MenuItem Header="{local:Loc Key=Cut}" InputGestureText="Ctrl+X" Click="ContextCut_Click"/>

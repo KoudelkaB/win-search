@@ -82,6 +82,8 @@ Result colors after a content search:
 - Black: the item was not searched or the search was cleared.
 - Blue: folder.
 
+**Show in files** (`G` in the result list) opens all green rows in one Log explorer window, appended into one view and filtered to the lines containing the searched text.
+
 Typing anything other than `Enter` in the search field clears the current content-search result state.
 
 ## Mouse Actions
@@ -169,7 +171,8 @@ Common commands:
 - `X`: cut selected items to the clipboard.
 - `D`: compare in the configured diff tool. Available only with exactly two items selected.
 - `H`: open one file in the built-in hex editor, or compare two files. Works offline.
-- `L`: open the selected files in the built-in Log explorer. Works offline.
+- `L`: open the selected files in the built-in Log explorer. Works offline. Asks first when the files total more than 100 MB or 500 files, because Log explorer holds them in memory.
+- `G`: show in files — open the files containing the searched text (green rows) in one Log explorer window, appended and filtered to the lines with the text. Also the **Show in files** button next to **Case insensitive** and the context menu.
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
 - `A`: open selected items as administrator.
@@ -225,7 +228,7 @@ Selection commands after `S`:
 - `D`: select directories.
 - `F`: select files.
 - `I`: invert selection.
-- `G`: select green rows.
+- `G`: select found files (green rows). Also **Select found files** in the context menu.
 - `R`: select red rows.
 - `B`: select black rows.
 

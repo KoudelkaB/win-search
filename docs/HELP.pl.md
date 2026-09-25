@@ -82,6 +82,8 @@ Kolory wyników po wyszukiwaniu w treści:
 - Czarny: element nie był przeszukiwany lub wyszukiwanie wyczyszczono.
 - Niebieski: folder.
 
+**Pokaż w plikach** (`G` na liście wyników) otwiera wszystkie zielone wiersze w jednym oknie przeglądarki logów, połączone w jeden widok i z filtrem na wiersze zawierające szukany tekst.
+
 Wpisanie w polu wyszukiwania czegokolwiek innego niż `Enter` czyści bieżący stan wyników wyszukiwania w treści.
 
 ## Obsługa myszą
@@ -169,7 +171,8 @@ Typowe polecenia:
 - `X`: wytnij zaznaczone elementy do schowka.
 - `D`: porównaj w skonfigurowanym narzędziu porównującym. Dostępne tylko przy zaznaczeniu dokładnie dwóch elementów.
 - `H`: otwórz jeden plik we wbudowanym edytorze szesnastkowym lub porównaj dwa pliki. Działa offline.
-- `L`: otwórz zaznaczone pliki we wbudowanym Log Explorerze. Działa offline.
+- `L`: otwórz zaznaczone pliki we wbudowanym Log Explorerze. Działa offline. Gdy pliki mają łącznie ponad 100 MB lub jest ich ponad 500, najpierw pyta, bo Log Explorer trzyma wszystko w pamięci.
+- `G`: pokaż w plikach — otwórz pliki zawierające szukany tekst (zielone wiersze) w jednym oknie przeglądarki logów, połączone jeden za drugim i z filtrem na wiersze z tym tekstem. Także przycisk **Pokaż w plikach** obok opcji wielkości liter i menu kontekstowe.
 - `V`: wklej pliki ze schowka do zaznaczonych folderów lub folderów nadrzędnych.
 - `O`: otwórz zaznaczone elementy w innej aplikacji.
 - `A`: otwórz zaznaczone elementy jako administrator.
@@ -225,7 +228,7 @@ Polecenia zaznaczania po `S`:
 - `D`: zaznacz katalogi.
 - `F`: zaznacz pliki.
 - `I`: odwróć zaznaczenie.
-- `G`: zaznacz zielone wiersze.
+- `G`: zaznacz znalezione pliki (zielone wiersze). Także **Zaznacz znalezione pliki** w menu kontekstowym.
 - `R`: zaznacz czerwone wiersze.
 - `B`: zaznacz czarne wiersze.
 

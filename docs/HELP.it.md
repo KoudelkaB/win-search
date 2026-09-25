@@ -82,6 +82,8 @@ Colori dei risultati dopo una ricerca nei contenuti:
 - Nero: l’elemento non è stato cercato o la ricerca è stata azzerata.
 - Blu: cartella.
 
+**Mostra nei file** (`G` nell'elenco dei risultati) apre tutte le righe verdi in una finestra di Esplora log, accodate in un'unica vista e filtrate sulle righe che contengono il testo cercato.
+
 Digitare qualcosa di diverso da `Enter` nel campo di ricerca azzera lo stato corrente dei risultati della ricerca nei contenuti.
 
 ## Azioni con il mouse
@@ -169,7 +171,8 @@ Comandi comuni:
 - `X`: taglia gli elementi selezionati negli appunti.
 - `D`: confronta nello strumento di confronto configurato. Disponibile solo con esattamente due elementi selezionati.
 - `H`: apri un file nell'editor esadecimale integrato o confronta due file. Funziona offline.
-- `L`: apri i file selezionati nel Log Explorer integrato. Funziona offline.
+- `L`: apri i file selezionati nel Log Explorer integrato. Funziona offline. Chiede conferma se i file superano in totale 100 MB o sono più di 500, perché il Log Explorer li tiene in memoria.
+- `G`: mostra nei file — apri i file che contengono il testo cercato (righe verdi) in una finestra di Esplora log, accodati e filtrati sulle righe con il testo. Anche il pulsante **Mostra nei file** accanto all'opzione maiuscole/minuscole e il menu contestuale.
 - `V`: incolla i file degli appunti nelle cartelle selezionate o nelle cartelle padre.
 - `O`: apri gli elementi selezionati in un’altra applicazione.
 - `A`: apri gli elementi selezionati come amministratore.
@@ -225,7 +228,7 @@ Comandi di selezione dopo `S`:
 - `D`: seleziona le directory.
 - `F`: seleziona i file.
 - `I`: inverti la selezione.
-- `G`: seleziona le righe verdi.
+- `G`: seleziona i file trovati (righe verdi). Anche **Seleziona i file trovati** nel menu contestuale.
 - `R`: seleziona le righe rosse.
 - `B`: seleziona le righe nere.
 

@@ -168,7 +168,7 @@ while leaving any key pressed</value></data>
   <data name="Directories" xml:space="preserve"><value>Folders</value></data>
   <data name="Files" xml:space="preserve"><value>Files</value></data>
   <data name="Invert selection" xml:space="preserve"><value>Invert selection</value></data>
-  <data name="Green rows" xml:space="preserve"><value>Green rows</value></data>
+  <data name="Found files (green rows)" xml:space="preserve"><value>Found files (green rows)</value></data>
   <data name="Red rows" xml:space="preserve"><value>Red rows</value></data>
   <data name="Black rows" xml:space="preserve"><value>Black rows</value></data>
   <data name="Select/Unselect all" xml:space="preserve"><value>Select/unselect all</value></data>
@@ -187,4 +187,14 @@ while leaving any key pressed</value></data>
   <data name="Selected" xml:space="preserve"><value>Selected</value></data>
   <data name="Hex editor / compare" xml:space="preserve"><value>Hex editor / compare</value></data>
   <data name="Log explorer" xml:space="preserve"><value>Log explorer</value></data>
+  <data name="Show in files" xml:space="preserve"><value>Show in files</value></data>
+  <data name="SelectFound" xml:space="preserve"><value>Select found files</value></data>
+  <data name="ShowInFilesTip" xml:space="preserve"><value>Open the files containing the searched text in one Log explorer window, filtered to the lines with the text (G)</value></data>
+  <data name="NoFoundFiles" xml:space="preserve"><value>No file contains the searched text</value></data>
+  <data name="LogExplorerLarge" xml:space="preserve"><value>Log explorer loads the files into memory, where they take several times more space than on disk.
+
+Files: {0}
+Total size: {1}
+
+Open them anyway?</value></data>
 </root>
