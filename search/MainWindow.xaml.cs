@@ -125,9 +125,14 @@ namespace search
             //not grid application, owning the startup red interval.
             DataContext = new Models.SearchModel(startFileSystem: false);
             ContentRendered += StartFileSystemAfterFirstRender;
-            Model.PropertyChanged += (_, e) =>
+            //Loading changes on the thread that scans the drive. Only the captured model may be
+            //read there: Model is DataContext, which throws off the UI thread - and that
+            //exception left through the setter, ending the scan of the first drive before it
+            //began and keeping the load status from ever being shown.
+            var model = Model;
+            model.PropertyChanged += (_, e) =>
             {
-                if (e.PropertyName == nameof(SearchModel.Loading) && !Model.Loading)
+                if (e.PropertyName == nameof(SearchModel.Loading) && !model.Loading)
                     Dispatcher.BeginInvoke(() =>
                     {
                         filesViewCmd.OnChange();
