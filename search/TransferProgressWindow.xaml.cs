@@ -30,7 +30,7 @@ namespace search
         {
             InitializeComponent();
             Operation.Text = operation;
-            CurrentItem.Text = "Preparing…";
+            CurrentItem.Text = L.Text("Preparing");
             Progress.IsIndeterminate = true;
             timer = new DispatcherTimer(
                 TimeSpan.FromMilliseconds(500),
@@ -78,8 +78,8 @@ namespace search
             Progress.IsIndeterminate = false;
             Progress.Value = 0;
             ProgressText.Text = "0%";
-            BytesText.Text = $"Completed: 0 B of {FormatBytes(totalWork)}";
-            RemainingText.Text = "Remaining: estimating…";
+            BytesText.Text = L.Format("ProgressCompleted", FormatBytes(0), FormatBytes(totalWork));
+            RemainingText.Text = L.Text("ProgressRemainingEstimating");
             started = true;
             elapsed.Restart();
             UpdateTiming();
@@ -154,8 +154,8 @@ namespace search
             var percentage = 100d * displayedWork / totalWork;
             Progress.Value = finalizing ? 99 : percentage;
             ProgressText.Text = finalizing ? "99%" : $"{Math.Floor(percentage):0}%";
-            BytesText.Text = $"Completed: {FormatBytes(finalizing ? totalWork : displayedWork)}"
-                + $" of {FormatBytes(totalWork)}";
+            BytesText.Text = L.Format("ProgressCompleted",
+                FormatBytes(finalizing ? totalWork : displayedWork), FormatBytes(totalWork));
             CurrentItem.Text = currentItem;
         }
 
@@ -190,36 +190,36 @@ namespace search
 
         void UpdateTiming()
         {
-            ElapsedText.Text = $"Elapsed: {FormatDuration(elapsed.Elapsed)}";
+            ElapsedText.Text = L.Format("ProgressElapsed", FormatDuration(elapsed.Elapsed));
             var remainingBytes = Math.Max(0, totalWork - displayedWork);
             if (!started)
             {
-                RemainingText.Text = $"Remaining: calculating… · {FormatBytes(remainingBytes)}";
+                RemainingText.Text = $"{L.Text("ProgressRemainingEstimating")} · {FormatBytes(remainingBytes)}";
                 return;
             }
             if (displayedWork >= totalWork)
             {
-                RemainingText.Text = "Remaining: 0:00 · 0 B";
+                RemainingText.Text = $"{L.Format("ProgressRemaining", FormatDuration(TimeSpan.Zero))} · {FormatBytes(0)}";
                 return;
             }
             if (finalizing)
             {
-                RemainingText.Text = "Finalizing… · 0 B remaining";
+                RemainingText.Text = L.Text("ProgressFinalizing");
                 return;
             }
             if (displayedWork == 0 || elapsed.Elapsed < TimeSpan.FromSeconds(1))
             {
-                RemainingText.Text = $"Remaining: estimating… · {FormatBytes(remainingBytes)}";
+                RemainingText.Text = $"{L.Text("ProgressRemainingEstimating")} · {FormatBytes(remainingBytes)}";
                 return;
             }
 
             var remainingSeconds = elapsed.Elapsed.TotalSeconds
                 * (totalWork - displayedWork) / displayedWork;
-            RemainingText.Text = double.IsFinite(remainingSeconds)
-                ? $"Remaining: about {FormatDuration(TimeSpan.FromSeconds(
-                    Math.Min(remainingSeconds, TimeSpan.FromDays(999).TotalSeconds)))}"
-                    + $" · {FormatBytes(remainingBytes)}"
-                : $"Remaining: estimating… · {FormatBytes(remainingBytes)}";
+            RemainingText.Text = (double.IsFinite(remainingSeconds)
+                ? L.Format("ProgressRemainingAbout", FormatDuration(TimeSpan.FromSeconds(
+                    Math.Min(remainingSeconds, TimeSpan.FromDays(999).TotalSeconds))))
+                : L.Text("ProgressRemainingEstimating"))
+                + $" · {FormatBytes(remainingBytes)}";
         }
 
         internal static string FormatDuration(TimeSpan duration)
@@ -253,7 +253,7 @@ namespace search
                 return;
             cancellation.Cancel();
             CancelButton.IsEnabled = false;
-            CancelButton.Content = "Cancelling...";
+            CancelButton.Content = L.Text("Cancelling");
         }
 
         void Window_Closing(object sender, CancelEventArgs e)
@@ -267,7 +267,7 @@ namespace search
             }
             cancellation.Cancel();
             CancelButton.IsEnabled = false;
-            CancelButton.Content = "Cancelling...";
+            CancelButton.Content = L.Text("Cancelling");
             e.Cancel = true;
         }
     }

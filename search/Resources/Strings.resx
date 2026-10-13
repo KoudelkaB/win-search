@@ -197,4 +197,99 @@ Files: {0}
 Total size: {1}
 
 Open them anyway?</value></data>
+  <data name="new name" xml:space="preserve"><value>new name</value></data>
+  <data name="Change last access time" xml:space="preserve"><value>Change last access time</value></data>
+  <data name="ItemCount" xml:space="preserve"><value>{0} items</value></data>
+  <data name="ConfirmRecycle" xml:space="preserve"><value>Move to the Recycle Bin?</value></data>
+  <data name="ConfirmPermanentDelete" xml:space="preserve"><value>Delete permanently?</value></data>
+  <data name="PermanentDelete" xml:space="preserve"><value>Permanently delete</value></data>
+  <data name="Recycling" xml:space="preserve"><value>Moving to the Recycle Bin: {0}</value></data>
+  <data name="DeletingPermanently" xml:space="preserve"><value>Permanently deleting: {0}</value></data>
+  <data name="Recycled" xml:space="preserve"><value>Moved to the Recycle Bin: {0}</value></data>
+  <data name="DeletedPermanently" xml:space="preserve"><value>Permanently deleted: {0}</value></data>
+  <data name="DeleteNotCancellable" xml:space="preserve"><value>Deleting a single item cannot be interrupted safely.</value></data>
+  <data name="CancelledAfter" xml:space="preserve"><value>Cancelled after {0} of {1}</value></data>
+  <data name="CompletedWithErrors" xml:space="preserve"><value>Completed with errors ({0}): {1}</value></data>
+  <data name="ArchiveItemsNotDeleted" xml:space="preserve"><value>Items inside an archive cannot be deleted (skipped: {0})</value></data>
+  <data name="OperationRunning" xml:space="preserve"><value>Another file operation is still running</value></data>
+  <data name="NothingSelected" xml:space="preserve"><value>Nothing selected</value></data>
+  <data name="WorkspaceSaveFailed" xml:space="preserve"><value>Could not save pinned filters and targets: {0}</value></data>
+  <data name="AllFiles" xml:space="preserve"><value>All files</value></data>
+  <data name="EnterName" xml:space="preserve"><value>Enter a name.</value></data>
+  <data name="PinnedNameExists" xml:space="preserve"><value>A pinned filter with this name already exists.</value></data>
+  <data name="SettingsFileType" xml:space="preserve"><value>File Search Manager settings</value></data>
+  <data name="JsonFiles" xml:space="preserve"><value>JSON files</value></data>
+  <data name="SettingsExported" xml:space="preserve"><value>Settings exported to "{0}"</value></data>
+  <data name="SettingsExportFailed" xml:space="preserve"><value>Settings export failed</value></data>
+  <data name="ImportReplaceConfirm" xml:space="preserve"><value>Replace the current pinned filters ({0}) and targets ({1}) with the imported settings?</value></data>
+  <data name="SettingsImported" xml:space="preserve"><value>Imported pinned filters: {0}, targets: {1}</value></data>
+  <data name="SettingsImportFailed" xml:space="preserve"><value>Settings import failed</value></data>
+  <data name="SettingsInvalid" xml:space="preserve"><value>This is not a valid File Search Manager settings file.</value></data>
+  <data name="TargetsAdded" xml:space="preserve"><value>Targets added: {0}</value></data>
+  <data name="NoNewTargets" xml:space="preserve"><value>No new valid targets to add</value></data>
+  <data name="OpenTargetFailed" xml:space="preserve"><value>Could not open the target: {0}</value></data>
+  <data name="ClipboardReadFailed" xml:space="preserve"><value>Cannot read files from the clipboard: {0}</value></data>
+  <data name="NoSourcesOrTargets" xml:space="preserve"><value>No available sources or targets</value></data>
+  <data name="BasketUseConfirm" xml:space="preserve"><value>Send to the targets ({0})?</value></data>
+  <data name="BasketFolders" xml:space="preserve"><value>Folders: {0}</value></data>
+  <data name="BasketArchives" xml:space="preserve"><value>Archives to update: {0}</value></data>
+  <data name="BasketPrograms" xml:space="preserve"><value>Programs to start: {0}</value></data>
+  <data name="BasketUnsupported" xml:space="preserve"><value>Unsupported targets to skip: {0}</value></data>
+  <data name="FolderTransfersIncomplete" xml:space="preserve"><value>One or more folder transfers did not complete.</value></data>
+  <data name="BasketUsed" xml:space="preserve"><value>Sent to targets ({1}): {0}</value></data>
+  <data name="EncodingConversionFailed" xml:space="preserve"><value>Encoding conversion failed: {0}</value></data>
+  <data name="InvalidHex" xml:space="preserve"><value>Invalid hexadecimal format. Use space-separated hex bytes, for example 48 65 6C 6C 6F</value></data>
+  <data name="NothingToDrag" xml:space="preserve"><value>Nothing available to drag</value></data>
+  <data name="DragFailed" xml:space="preserve"><value>Drag failed: {0}</value></data>
+  <data name="ProgramStarted" xml:space="preserve"><value>Started "{0}" with dropped items: {1}</value></data>
+  <data name="ProgramStartFailed" xml:space="preserve"><value>Could not start "{0}": {1}</value></data>
+  <data name="CopiedToClipboard" xml:space="preserve"><value>Copied to clipboard: {0}</value></data>
+  <data name="CutToClipboard" xml:space="preserve"><value>Cut to clipboard: {0}</value></data>
+  <data name="AppendedToClipboard" xml:space="preserve"><value>Appended to clipboard: {0}</value></data>
+  <data name="ArchiveCutCopied" xml:space="preserve"><value>Items inside an archive cannot be cut; they were copied instead</value></data>
+  <data name="NothingToCopy" xml:space="preserve"><value>No existing files to copy</value></data>
+  <data name="ClipboardCopyFailed" xml:space="preserve"><value>Copying to the clipboard failed: {0}</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>No diff tool found (WinMerge, KDiff3 or Meld)</value></data>
+  <data name="RenameOneOnly" xml:space="preserve"><value>Only one item can be renamed in place. For several items use the F2 commands.</value></data>
+  <data name="InvalidClipboardDate" xml:space="preserve"><value>The clipboard does not contain a valid date and time: {0}</value></data>
+  <data name="TimeChanged" xml:space="preserve"><value>Time changed</value></data>
+  <data name="NoRenameValue" xml:space="preserve"><value>No rename value was entered</value></data>
+  <data name="RenameDone" xml:space="preserve"><value>Renamed</value></data>
+  <data name="RenamedTo" xml:space="preserve"><value>Renamed "{0}" to "{1}"</value></data>
+  <data name="RenameOnlyPhysical" xml:space="preserve"><value>Only a file or folder on disk can be renamed in place</value></data>
+  <data name="ItemNotVisible" xml:space="preserve"><value>The selected item is not currently visible</value></data>
+  <data name="InvalidName" xml:space="preserve"><value>Enter a valid file or folder name.</value></data>
+  <data name="AlreadyExists" xml:space="preserve"><value>"{0}" already exists.</value></data>
+  <data name="SelectFolderDestination" xml:space="preserve"><value>Select at least one location for the new folder</value></data>
+  <data name="CreateFolderIn" xml:space="preserve"><value>Create folder in {0}:</value></data>
+  <data name="CreateFolderInMany" xml:space="preserve"><value>Create folder in the selected locations ({0}):</value></data>
+  <data name="CreatedItem" xml:space="preserve"><value>Created "{0}"</value></data>
+  <data name="NoClipboardFiles" xml:space="preserve"><value>No files in the clipboard</value></data>
+  <data name="NoPasteDestination" xml:space="preserve"><value>No paste destination selected</value></data>
+  <data name="NothingToTransfer" xml:space="preserve"><value>Nothing to transfer</value></data>
+  <data name="TransferIntoItself" xml:space="preserve"><value>Cannot transfer "{0}" into itself.</value></data>
+  <data name="SkippedItem" xml:space="preserve"><value>Skipped: {0}</value></data>
+  <data name="TransferSkipped" xml:space="preserve"><value>Completed; conflicts skipped: {0}</value></data>
+  <data name="TransferDone" xml:space="preserve"><value>Completed: {0}</value></data>
+  <data name="Zipping" xml:space="preserve"><value>Compressing: {0}</value></data>
+  <data name="ZipFailed" xml:space="preserve"><value>Compression failed: {0}</value></data>
+  <data name="FileOperation" xml:space="preserve"><value>File operation</value></data>
+  <data name="Preparing" xml:space="preserve"><value>Preparing…</value></data>
+  <data name="ProgressCompleted" xml:space="preserve"><value>Completed: {0} of {1}</value></data>
+  <data name="ProgressElapsed" xml:space="preserve"><value>Elapsed: {0}</value></data>
+  <data name="ProgressRemainingEstimating" xml:space="preserve"><value>Remaining: estimating…</value></data>
+  <data name="ProgressRemaining" xml:space="preserve"><value>Remaining: {0}</value></data>
+  <data name="ProgressRemainingAbout" xml:space="preserve"><value>Remaining: about {0}</value></data>
+  <data name="ProgressFinalizing" xml:space="preserve"><value>Finalizing…</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>Cancelling…</value></data>
+  <data name="WebFilesNotPassed" xml:space="preserve"><value>The files could not be passed to the page: {0}</value></data>
+  <data name="WebRuntimeTooOld" xml:space="preserve"><value>The installed Microsoft Edge WebView2 Runtime cannot open files in this window (version {0} or newer is needed). Drop the files into the page instead.</value></data>
+  <data name="WebCouldNotRead" xml:space="preserve"><value>Could not read:</value></data>
+  <data name="OriginService" xml:space="preserve"><value>service</value></data>
+  <data name="OriginDirect" xml:space="preserve"><value>direct access</value></data>
+  <data name="OriginHelper" xml:space="preserve"><value>admin helper</value></data>
+  <data name="OriginWalk" xml:space="preserve"><value>folder walk</value></data>
+  <data name="OriginHint" xml:space="preserve"><value>install the File Search Manager service or accept the admin prompt for instant NTFS indexing</value></data>
+  <data name="DriveUnavailableRetrying" xml:space="preserve"><value>network unavailable; retrying</value></data>
+  <data name="DriveScanFailedRetrying" xml:space="preserve"><value>scan failed; retrying</value></data>
 </root>

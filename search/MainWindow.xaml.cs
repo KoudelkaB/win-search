@@ -163,7 +163,7 @@ namespace search
                 (Key.F, "Firefox", n => n.AtLeast(1) && Apps.Firefox !=null),
                 (Key.O, "Opera", n => n.AtLeast(1) && Apps.Opera !=null),
                 (Key.E, "Edge", n => n.AtLeast(1) && Apps.Edge !=null),
-                (Key.I, "Internet explorer", n => n.AtLeast(1) && Apps.IExplore !=null),
+                (Key.I, "Internet Explorer", n => n.AtLeast(1) && Apps.IExplore !=null),
                 (Key.A, "Adobe Reader", n => n.AtLeast(1) && Apps.AdobeReader !=null),
                 (Key.S, "Shell", (Key.P, "Power Shell")),
                 (Key.V, "Visual Studio", n => n.AtLeast(1) && Apps.VisualStudio !=null),
@@ -178,16 +178,16 @@ namespace search
             var timeSource = new CommandTree[] { (Key.V, "from clipboard"), (Key.C, "current") };
             var f2 = new CommandTree[] {
                     (Key.V, "Path/name from clipboard"),
-                    (Key.N, "Change name",Enter("string to delete")),
+                    (Key.N, "Change name",Enter("new name")),
                     (Key.E, "Change extension", new CommandTree[] { Enter("Extension"), (Key.Delete,"Delete extension") }),
                     (Key.C, "Change creation time", timeSource),
                     (Key.W, "Change last write time", timeSource),
                     (Key.A, "Change last access time", timeSource),
                     (Key.OemPeriod, "Add extension",Enter("Extension")),
-                    (Key.Delete, "delete from name",Enter("string to delete")),
+                    (Key.Delete, L.Caption("delete from name"),Enter("string to delete")),
                     (Key.F, "Add as prefix",Enter("prefix")),
                     (Key.L, "Add as posfix",Enter("postfix")),
-                    (Key.Insert, "insert string",Enter("insertion index")),
+                    (Key.Insert, L.Caption("insert string"),Enter("insertion index")),
                     (Key.R, "Replace substring",Enter("string to replace"))
             };
 
@@ -203,14 +203,18 @@ namespace search
             //One ALT command set - the result-list commander and the window-wide commander
             //(hints panel) share it, so the same sequences behave the same everywhere
             var altCommands = new CommandTree[] {
-                (Key.N, "add selected as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(NameTargetPath))),
-                (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
-                (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
+                (Key.N, L.Caption("add selected as targets"), n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(NameTargetPath))),
+                (Key.F, L.Caption("add parent Folders as targets"), n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
+                (Key.V, L.Caption("send clipboard to all targets"), pasteToAllTargets, pasteToAllKeys),
                 (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs())),
                 (Key.P, "Pin current filter", (n,a) => PinFilter_Click(this, new RoutedEventArgs())),
                 (Key.I, "Import pinned filters and targets", (n,a) => ImportWorkspace_Click(this, new RoutedEventArgs())),
                 (Key.E, "Export pinned filters and targets", (n,a) => ExportWorkspace_Click(this, new RoutedEventArgs()))
             };
+            //V pastes at once. The shared caption "Paste…" belongs to the context menu entry,
+            //which opens the action dialog like Ctrl+V - without the ellipsis here.
+            CommandTree pasteDirectly = (Key.V, "Paste", async (n,a)=>await Paste(n,a), new CommandTree[] { overwrite, (Key.L, "as link", overwrite), (Key.H, "as hard link", overwrite) });
+            pasteDirectly.Help = pasteDirectly.Help.TrimEnd('…', '.');
             filesViewCmd.Commands.Add(new CommandTree[] {
                 //F1/F12 execute in Window_KeyDown before the grid sees them. Keeping them
                 //in this tree makes the working window-wide shortcuts visible in grid hints.
@@ -222,8 +226,9 @@ namespace search
                 (Key.L, "Log explorer", n => n.AtLeast(1) && WebAppWindow.IsAvailable,
                     async (n,a) => await Open(Apps.LogExplorer, Model.ToTextNodes(n.ToArray()).ToArray())),
                 (Key.G, "Show in files", n => Model.HasFound && WebAppWindow.IsAvailable, async (n,a) => await ShowInFiles()),
-                (Key.Enter, "Filter folders", async (n,a)=> await FilterFolders(n.ToArray())),
-                (Key.Delete, "Delete", async (n,a)=>await Delete(n)),
+                //Enter filters into folders and archives; a selection without any is opened instead
+                (Key.Enter, $"{L.Text("Filter folders")} / {L.Text("Open")}", async (n,a)=> await FilterFolders(n.ToArray())),
+                (Key.Delete, "Recycle", async (n,a)=>await Delete(n)),
                 (Key.C, "Copy", (n,a) => Copy(n,a), new CommandTree[] {
                     (Key.Add, "Append to clipboard", (n,a) => CopyAppend(n,a), new CommandTree[] { (Key.V, "file version"), (Key.T, "creation time"), (Key.W, "last write time"), (Key.A, "last access time") }),
                     (Key.V, "file version"),
@@ -240,7 +245,7 @@ namespace search
                 (Key.P, "Copy path", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => n.FullName)))),
                 (Key.F, "Copy folder name", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => Model.GetParent(n).FullName)))),
                 (Key.M, "Make directory in selected", (n,a)=>NewFolders(n,a),Enter("folder name")),
-                (Key.V, "Paste",async (n,a)=>await Paste(n,a), new CommandTree[] { overwrite, (Key.L, "as link", overwrite), (Key.H, "as hard link", overwrite) }),
+                pasteDirectly,
                 (Key.X, "Cut", (n,a)=> Copy(n,a,true)),
                 (Key.S, "Select", new CommandTree[] {
                     (Key.A, "All", (n,a) => { if (filesView.SelectedItems.Count == filesView.Items.Count) filesView.UnselectAll(); else filesView.SelectAll();}),
@@ -251,9 +256,9 @@ namespace search
                     (Key.R, "Red rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == false))),
                     (Key.B, "Black rows", (n,a) => filesView.Select(Items.Where(n => Model.FoundIn(n) == null))),
                 }),
-                (Key.T, "add selected as targets", (n,a) => AddBasketTargets(n.Select(NameTargetPath)), new CommandTree[] {
-                    (Key.F, "add parent Folders as targets", n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
-                    (Key.V, "send clipboard to all targets", pasteToAllTargets, pasteToAllKeys),
+                (Key.T, L.Caption("add selected as targets"), (n,a) => AddBasketTargets(n.Select(NameTargetPath)), new CommandTree[] {
+                    (Key.F, L.Caption("add parent Folders as targets"), n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
+                    (Key.V, L.Caption("send clipboard to all targets"), pasteToAllTargets, pasteToAllKeys),
                     (Key.C, "Clear targets", (n,a) => ClearTargets_Click(this, new RoutedEventArgs()))
                 }),
                 (Key.LeftAlt, "ALT", altCommands),
@@ -270,7 +275,7 @@ namespace search
                     (Key.V, "Paste (choose action)", async (n,a) => await PasteWithDialog(n)),
                     (Key.X, "Cut", (n,a) => Copy(n,a,true))
                 }),
-                (Key.LeftShift,"Shift", new CommandTree[] {
+                (Key.LeftShift,"SHIFT", new CommandTree[] {
                     (Key.Delete, "Permanently delete - do not confirm", async (n,a)=>await Delete(n,false,true)),
                 }),
                 (Key.RightShift, "Focus filter", (n,a)=>filterTextBox.Focus()),
@@ -667,7 +672,7 @@ namespace search
         void SaveWorkspaceSettings()
         {
             try { WorkspaceSettingsStore.Save(CaptureWorkspaceSettings()); }
-            catch (Exception ex) { Model.Status = $"Could not save workspace settings: {ex.Message}"; }
+            catch (Exception ex) { Model.Status = L.Format("WorkspaceSaveFailed", ex.Message); }
         }
 
         void Drives_Click(object sender, RoutedEventArgs e)
@@ -695,7 +700,7 @@ namespace search
 
         static string SuggestedFilterName(string filter)
         {
-            if (string.IsNullOrWhiteSpace(filter)) return "All files";
+            if (string.IsNullOrWhiteSpace(filter)) return L.Text("AllFiles");
             var value = filter.Trim().Trim('"').TrimEnd('\\');
             var name = IOPath.GetFileName(value);
             return string.IsNullOrWhiteSpace(name) || name.IndexOfAny(IOPath.GetInvalidFileNameChars()) >= 0
@@ -751,13 +756,13 @@ namespace search
         {
             if (string.IsNullOrWhiteSpace(pinned?.Name))
             {
-                error = "Enter a name.";
+                error = L.Text("EnterName");
                 return false;
             }
             if (PinnedFilters.Any(x => !ReferenceEquals(x, pinned) &&
                 string.Equals(x.Name?.Trim(), pinned.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
             {
-                error = "A pinned filter with this name already exists.";
+                error = L.Text("PinnedNameExists");
                 return false;
             }
             error = null;
@@ -869,8 +874,8 @@ namespace search
         {
             var dialog = new SaveFileDialog
             {
-                Title = "Export pinned filters and targets",
-                Filter = "File Search Manager settings (*.winsearch-settings.json)|*.winsearch-settings.json|JSON files (*.json)|*.json",
+                Title = L.Text("Export pinned filters and targets"),
+                Filter = $"{L.Text("SettingsFileType")} (*.winsearch-settings.json)|*.winsearch-settings.json|{L.Text("JsonFiles")} (*.json)|*.json",
                 FileName = "file-search-manager.winsearch-settings.json",
                 AddExtension = true,
                 DefaultExt = ".json"
@@ -879,11 +884,11 @@ namespace search
             try
             {
                 WorkspaceSettingsStore.Export(CaptureWorkspaceSettings(), dialog.FileName);
-                Model.Status = $"Exported workspace settings to \"{dialog.FileName}\"";
+                Model.Status = L.Format("SettingsExported", dialog.FileName);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Settings export failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, ex.Message, L.Text("SettingsExportFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -891,8 +896,8 @@ namespace search
         {
             var dialog = new OpenFileDialog
             {
-                Title = "Import pinned filters and targets",
-                Filter = "File Search Manager settings (*.winsearch-settings.json;*.json)|*.winsearch-settings.json;*.json|All files (*.*)|*.*",
+                Title = L.Text("Import pinned filters and targets"),
+                Filter = $"{L.Text("SettingsFileType")} (*.winsearch-settings.json;*.json)|*.winsearch-settings.json;*.json|{L.Text("AllFiles")} (*.*)|*.*",
                 CheckFileExists = true
             };
             if (dialog.ShowDialog(this) != true) return;
@@ -901,16 +906,20 @@ namespace search
                 var imported = WorkspaceSettingsStore.Import(dialog.FileName);
                 if ((PinnedFilters.Count > 0 || BasketTargets.Count > 0) &&
                     MessageBox.Show(this,
-                        $"Replace {PinnedFilters.Count} pinned filter(s) and {BasketTargets.Count} target(s) with the imported settings?",
-                        "Import settings", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                        L.Format("ImportReplaceConfirm", PinnedFilters.Count, BasketTargets.Count),
+                        L.Text("Import pinned filters and targets"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
                     return;
                 ApplyWorkspaceSettings(imported);
                 SaveWorkspaceSettings();
-                Model.Status = $"Imported {PinnedFilters.Count} pinned filter(s) and {BasketTargets.Count} target(s)";
+                Model.Status = L.Format("SettingsImported", PinnedFilters.Count, BasketTargets.Count);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Settings import failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                //A file that is not ours gets a plain sentence first; the parser detail stays below it
+                var message = ex is InvalidDataException or System.Text.Json.JsonException
+                    ? $"{L.Text("SettingsInvalid")}\n\n{ex.Message}"
+                    : ex.Message;
+                MessageBox.Show(this, message, L.Text("SettingsImportFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -951,7 +960,7 @@ namespace search
                 added++;
             }
             if (added > 0) SaveWorkspaceSettings();
-            Model.Status = added > 0 ? $"Added {added} target(s)" : "No new valid targets to add";
+            Model.Status = added > 0 ? L.Format("TargetsAdded", added) : L.Text("NoNewTargets");
         }
 
         static BasketTargetKind GetBasketTargetKind(string path)
@@ -1025,7 +1034,7 @@ namespace search
         {
             if (target == null) return;
             try { Process.Start(new ProcessStartInfo(target.Path) { UseShellExecute = true }); }
-            catch (Exception ex) { Model.Status = $"Could not open target: {ex.Message}"; }
+            catch (Exception ex) { Model.Status = L.Format("OpenTargetFailed", ex.Message); }
         }
 
         // The two big drop zones are only shown while a drag is in progress: pinned for the
@@ -1145,7 +1154,7 @@ namespace search
         {
             string[] paths;
             try { paths = Clipboard.GetFileDropList().Cast<string>().ToArray(); }
-            catch (Exception ex) { Model.Status = $"Cannot read clipboard files: {ex.Message}"; return; }
+            catch (Exception ex) { Model.Status = L.Format("ClipboardReadFailed", ex.Message); return; }
             await UseBasketTargets(paths, BasketTargets.ToArray(),
                 action ?? (ClipboardRequestsMove() ? FileTransferAction.Move : FileTransferAction.Copy),
                 collision, chooseAction);
@@ -1237,7 +1246,7 @@ namespace search
             var targets = requestedTargets.Where(TargetIsAvailable).ToArray();
             if (sources.Length == 0 || targets.Length == 0)
             {
-                Model.Status = "No available sources or targets";
+                Model.Status = L.Text("NoSourcesOrTargets");
                 return;
             }
 
@@ -1246,13 +1255,13 @@ namespace search
             var executables = targets.Where(x => x.Kind == BasketTargetKind.Executable).ToArray();
             var unsupported = targets.Where(x => x.Kind == BasketTargetKind.File).ToArray();
             var sourceDescription = FileOperationText.DescribeItems(sources);
-            var summary = $"Use {sourceDescription} with {targets.Length} target(s)?\n\n" +
-                (folders.Length > 0 ? $"Folders: {folders.Length}\n" : "") +
-                (archives.Length > 0 ? $"Archives to update: {archives.Length}\n" : "") +
-                (executables.Length > 0 ? $"Programs to start: {executables.Length}\n" : "") +
-                (unsupported.Length > 0 ? $"Unsupported targets to skip: {unsupported.Length}\n" : "");
+            var summary = $"{L.Format("BasketUseConfirm", targets.Length)}\n\n{sourceDescription}\n\n" +
+                (folders.Length > 0 ? L.Format("BasketFolders", folders.Length) + "\n" : "") +
+                (archives.Length > 0 ? L.Format("BasketArchives", archives.Length) + "\n" : "") +
+                (executables.Length > 0 ? L.Format("BasketPrograms", executables.Length) + "\n" : "") +
+                (unsupported.Length > 0 ? L.Format("BasketUnsupported", unsupported.Length) + "\n" : "");
             if ((targets.Length > 1 || executables.Length > 0 || archives.Length > 0) &&
-                MessageBox.Show(this, summary, "Use target basket", MessageBoxButton.OKCancel,
+                MessageBox.Show(this, summary, Title, MessageBoxButton.OKCancel,
                     MessageBoxImage.Question) != MessageBoxResult.OK)
                 return;
 
@@ -1293,11 +1302,11 @@ namespace search
             if (folders.Length > 0)
             {
                 if (!await TransferPaths(sources, folders.Select(x => x.Path).ToArray(), folderAction.Value, collisionForAll))
-                    errors.Add("One or more folder transfers did not complete.");
+                    errors.Add(L.Text("FolderTransfersIncomplete"));
             }
             Model.Status = errors.Count == 0
-                ? $"Used {sourceDescription} with {targets.Length} target(s)"
-                : $"Target operations completed with {errors.Count} error(s): {string.Join(", ", errors)}";
+                ? L.Format("BasketUsed", sourceDescription, targets.Length)
+                : CompletedWithErrors(errors);
         }
 
         private void ApplyWindowLayout()
@@ -1477,10 +1486,16 @@ namespace search
             if (findTextBox == null || encodingComboBox == null) return;
 
             string currentText = findTextBox.Text;
-            if (string.IsNullOrEmpty(currentText)) return;
-
             string fromEncoding = GetPreviousEncoding();
             string toEncoding = GetCurrentEncoding();
+            if (string.IsNullOrEmpty(currentText))
+            {
+                // Nothing to convert, but the text typed next is in the new encoding. Leaving
+                // the old one remembered made the following switch convert from the wrong
+                // encoding - HEX bytes typed into an empty box were re-encoded as UTF-8 text.
+                previousEncoding = toEncoding;
+                return;
+            }
 
             try
             {
@@ -1492,7 +1507,7 @@ namespace search
             catch (Exception ex)
             {
                 // If conversion fails, keep the original text and reset the ComboBox
-                MessageBox.Show($"Encoding conversion failed: {ex.Message}", "Encoding Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, L.Format("EncodingConversionFailed", ex.Message), L.Text("Error"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 // Reset ComboBox to previous encoding
                 encodingComboBox.SelectedIndex = GetEncodingIndex(fromEncoding);
             }
@@ -1585,7 +1600,7 @@ namespace search
             }
             catch (Exception)
             {
-                throw new ArgumentException("Invalid hexadecimal format. Use space-separated hex bytes (e.g., '48 65 6C 6C 6F')");
+                throw new ArgumentException(L.Text("InvalidHex"));
             }
         }
 
@@ -1652,7 +1667,7 @@ namespace search
             catch (Exception ex)
             {
                 $"WaitFor exception {ex}".Debug();
-                MessageBox.Show(ex.Message, "Error");
+                MessageBox.Show(ex.Message, L.Text("Error"));
             }
             Cursor = c;
         }
@@ -1686,7 +1701,7 @@ namespace search
         {
             if (nodes.Length == 0)
             {
-                Model.Status = "Nothing selected";
+                Model.Status = L.Text("NothingSelected");
                 return;
             }
             if (path == null) nodes.ForEach(n => n.GetFileOrTempPath().Open("", elevated: asAdmin)); //Open the files directly
@@ -1696,7 +1711,7 @@ namespace search
                 if (path == Apps.LogExplorer && !ConfirmLogExplorerLoad(nodes)) return;
                 string[] files = null;
                 await WaitFor(() => files = nodes.Where(n => !n.IsDirectory).Select(n => n.GetFileOrTempPath()).ToArray());
-                if (files.Length == 0) Model.Status = "Nothing selected";
+                if (files.Length == 0) Model.Status = L.Text("NothingSelected");
                 else WebAppWindow.Open(path.Split('\0')[0], files, load);
             }
             else
@@ -1858,7 +1873,7 @@ namespace search
             CancelMouseDrag(keepDragStarted: true);
             if (existingPaths.Length == 0)
             {
-                Model.Status = "Nothing available to drag";
+                Model.Status = L.Text("NothingToDrag");
                 return;
             }
 
@@ -1872,7 +1887,7 @@ namespace search
             }
             catch (Exception ex)
             {
-                Model.Status = $"Drag failed: {ex.Message}";
+                Model.Status = L.Format("DragFailed", ex.Message);
             }
             finally
             {
@@ -1963,11 +1978,11 @@ namespace search
                     foreach (var source in sources)
                         start.ArgumentList.Add(source);
                     Process.Start(start);
-                    Model.Status = $"Started \"{executable}\" with {sources.Length} dropped argument(s)";
+                    Model.Status = L.Format("ProgramStarted", executable, sources.Length);
                 }
                 catch (Exception ex)
                 {
-                    Model.Status = $"Could not start \"{executable}\": {ex.Message}";
+                    Model.Status = L.Format("ProgramStartFailed", executable, ex.Message);
                 }
                 return;
             }
@@ -2129,9 +2144,9 @@ namespace search
                     paths.Any(path => !BasketTargets.Any(target =>
                         string.Equals(target.Path, path, StringComparison.OrdinalIgnoreCase)));
                 addTarget.Visibility = eligible ? Visibility.Visible : Visibility.Collapsed;
-                addTarget.Header = contextTargetColumn == "Folder"
-                    ? "Add parent folder(s) to target basket"
-                    : "Add Name item(s) to target basket";
+                addTarget.Header = L.Caption(contextTargetColumn == "Folder"
+                    ? "add parent Folders as targets"
+                    : "add selected as targets");
                 addTarget.InputGestureText = contextTargetColumn == "Folder" ? "Alt+F" : "Alt+N";
             }
             PopulateOpenWith(menu, nodes);
@@ -2181,13 +2196,13 @@ namespace search
             var diffTool = Apps.DiffTool;
             if (nodes.Length == 2 && !string.IsNullOrWhiteSpace(diffTool))
             {
-                var diffItem = new MenuItem { Header = "Diff tool", ToolTip = diffTool };
+                var diffItem = new MenuItem { Header = L.Text("Compare in diff tool"), ToolTip = diffTool };
                 diffItem.Click += async (_, __) => await OpenDiff(nodes);
                 openWith.Items.Add(diffItem);
             }
             if (allFiles && nodes.Length is 1 or 2 && WebAppWindow.IsAvailable)
             {
-                var hexItem = new MenuItem { Header = nodes.Length == 2 ? "Hex compare" : "Hex editor" };
+                var hexItem = new MenuItem { Header = L.Text("Hex editor / compare") };
                 hexItem.Click += async (_, __) => await Open(Apps.HexEditor, nodes);
                 openWith.Items.Add(hexItem);
             }
@@ -2205,7 +2220,8 @@ namespace search
                 openWith.Items.Add(sevenZipItem);
             }
 
-            Add("Text viewer", Key.T, Apps.TextViever, TextExtensions.Contains);
+            //The T key of "Open in" - the built-in Log explorer, Notepad without WebView2
+            Add(WebAppWindow.IsAvailable ? L.Text("Log explorer") : "Notepad", Key.T, Apps.TextViever, TextExtensions.Contains);
             Add("Chrome", Key.C, Apps.Chrome, WebExtensions.Contains);
             Add("Edge", Key.E, Apps.Edge, WebExtensions.Contains);
             Add("Firefox", Key.F, Apps.Firefox, WebExtensions.Contains);
@@ -2231,7 +2247,7 @@ namespace search
             {
                 var viewer = Apps.ViewerFor(nodes[0].FullName);
                 if (!string.Equals(viewer, Apps.TextViever, StringComparison.OrdinalIgnoreCase))
-                    Add("Detected PRN viewer", Key.R, viewer, _ => true);
+                    Add(L.Text("PRN Viewer"), Key.R, viewer, _ => true);
             }
             openWith.IsEnabled = openWith.Items.Count > 0;
         }
@@ -2345,7 +2361,7 @@ namespace search
             catch (Exception ex)
             {
                 $"KeyDown exception {ex}".Debug();
-                MessageBox.Show($"{ex}", "Error processing KeyDown");
+                MessageBox.Show($"{ex}", L.Text("CommandFailed"));
             }
         }
 
@@ -2496,7 +2512,7 @@ namespace search
             try
             {
                 ClipBoardCut = false;
-                Model.Status = $"Clipboarded \"{text}\"";
+                Model.Status = L.Format("CopiedToClipboard", text);
                 Clipboard.SetText(text);
                 return;
             }
@@ -2517,37 +2533,44 @@ namespace search
             var na = nodes.ToArray();
             if (na.Length == 0)
                 return;
+            //Items inside an archive can be neither recycled nor deleted. Asking "Move to the
+            //Recycle Bin?" first and failing afterwards read as if the delete had been tried.
+            var archiveItems = na.Count(n => n is ZipNode);
+            if (archiveItems > 0)
+            {
+                na = na.Where(n => n is not ZipNode).ToArray();
+                Model.Status = L.Format("ArchiveItemsNotDeleted", archiveItems);
+                if (na.Length == 0)
+                    return;
+            }
             if (fileOperationInProgress)
             {
-                Model.Status = "Another file operation is already running";
+                Model.Status = L.Text("OperationRunning");
                 return;
             }
             var itemDescription = FileOperationText.DescribeItems(
                 na.Select(n => n.FullName).ToArray());
             if (!confirm ||
                 MessageBox.Show(
-                    permanently
-                        ? $"Permanently delete {itemDescription}?"
-                        : $"Move {itemDescription} to the Recycle Bin?",
-                    permanently ? "Permanently delete" : "Recycle",
+                    $"{L.Text(permanently ? "ConfirmPermanentDelete" : "ConfirmRecycle")}\n\n{itemDescription}",
+                    L.Text(permanently ? "PermanentDelete" : "Recycle"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
             {
                 ClipBoardCut = false;
-                Model.Status = permanently
-                    ? $"Permanently deleting {itemDescription}"
-                    : $"Moving {itemDescription} to the Recycle Bin";
-                var verb = permanently ? "Permanently deleting" : "Recycling";
+                //Resource key of "Moving to the Recycle Bin: {0}" - the status, then each item
+                var verb = permanently ? "DeletingPermanently" : "Recycling";
+                Model.Status = L.Format(verb, itemDescription);
                 var itemWork = na.Select(n => SizeAsWork(n.Size)).ToArray();
                 var totalWork = itemWork.Aggregate(0L, SaturatingAdd);
-                var observation = new DeleteProgressObservation($"{verb} {itemDescription}");
+                var observation = new DeleteProgressObservation(L.Format(verb, itemDescription));
                 var progress = new TransferProgressWindow(
-                    permanently ? "Permanent delete operation" : "Recycle operation")
+                    L.Text(permanently ? "PermanentDelete" : "Recycle"))
                 {
                     Owner = this
                 };
                 progress.SetCancellationAvailable(
                     na.Length > 1,
-                    "A single recursive delete cannot be interrupted safely.");
+                    L.Text("DeleteNotCancellable"));
                 progress.Begin(totalWork);
                 progress.Observe(
                     observation.Sample,
@@ -2583,7 +2606,7 @@ namespace search
                             observation.Begin(n, completedWork, itemWork[index], verb);
                             try
                             {
-                                if (permanently || n is ZipNode)
+                                if (permanently)
                                     n.Delete();
                                 else
                                     n.Recycle();
@@ -2618,15 +2641,12 @@ namespace search
                     fileOperationInProgress = false;
                 }
 
-                Model.Status = outcome.Cancelled
-                    ? $"{(permanently ? "Permanent delete" : "Recycle")} cancelled after "
-                        + $"{outcome.Completed} of {na.Length} item(s)"
+                Model.Status = (outcome.Cancelled
+                    ? L.Format("CancelledAfter", outcome.Completed, na.Length)
                     : outcome.Errors.Count == 0
-                        ? permanently
-                            ? $"Permanently deleted {itemDescription}"
-                            : $"Recycled {itemDescription}"
-                        : $"Delete completed with {outcome.Errors.Count} error(s): "
-                            + string.Join(", ", outcome.Errors);
+                        ? L.Format(permanently ? "DeletedPermanently" : "Recycled", itemDescription)
+                        : CompletedWithErrors(outcome.Errors))
+                    + (archiveItems > 0 ? " · " + L.Format("ArchiveItemsNotDeleted", archiveItems) : "");
             }
         }
 
@@ -2665,7 +2685,7 @@ namespace search
                     parentPath = itemParent;
                     pathStartSize = node.Size;
                     parentStartSize = itemParentSize;
-                    currentItem = $"{verb}: {itemPath}";
+                    currentItem = L.Format(verb, itemPath);
                 }
             }
 
@@ -2731,7 +2751,7 @@ namespace search
         {
             if (!nodes.Any())
             {
-                Model.Status = "Nothing selected";
+                Model.Status = L.Text("NothingSelected");
                 return;
             }
             var a = arg.FirstOrDefault();
@@ -2778,6 +2798,7 @@ namespace search
         {
             var diff = Apps.DiffTool;
             if (diff != null) await Open(diff, Model.ToTextNodes(nodes.ToArray()).ToArray());
+            else Model.Status = L.Text("NoDiffTool");
         }
 
         void Copy(IEnumerable<INode> nodes, IEnumerable<Key> arg, bool cut = false)
@@ -2811,14 +2832,11 @@ namespace search
 
             if (nodeArray.Length == 0)
             {
-                Model.Status = "Nothing selected";
+                Model.Status = L.Text("NothingSelected");
                 return;
             }
-            if (cut && nodeArray.Any(n => n is ZipNode))
-            {
-                cut = false;
-                Model.Status = "Archive entries cannot be cut; they were copied instead";
-            }
+            var cutDowngraded = cut && nodeArray.Any(n => n is ZipNode);
+            if (cutDowngraded) cut = false;
             string[] files;
             try
             {
@@ -2828,18 +2846,21 @@ namespace search
                     .ToArray();
                 if (files.Length == 0)
                 {
-                    Model.Status = "No existing files to copy";
+                    Model.Status = L.Text("NothingToCopy");
                     return;
                 }
                 SetFileClipboard(files, cut);
             }
             catch (Exception ex)
             {
-                Model.Status = $"Clipboard copy failed: {ex.Message}";
+                Model.Status = L.Format("ClipboardCopyFailed", ex.Message);
                 return;
             }
             ClipBoardCut = cut;
-            Model.Status = $"Clipboarded {(files.Length == 1 ? $"\"{files[0]}\"" : $"{files.Length} items")} to {(ClipBoardCut ? "MOVE" : "COPY")}";
+            //The explanation is the final status - set earlier, the "copied" text replaced it at once
+            Model.Status = cutDowngraded
+                ? L.Text("ArchiveCutCopied")
+                : L.Format(cut ? "CutToClipboard" : "CopiedToClipboard", FileOperationText.DescribeItems(files));
         }
 
         static void SetFileClipboard(string[] files, bool cut)
@@ -2921,7 +2942,7 @@ namespace search
             foreach (var file in files) existingFiles.Add(file);
             SetFileClipboard(existingFiles.Cast<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), cut: false);
-            Model.Status = $"Appended {(files.Length == 1 ? $"\"{files[0]}\"" : $"{files.Length} items")} to clipboard";
+            Model.Status = L.Format("AppendedToClipboard", FileOperationText.DescribeItems(files));
         }
 
         void Rename(IEnumerable<INode> nodes, IEnumerable<Key> arg)
@@ -2934,7 +2955,7 @@ namespace search
                 if (nodeArray.Length == 1)
                     BeginInlineRename(nodeArray[0]);
                 else if (nodeArray.Length > 1)
-                    Model.Status = "Inline rename is available for one item. Use an F2 transformation command for multiple items.";
+                    Model.Status = L.Text("RenameOneOnly");
                 return;
             }
             nodes = nodeArray;
@@ -2996,7 +3017,7 @@ namespace search
                                     var text = Clipboard.GetText();
                                     if (!L.TryParseDate(text?.Trim(), out time))
                                     {
-                                        MessageBox.Show($"Invalid date/time format in clipboard: {text}", "Error");
+                                        MessageBox.Show(this, L.Format("InvalidClipboardDate", text), L.Text("Error"));
                                         return;
                                     }
                                     break;
@@ -3018,8 +3039,8 @@ namespace search
                                 timeErrors.Add(ex.Message);
                             }
                         Model.Status = timeErrors.Count > 0
-                            ? $"Time change failed with {timeErrors.Count} error(s): {string.Join(", ", timeErrors)}"
-                            : "Time changed.";
+                            ? CompletedWithErrors(timeErrors)
+                            : L.Text("TimeChanged");
                         return;
                     }
             }
@@ -3053,7 +3074,7 @@ namespace search
                     }
                     else
                     {
-                        Model.Status = "No rename value was entered.";
+                        Model.Status = L.Text("NoRenameValue");
                         return;
                     }
                 }
@@ -3064,7 +3085,7 @@ namespace search
                 if (System.IO.Path.GetFileName(dest) == dest) dest = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(x.FullName), dest);
                 if (x.FullName != dest) errors.AddRange(x.FullName.UniversalCopyOrMove(dest, overwrite, true));
             }
-            Model.Status = errors.Count > 0 ? $"Rename failed with {errors.Count} errors: {string.Join(", ", errors)}" : "Rename done.";
+            Model.Status = errors.Count > 0 ? CompletedWithErrors(errors) : L.Text("RenameDone");
         }
 
         /// <summary>
@@ -3102,7 +3123,7 @@ namespace search
         {
             if (node == null || node is ZipNode || (!File.Exists(node.FullName) && !Directory.Exists(node.FullName)))
             {
-                Model.Status = "Only a physical file or folder can be renamed inline.";
+                Model.Status = L.Text("RenameOnlyPhysical");
                 return;
             }
             FinishInlineRename(commit: false);
@@ -3110,7 +3131,7 @@ namespace search
             filesView.UpdateLayout();
             if (filesView.ItemContainerGenerator.ContainerFromItem(node) is not ListViewItem item)
             {
-                Model.Status = "The selected item is not currently visible.";
+                Model.Status = L.Text("ItemNotVisible");
                 return;
             }
             var editor = FindVisualChild<TextBox>(item, "InlineNameEditor");
@@ -3254,17 +3275,17 @@ namespace search
                     newName.IndexOfAny(IOPath.GetInvalidFileNameChars()) >= 0 ||
                     !string.Equals(IOPath.GetFileName(newName), newName, StringComparison.Ordinal);
                 if (invalid)
-                    return RejectInlineRename("Enter a valid file or folder name.");
+                    return RejectInlineRename(L.Text("InvalidName"));
                 var destination = IOPath.Combine(IOPath.GetDirectoryName(node.FullName), newName);
                 if (!string.Equals(destination, node.FullName, StringComparison.OrdinalIgnoreCase) &&
                     (File.Exists(destination) || Directory.Exists(destination)))
-                    return RejectInlineRename($"'{newName}' already exists.");
+                    return RejectInlineRename(L.Format("AlreadyExists", newName));
                 if (!string.Equals(destination, node.FullName, StringComparison.Ordinal))
                 {
                     var errors = node.FullName.UniversalCopyOrMove(destination, overwrite: false, move: true);
                     if (errors.Count > 0)
                         return RejectInlineRename(string.Join(", ", errors));
-                    Model.Status = $"Renamed '{node.Name}' to '{newName}'";
+                    Model.Status = L.Format("RenamedTo", node.Name, newName);
                 }
             }
 
@@ -3315,7 +3336,7 @@ namespace search
         {
             if (nodes.Length == 0)
             {
-                Model.Status = "Select at least one destination for the new folder.";
+                Model.Status = L.Text("SelectFolderDestination");
                 return;
             }
             FinishInlineRename(commit: true);
@@ -3323,8 +3344,8 @@ namespace search
             newFolderTargets = nodes;
             newFolderOverwrite = overwrite;
             inlineActionLabel.Text = nodes.Length == 1
-                ? $"Create folder in {nodes[0].FullName.Directory()}:"
-                : $"Create folder in {nodes.Length} selected destinations:";
+                ? L.Format("CreateFolderIn", nodes[0].FullName.Directory())
+                : L.Format("CreateFolderInMany", nodes.Length);
             inlineActionTextBox.Text = "";
             inlineActionTextBox.BorderBrush = SystemColors.ControlDarkBrush;
             inlineActionTextBox.ToolTip = null;
@@ -3358,7 +3379,7 @@ namespace search
                 name.IndexOfAny(IOPath.GetInvalidFileNameChars()) >= 0 ||
                 !string.Equals(IOPath.GetFileName(name), name, StringComparison.Ordinal))
             {
-                const string error = "Enter a valid folder name.";
+                var error = L.Text("InvalidName");
                 inlineActionTextBox.BorderBrush = Brushes.IndianRed;
                 inlineActionTextBox.ToolTip = error;
                 Model.Status = error;
@@ -3392,8 +3413,8 @@ namespace search
                 }
                 catch (Exception ex) { errors.Add($"{x.FullName}: {ex.Message}"); }
             Model.Status = errors.Count == 0
-                ? $"Created folder '{name}'"
-                : $"Folder creation completed with {errors.Count} error(s): {string.Join(", ", errors)}";
+                ? L.Format("CreatedItem", name)
+                : CompletedWithErrors(errors);
         }
 
         async Task Paste(IEnumerable<INode> nodes, IEnumerable<Key> arg)
@@ -3401,7 +3422,7 @@ namespace search
             var paths = Clipboard.GetFileDropList().Cast<string>().ToArray();
             if (paths.Length == 0)
             {
-                Model.Status = "No files in clipboard";
+                Model.Status = L.Text("NoClipboardFiles");
                 return;
             }
             var clipboardMove = ClipboardRequestsMove();
@@ -3431,18 +3452,18 @@ namespace search
             }
             catch (Exception ex)
             {
-                Model.Status = $"Cannot read clipboard files: {ex.Message}";
+                Model.Status = L.Format("ClipboardReadFailed", ex.Message);
                 return;
             }
             var destinations = PasteDestinations(nodes);
             if (paths.Length == 0)
             {
-                Model.Status = "No files in clipboard";
+                Model.Status = L.Text("NoClipboardFiles");
                 return;
             }
             if (destinations.Length == 0)
             {
-                Model.Status = "No paste destination selected";
+                Model.Status = L.Text("NoPasteDestination");
                 return;
             }
             var clipboardMove = ClipboardRequestsMove();
@@ -3485,23 +3506,27 @@ namespace search
         {
             if (paths.Length == 0 || destinations.Length == 0)
             {
-                Model.Status = "Nothing to transfer";
+                Model.Status = L.Text("NothingToTransfer");
                 return false;
             }
             if (fileOperationInProgress)
             {
-                Model.Status = "Another file operation is already running";
+                Model.Status = L.Text("OperationRunning");
                 return false;
             }
 
             var itemDescription = FileOperationText.DescribeItems(paths);
-            Model.Status = $"{action}: {itemDescription} to {destinations.Length} folder(s)";
+            var actionName = ActionName(action);
+            //"3 items to 2 folder(s)" - the prompt of the action dialog without its trailing colon
+            var transferDescription = L.Format("ItemToFolders", itemDescription, destinations.Length)
+                .TrimEnd(TrailingColon);
+            Model.Status = $"{actionName}: {transferDescription}";
             var total = paths.Length * destinations.Length;
             var sourceNodes = paths.Select(SearchModel.FindByPath).ToArray();
             var sourceWork = paths.Select((path, index) =>
                 CachedTransferWork(path, sourceNodes[index])).ToArray();
             var workPerDestination = sourceWork.Aggregate(0L, SaturatingAdd);
-            var progress = new TransferProgressWindow($"{action} file operation") { Owner = this };
+            var progress = new TransferProgressWindow(actionName) { Owner = this };
             var errors = new List<string>();
             var completedCount = 0;
             long completedWork = 0;
@@ -3528,7 +3553,7 @@ namespace search
                         IOPath.GetFileName(file.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)));
                     if (sourceIsDirectory && IsDescendant(destination, file))
                     {
-                        errors.Add($"Cannot transfer '{file}' into itself.");
+                        errors.Add(L.Format("TransferIntoItself", file));
                         completedCount++;
                         completedWork = SaturatingAdd(completedWork, operationWork);
                         progress.Report(completedWork, file);
@@ -3573,7 +3598,7 @@ namespace search
                             skipped++;
                             completedCount++;
                             completedWork = SaturatingAdd(completedWork, operationWork);
-                            progress.Report(completedWork, $"Skipped {destination}");
+                            progress.Report(completedWork, L.Format("SkippedItem", destination));
                             continue;
                         }
                         if (collision == FileCollisionAction.Rename)
@@ -3590,7 +3615,7 @@ namespace search
                     var targetAction = action == FileTransferAction.Move && targetIndex < destinations.Length - 1
                         ? FileTransferAction.Copy
                         : action;
-                    var progressItem = $"{targetAction}: {file} -> {destination}";
+                    var progressItem = $"{ActionName(targetAction)}: {file} → {destination}";
                     var parentPath = destinations[targetIndex];
                     var parentStartSize = SearchModel.FindByPath(parentPath)?.Size ?? 0;
                     var destinationStartSize = SearchModel.FindByPath(destination)?.Size ?? 0;
@@ -3631,15 +3656,29 @@ namespace search
                 fileOperationInProgress = false;
             }
 
-            Model.Status = cancelled
-                ? $"{action} cancelled after {completedCount} of {total} operation(s)"
+            Model.Status = $"{actionName}: " + (cancelled
+                ? L.Format("CancelledAfter", completedCount, total)
                 : errors.Count > 0
-                    ? $"{action} completed with {errors.Count} error(s): {string.Join(", ", errors)}"
+                    ? CompletedWithErrors(errors)
                     : skipped > 0
-                        ? $"{action} completed; skipped {skipped} conflict(s)"
-                        : $"{action} completed for {itemDescription} and {destinations.Length} folder(s)";
+                        ? L.Format("TransferSkipped", skipped)
+                        : L.Format("TransferDone", transferDescription));
             return !cancelled && errors.Count == 0 && skipped == 0;
         }
+
+        /// <summary>
+        /// Action name for status and progress texts, worded as in the action dialog - the enum
+        /// identifiers read "SymbolicLink" and "HardLink", and are the keys of those captions
+        /// </summary>
+        internal static string ActionName(FileTransferAction action, CultureInfo culture = null)
+            => L.Text(action.ToString(), culture ?? CultureInfo.CurrentUICulture);
+
+        /// <summary>The status of an operation that left some items undone</summary>
+        static string CompletedWithErrors(IReadOnlyCollection<string> errors)
+            => L.Format("CompletedWithErrors", errors.Count, string.Join(", ", errors));
+
+        //Ends the localized "… to 2 folder(s):" prompt (French sets a space before the colon)
+        static readonly char[] TrailingColon = { ':', '：', ' ', ' ' };
 
         static long CachedTransferWork(string path, INode indexed)
         {
@@ -3725,14 +3764,14 @@ namespace search
             var selected = nodes.ToArray();
             if (selected.Length == 0)
             {
-                Model.Status = "Nothing selected to zip";
+                Model.Status = L.Text("NothingSelected");
                 return;
             }
             var e = arg.GetEnumerator();
             bool call7zip = e.MoveNext() && e.Current == Key.NumPad7;
 
-            Model.Status = $"Zipping {FileOperationText.DescribeItems(
-                selected.Select(n => n.FullName).ToArray())}";
+            Model.Status = L.Format("Zipping", FileOperationText.DescribeItems(
+                selected.Select(n => n.FullName).ToArray()));
             INode zip;
             try
             {
@@ -3740,16 +3779,16 @@ namespace search
             }
             catch (Exception ex)
             {
-                Model.Status = $"Zip failed: {ex.Message}";
+                Model.Status = L.Format("ZipFailed", ex.Message);
                 return;
             }
             if (zip == null)
             {
-                Model.Status = "Zip failed";
+                Model.Status = L.Format("ZipFailed", L.Text("Unknown"));
                 return;
             }
             filesView.SelectedItem = zip;
-            Model.Status = $"Created \"{zip.FullName}\"";
+            Model.Status = L.Format("CreatedItem", zip.FullName);
         }
 
         #region Sorting by column headers

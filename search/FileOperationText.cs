@@ -1,12 +1,16 @@
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace search
 {
     internal static class FileOperationText
     {
-        public static string DescribeItems(IReadOnlyList<string> paths) =>
+        public static string DescribeItems(IReadOnlyList<string> paths)
+            => DescribeItems(paths, CultureInfo.CurrentUICulture);
+
+        internal static string DescribeItems(IReadOnlyList<string> paths, CultureInfo culture) =>
             paths.Count == 1
                 ? $"\"{paths[0]}\""
-                : $"{paths.Count} item(s)";
+                : string.Format(culture, L.Text("ItemCount", culture), paths.Count);
     }
 }

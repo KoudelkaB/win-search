@@ -106,12 +106,12 @@
                     <DockPanel LastChildFill="True">
                         <TextBlock DockPanel.Dock="Left" Text="{local:Loc Key=Targets}" FontWeight="DemiBold" VerticalAlignment="Center" Margin="0,0,5,0"/>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Button Content="{local:Loc Key=AddName}" ToolTip="Add the selected Name-column items as targets (Alt+N)"
+                            <Button Content="{local:Loc Key=AddName}" ToolTip="{local:Loc Key='add selected as targets', Capitalize=True, Gesture='Alt+N'}"
                                     Click="AddNameTargets_Click" Padding="5,1" Margin="6,0,0,0"/>
-                            <Button Content="{local:Loc Key=AddFolder}" ToolTip="Add the selected items' parent folders as targets (Alt+F)"
+                            <Button Content="{local:Loc Key=AddFolder}" ToolTip="{local:Loc Key='add parent Folders as targets', Capitalize=True, Gesture='Alt+F'}"
                                     Click="AddFolderTargets_Click" Padding="5,1" Margin="3,0,0,0"/>
                             <Button Click="PasteToBasket_Click" Padding="5,1" Margin="9,0,0,0"
-                                    ToolTip="Send clipboard files to every target (Alt+V)"
+                                    ToolTip="{local:Loc Key='send clipboard to all targets', Capitalize=True, Gesture='Alt+V'}"
                                     ToolTipService.ShowOnDisabled="True">
                                 <Button.Style>
                                     <Style TargetType="Button">
@@ -122,12 +122,12 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Button.Style>
-                                <AccessText Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay, StringFormat='Send clipboard to all ({0})…'}"/>
+                                <TextBlock><Run Text="{local:Loc Key='send clipboard to all targets', Capitalize=True}"/><Run Text=" ("/><Run Text="{Binding BasketTargets.Count, ElementName=Root, Mode=OneWay}"/><Run Text=")…"/></TextBlock>
                             </Button>
                         </StackPanel>
                         <Border MinHeight="28" Padding="3,1" Margin="0,0,0,0" BorderBrush="#FF9A9A9A" BorderThickness="1" CornerRadius="3">
                             <Border x:Name="BasketItemsZone" AllowDrop="True" Background="Transparent"
-                                    ToolTip="Drop on empty space to add targets"
+                                    ToolTip="{local:Loc Key=AddTarget}"
                                     DragOver="BasketAddZone_DragOver" DragLeave="BasketZone_DragLeave" Drop="BasketAddZone_Drop">
                                 <ItemsControl ItemsSource="{Binding BasketTargets, ElementName=Root}" VerticalAlignment="Center">
                                     <ItemsControl.ItemsPanel>
@@ -170,7 +170,7 @@
                 </Label>
                 <Label Content="{Binding LoadStatus}" ToolTip="{Binding LoadStatusTooltip}" Padding="0,0,5,0" />
                 <Button Content="{local:Loc Key=Drives}" Click="Drives_Click" Padding="6,0" Margin="0,0,5,0"
-                        ToolTip="Choose which drives are indexed (NTFS drives by default)"/>
+                        ToolTip="{local:Loc Key=IndexedDrives}"/>
                 <Label Content="{Binding LiveUpdateHealthText}"
                        Visibility="{Binding LiveUpdateHealthMessageVisible, Converter={StaticResource Bool2VisibilityConverter}}"
                        Padding="0,0,8,0" FontWeight="DemiBold">
@@ -264,12 +264,12 @@
                                        TextChanged="TextBox_TextChanged" PreviewKeyDown="filterTextBox_PreviewKeyDown" 
                                        Margin="0,0,0,1"/>
             <Button Grid.Row="0" Grid.Column="2" Content="{local:Loc Key=Pin}" Click="PinFilter_Click"
-                    Margin="3,0,0,1" Padding="6,0" ToolTip="Save this filter under a name (Alt+P)"/>
+                    Margin="3,0,0,1" Padding="6,0" ToolTip="{local:Loc Key='Pin current filter', Gesture='Alt+P'}"/>
             <StackPanel Grid.Row="0" Grid.Column="3" Orientation="Horizontal">
                 <Button Content="{local:Loc Key=Import}" Click="ImportWorkspace_Click" Margin="3,0,0,1" Padding="5,0"
-                        ToolTip="Replace pinned filters and targets from a settings file (Alt+I)"/>
+                        ToolTip="{local:Loc Key='Import pinned filters and targets', Gesture='Alt+I'}"/>
                 <Button Content="{local:Loc Key=Export}" Click="ExportWorkspace_Click" Margin="3,0,0,1" Padding="5,0"
-                        ToolTip="Save pinned filters and targets to a settings file (Alt+E)"/>
+                        ToolTip="{local:Loc Key='Export pinned filters and targets', Gesture='Alt+E'}"/>
             </StackPanel>
 
             <ItemsControl Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
@@ -387,7 +387,7 @@
                   VirtualizingPanel.CacheLength="0.25,0.25" VirtualizingPanel.CacheLengthUnit="Page">
             <ListView.ContextMenu>
                 <ContextMenu Opened="FilesContextMenu_Opened" Closed="FilesContextMenu_Closed">
-                    <MenuItem Header="{local:Loc Key=Open}" InputGestureText="Enter" Click="ContextOpen_Click"/>
+                    <MenuItem Header="{local:Loc Key=Open}" InputGestureText="O" Click="ContextOpen_Click"/>
                     <MenuItem Header="{local:Loc Key=OpenWith}" Tag="OpenWith"/>
                     <MenuItem Header="{local:Loc Key=OpenFolder}" Click="ContextOpenFolder_Click"/>
                     <Separator Tag="Found"/>

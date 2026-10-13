@@ -43,4 +43,99 @@ Archivos: {0}
 Tamaño total: {1}
 
 ¿Abrirlos de todos modos?</value></data>
+  <data name="new name" xml:space="preserve"><value>nuevo nombre</value></data>
+  <data name="Change last access time" xml:space="preserve"><value>Cambiar hora de último acceso</value></data>
+  <data name="ItemCount" xml:space="preserve"><value>{0} elementos</value></data>
+  <data name="ConfirmRecycle" xml:space="preserve"><value>¿Mover a la Papelera?</value></data>
+  <data name="ConfirmPermanentDelete" xml:space="preserve"><value>¿Eliminar permanentemente?</value></data>
+  <data name="PermanentDelete" xml:space="preserve"><value>Eliminar permanentemente</value></data>
+  <data name="Recycling" xml:space="preserve"><value>Moviendo a la Papelera: {0}</value></data>
+  <data name="DeletingPermanently" xml:space="preserve"><value>Eliminando permanentemente: {0}</value></data>
+  <data name="Recycled" xml:space="preserve"><value>Movido a la Papelera: {0}</value></data>
+  <data name="DeletedPermanently" xml:space="preserve"><value>Eliminado permanentemente: {0}</value></data>
+  <data name="DeleteNotCancellable" xml:space="preserve"><value>La eliminación de un solo elemento no se puede interrumpir de forma segura.</value></data>
+  <data name="CancelledAfter" xml:space="preserve"><value>Cancelado después de {0} de {1}</value></data>
+  <data name="CompletedWithErrors" xml:space="preserve"><value>Completado con errores ({0}): {1}</value></data>
+  <data name="ArchiveItemsNotDeleted" xml:space="preserve"><value>Los elementos dentro de un archivo comprimido no se pueden eliminar (omitidos: {0})</value></data>
+  <data name="OperationRunning" xml:space="preserve"><value>Otra operación de archivos sigue en curso</value></data>
+  <data name="NothingSelected" xml:space="preserve"><value>No hay nada seleccionado</value></data>
+  <data name="WorkspaceSaveFailed" xml:space="preserve"><value>No se pudieron guardar los filtros fijados y los destinos: {0}</value></data>
+  <data name="AllFiles" xml:space="preserve"><value>Todos los archivos</value></data>
+  <data name="EnterName" xml:space="preserve"><value>Escriba un nombre.</value></data>
+  <data name="PinnedNameExists" xml:space="preserve"><value>Ya existe un filtro fijado con este nombre.</value></data>
+  <data name="SettingsFileType" xml:space="preserve"><value>Configuración de File Search Manager</value></data>
+  <data name="JsonFiles" xml:space="preserve"><value>Archivos JSON</value></data>
+  <data name="SettingsExported" xml:space="preserve"><value>Configuración exportada a "{0}"</value></data>
+  <data name="SettingsExportFailed" xml:space="preserve"><value>Error al exportar la configuración</value></data>
+  <data name="ImportReplaceConfirm" xml:space="preserve"><value>¿Reemplazar los filtros fijados ({0}) y los destinos ({1}) actuales por la configuración importada?</value></data>
+  <data name="SettingsImported" xml:space="preserve"><value>Importado: filtros fijados: {0}, destinos: {1}</value></data>
+  <data name="SettingsImportFailed" xml:space="preserve"><value>Error al importar la configuración</value></data>
+  <data name="SettingsInvalid" xml:space="preserve"><value>Este no es un archivo de configuración válido de File Search Manager.</value></data>
+  <data name="TargetsAdded" xml:space="preserve"><value>Destinos añadidos: {0}</value></data>
+  <data name="NoNewTargets" xml:space="preserve"><value>No hay destinos nuevos válidos que añadir</value></data>
+  <data name="OpenTargetFailed" xml:space="preserve"><value>No se pudo abrir el destino: {0}</value></data>
+  <data name="ClipboardReadFailed" xml:space="preserve"><value>No se pueden leer los archivos del portapapeles: {0}</value></data>
+  <data name="NoSourcesOrTargets" xml:space="preserve"><value>No hay orígenes ni destinos disponibles</value></data>
+  <data name="BasketUseConfirm" xml:space="preserve"><value>¿Enviar a los destinos ({0})?</value></data>
+  <data name="BasketFolders" xml:space="preserve"><value>Carpetas: {0}</value></data>
+  <data name="BasketArchives" xml:space="preserve"><value>Archivos comprimidos que se actualizarán: {0}</value></data>
+  <data name="BasketPrograms" xml:space="preserve"><value>Programas que se iniciarán: {0}</value></data>
+  <data name="BasketUnsupported" xml:space="preserve"><value>Destinos no admitidos que se omitirán: {0}</value></data>
+  <data name="FolderTransfersIncomplete" xml:space="preserve"><value>No se completaron una o varias transferencias a carpetas.</value></data>
+  <data name="BasketUsed" xml:space="preserve"><value>Enviado a los destinos ({1}): {0}</value></data>
+  <data name="EncodingConversionFailed" xml:space="preserve"><value>Error al convertir la codificación: {0}</value></data>
+  <data name="InvalidHex" xml:space="preserve"><value>Formato hexadecimal no válido. Use bytes hexadecimales separados por espacios, por ejemplo 48 65 6C 6C 6F</value></data>
+  <data name="NothingToDrag" xml:space="preserve"><value>No hay nada que arrastrar</value></data>
+  <data name="DragFailed" xml:space="preserve"><value>Error al arrastrar: {0}</value></data>
+  <data name="ProgramStarted" xml:space="preserve"><value>Se inició "{0}", elementos soltados: {1}</value></data>
+  <data name="ProgramStartFailed" xml:space="preserve"><value>No se pudo iniciar "{0}": {1}</value></data>
+  <data name="CopiedToClipboard" xml:space="preserve"><value>Copiado al portapapeles: {0}</value></data>
+  <data name="CutToClipboard" xml:space="preserve"><value>Cortado al portapapeles: {0}</value></data>
+  <data name="AppendedToClipboard" xml:space="preserve"><value>Agregado al portapapeles: {0}</value></data>
+  <data name="ArchiveCutCopied" xml:space="preserve"><value>Los elementos dentro de un archivo comprimido no se pueden cortar; se copiaron en su lugar</value></data>
+  <data name="NothingToCopy" xml:space="preserve"><value>No hay archivos existentes que copiar</value></data>
+  <data name="ClipboardCopyFailed" xml:space="preserve"><value>Error al copiar al portapapeles: {0}</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>No se encontró ninguna herramienta de comparación (WinMerge, KDiff3 o Meld)</value></data>
+  <data name="RenameOneOnly" xml:space="preserve"><value>Solo se puede cambiar el nombre de un elemento directamente. Para varios elementos use los comandos de F2.</value></data>
+  <data name="InvalidClipboardDate" xml:space="preserve"><value>El portapapeles no contiene una fecha y hora válidas: {0}</value></data>
+  <data name="TimeChanged" xml:space="preserve"><value>Hora cambiada</value></data>
+  <data name="NoRenameValue" xml:space="preserve"><value>No se introdujo ningún valor para el cambio de nombre</value></data>
+  <data name="RenameDone" xml:space="preserve"><value>Nombre cambiado</value></data>
+  <data name="RenamedTo" xml:space="preserve"><value>"{0}" cambió de nombre a "{1}"</value></data>
+  <data name="RenameOnlyPhysical" xml:space="preserve"><value>Solo se puede cambiar directamente el nombre de un archivo o una carpeta del disco</value></data>
+  <data name="ItemNotVisible" xml:space="preserve"><value>El elemento seleccionado no está visible en este momento</value></data>
+  <data name="InvalidName" xml:space="preserve"><value>Escriba un nombre de archivo o carpeta válido.</value></data>
+  <data name="AlreadyExists" xml:space="preserve"><value>"{0}" ya existe.</value></data>
+  <data name="SelectFolderDestination" xml:space="preserve"><value>Seleccione al menos una ubicación para la nueva carpeta</value></data>
+  <data name="CreateFolderIn" xml:space="preserve"><value>Crear carpeta en {0}:</value></data>
+  <data name="CreateFolderInMany" xml:space="preserve"><value>Crear carpeta en las ubicaciones seleccionadas ({0}):</value></data>
+  <data name="CreatedItem" xml:space="preserve"><value>Se creó "{0}"</value></data>
+  <data name="NoClipboardFiles" xml:space="preserve"><value>No hay archivos en el portapapeles</value></data>
+  <data name="NoPasteDestination" xml:space="preserve"><value>No se ha seleccionado ningún destino para pegar</value></data>
+  <data name="NothingToTransfer" xml:space="preserve"><value>No hay nada que transferir</value></data>
+  <data name="TransferIntoItself" xml:space="preserve"><value>No se puede transferir "{0}" dentro de sí mismo.</value></data>
+  <data name="SkippedItem" xml:space="preserve"><value>Omitido: {0}</value></data>
+  <data name="TransferSkipped" xml:space="preserve"><value>Completado; conflictos omitidos: {0}</value></data>
+  <data name="TransferDone" xml:space="preserve"><value>Completado: {0}</value></data>
+  <data name="Zipping" xml:space="preserve"><value>Comprimiendo: {0}</value></data>
+  <data name="ZipFailed" xml:space="preserve"><value>Error al comprimir: {0}</value></data>
+  <data name="FileOperation" xml:space="preserve"><value>Operación de archivos</value></data>
+  <data name="Preparing" xml:space="preserve"><value>Preparando…</value></data>
+  <data name="ProgressCompleted" xml:space="preserve"><value>Completado: {0} de {1}</value></data>
+  <data name="ProgressElapsed" xml:space="preserve"><value>Transcurrido: {0}</value></data>
+  <data name="ProgressRemainingEstimating" xml:space="preserve"><value>Restante: calculando…</value></data>
+  <data name="ProgressRemaining" xml:space="preserve"><value>Restante: {0}</value></data>
+  <data name="ProgressRemainingAbout" xml:space="preserve"><value>Restante: aproximadamente {0}</value></data>
+  <data name="ProgressFinalizing" xml:space="preserve"><value>Finalizando…</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>Cancelando…</value></data>
+  <data name="WebFilesNotPassed" xml:space="preserve"><value>No se pudieron pasar los archivos a la página: {0}</value></data>
+  <data name="WebRuntimeTooOld" xml:space="preserve"><value>Microsoft Edge WebView2 Runtime instalado no puede abrir archivos en esta ventana (se necesita la versión {0} o posterior). En su lugar, suelte los archivos en la página.</value></data>
+  <data name="WebCouldNotRead" xml:space="preserve"><value>No se pudo leer:</value></data>
+  <data name="OriginService" xml:space="preserve"><value>servicio</value></data>
+  <data name="OriginDirect" xml:space="preserve"><value>acceso directo</value></data>
+  <data name="OriginHelper" xml:space="preserve"><value>asistente de administrador</value></data>
+  <data name="OriginWalk" xml:space="preserve"><value>recorrido de carpetas</value></data>
+  <data name="OriginHint" xml:space="preserve"><value>instale el servicio de File Search Manager o acepte el aviso de elevación para indexar NTFS al instante</value></data>
+  <data name="DriveUnavailableRetrying" xml:space="preserve"><value>red no disponible; reintentando</value></data>
+  <data name="DriveScanFailedRetrying" xml:space="preserve"><value>error de análisis; reintentando</value></data>
 </root>

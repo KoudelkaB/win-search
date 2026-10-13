@@ -3224,7 +3224,7 @@ namespace search.Models
                                 keepExisting = hasExplicitSelection && explicitlyEnabled;
                                 if (keepExisting)
                                 {
-                                    unavailableDrives[key] = "network unavailable; retrying";
+                                    unavailableDrives[key] = search.L.Text("DriveUnavailableRetrying");
                                     ScheduleDriveRetry(root);
                                     ReportDriveState(root, "not ready; retry scheduled");
                                 }
@@ -3307,7 +3307,7 @@ namespace search.Models
                             //gets another bounded attempt instead of silently vanishing forever.
                             if (DriveSelectionStore.TryGetExplicit(root, out var enabled) && enabled)
                             {
-                                unavailableDrives[key] = "scan failed; retrying";
+                                unavailableDrives[key] = search.L.Text("DriveScanFailedRetrying");
                                 ScheduleDriveRetry(root);
                                 ReportDriveState(root, $"scan failed; retry scheduled ({e.Message})");
                             }
@@ -3671,15 +3671,15 @@ namespace search.Models
                     ? loadedOrigin : MftOrigin.Walk;
                 var originText = origin switch
                 {
-                    MftOrigin.Service => "service",
-                    MftOrigin.Direct => "direct",
-                    MftOrigin.Broker => "admin helper",
-                    _ => "folder walk"
+                    MftOrigin.Service => search.L.Text("OriginService"),
+                    MftOrigin.Direct => search.L.Text("OriginDirect"),
+                    MftOrigin.Broker => search.L.Text("OriginHelper"),
+                    _ => search.L.Text("OriginWalk")
                 };
                 return $"{key} {originText}";
             }));
             var hint = ntfsWalked
-                ? " - install the File Search Manager service or accept the admin prompt for instant NTFS indexing"
+                ? " - " + search.L.Text("OriginHint")
                 : "";
             return $" ({parts}){hint}";
         }
@@ -3875,7 +3875,7 @@ namespace search.Models
             }
             catch (Exception ex)
             {
-                throw new ArgumentException($"Invalid hexadecimal format: {ex.Message}. Use space-separated hex bytes (e.g., '48 65 6C 6C 6F')");
+                throw new ArgumentException(search.L.Text("InvalidHex"), ex);
             }
         }
     }

@@ -19,6 +19,16 @@ namespace search.Tests
             => Assert.Equal(expected, MainWindow.SizeAsWork(size));
 
         [Theory]
+        [InlineData(FileTransferAction.Copy, "en", "Copy")]
+        [InlineData(FileTransferAction.Move, "en", "Move")]
+        [InlineData(FileTransferAction.SymbolicLink, "en", "Symbolic link")]
+        [InlineData(FileTransferAction.HardLink, "en", "Hard link / directory junction")]
+        [InlineData(FileTransferAction.SymbolicLink, "cs", "Symbolický odkaz")]
+        public void StatusTextsNameTheActionAsTheActionDialogDoes(
+            FileTransferAction action, string cultureName, string expected)
+            => Assert.Equal(expected, MainWindow.ActionName(action, CultureInfo.GetCultureInfo(cultureName)));
+
+        [Theory]
         [InlineData(100UL, 100UL, 0L)]
         [InlineData(90UL, 100UL, 0L)]
         [InlineData(579UL, 123UL, 456L)]
@@ -89,11 +99,14 @@ namespace search.Tests
             Assert.Equal($"\"{path}\"", FileOperationText.DescribeItems(new[] { path }));
         }
 
-        [Fact]
-        public void MultipleItemDescriptionKeepsTheCount()
+        [Theory]
+        [InlineData("en", "2 items")]
+        [InlineData("cs", "položky (2)")]
+        public void MultipleItemDescriptionKeepsTheCount(string cultureName, string expected)
             => Assert.Equal(
-                "2 item(s)",
-                FileOperationText.DescribeItems(new[] { @"C:\one", @"C:\two" }));
+                expected,
+                FileOperationText.DescribeItems(new[] { @"C:\one", @"C:\two" },
+                    CultureInfo.GetCultureInfo(cultureName)));
 
         [Fact]
         public void NativeCancellableCopyPreservesFileContents()

@@ -89,7 +89,7 @@ Saisir autre chose que `Enter` dans le champ de recherche efface l’état actue
 ## Actions à la souris
 
 - Cliquez, Ctrl+cliquez ou Maj+cliquez sur les résultats pour sélectionner des éléments individuels ou des plages.
-- Double-cliquez sur un nom de fichier ou de dossier pour filtrer dans cet élément.
+- Double-cliquez sur un nom de dossier ou d’archive pour filtrer dans cet élément. Un double-clic sur tout autre fichier l’ouvre.
 - Double-cliquez sur la colonne du dossier pour ouvrir l’Explorateur avec l’élément sélectionné.
 - Ctrl + clic droit sur un résultat l’ouvre avec l’action Windows par défaut.
 - Cliquez sur un en-tête de colonne pour trier selon cette colonne.
@@ -161,7 +161,7 @@ Donnez le focus à la liste de résultats et appuyez sur une touche affichée da
 
 Commandes courantes :
 
-- `Enter` : filtrer dans les dossiers sélectionnés.
+- `Enter` : filtrer dans les dossiers et archives sélectionnés. Si seuls d’autres fichiers sont sélectionnés, ils sont ouverts.
 - `Delete` : déplacer les éléments sélectionnés vers la Corbeille après confirmation.
 - `Shift+Delete` : supprimer définitivement les éléments sélectionnés sans confirmation.
 - `Ctrl+C` : copie standard compatible avec le shell.

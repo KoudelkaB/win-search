@@ -68,7 +68,7 @@ namespace search
             catch (Exception ex)
             {
                 $"AutoCompleteTextBox.OpenList exception {ex}".Debug();
-                MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(ex.Message, L.Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error);
                 Console.Write(ex);
             }
         }
@@ -88,7 +88,7 @@ namespace search
             catch (Exception ex)
             {
                 $"AutoCompleteTextBox.CloseList exception {ex}".Debug();
-                MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(ex.Message, L.Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error);
                 Console.Write(ex);
             }
         }
@@ -113,7 +113,7 @@ namespace search
             catch (Exception ex)
             {
                 $"AutoCompleteTextBox.UpdateSuggestions exception {ex}".Debug();
-                MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(ex.Message, L.Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error);
                 Console.Write(ex);
             }
         }
@@ -149,7 +149,7 @@ namespace search
                 catch (Exception ex)
                 {
                     $"AutoCompleteTextBox.AutoTextBox_TextChanged exception {ex}".Debug();
-                    MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show(ex.Message, L.Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error);
                     Console.Write(ex);
                 }
             }

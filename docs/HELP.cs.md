@@ -89,7 +89,7 @@ Napsání čehokoli jiného než `Enter` do pole hledání vymaže aktuální st
 ## Práce s myší
 
 - Klepnutím, Ctrl+klepnutím nebo Shift+klepnutím na výsledky vyberete jednotlivé položky nebo rozsahy.
-- Dvojitým klepnutím na název souboru nebo složky se do dané položky zafiltrujete.
+- Dvojitým klepnutím na název složky nebo archivu se do něj zafiltrujete. Jiný soubor se dvojitým klepnutím otevře.
 - Dvojitým klepnutím na sloupec složky otevřete Průzkumníka s vybranou položkou.
 - Ctrl + klepnutí pravým tlačítkem na výsledek jej otevře výchozí akcí Windows.
 - Klepnutím na záhlaví sloupce seřadíte podle daného sloupce.
@@ -161,7 +161,7 @@ Přepněte fokus na seznam výsledků a stiskněte klávesu zobrazenou v panelu 
 
 Běžné příkazy:
 
-- `Enter`: zafiltrovat do vybraných složek.
+- `Enter`: zafiltrovat do vybraných složek a archivů. Jsou-li vybrány jen jiné soubory, otevřou se.
 - `Delete`: přesunout vybrané položky do koše po potvrzení.
 - `Shift+Delete`: trvale odstranit vybrané položky bez potvrzení.
 - `Ctrl+C`: standardní kopírování kompatibilní se shellem.

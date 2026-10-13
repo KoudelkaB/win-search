@@ -89,7 +89,7 @@ Digitar qualquer coisa que não seja `Enter` no campo de pesquisa limpa o estado
 ## Ações com o mouse
 
 - Clique, Ctrl+clique ou Shift+clique nos resultados para selecionar itens individuais ou intervalos.
-- Clique duas vezes no nome de um arquivo ou pasta para filtrar dentro desse item.
+- Clique duas vezes no nome de uma pasta ou de um arquivo compactado para filtrar dentro desse item. Clicar duas vezes em qualquer outro arquivo o abre.
 - Clique duas vezes na coluna de pasta para abrir o Explorador de Arquivos com o item selecionado.
 - Ctrl + clique com o botão direito em um resultado o abre com a ação padrão do Windows.
 - Clique no cabeçalho de uma coluna para classificar por ela.
@@ -161,7 +161,7 @@ Coloque o foco na lista de resultados e pressione uma tecla mostrada no painel *
 
 Comandos comuns:
 
-- `Enter`: filtrar dentro das pastas selecionadas.
+- `Enter`: filtrar dentro das pastas e dos arquivos compactados selecionados. Se apenas outros arquivos estiverem selecionados, eles são abertos.
 - `Delete`: mover os itens selecionados para a Lixeira após confirmação.
 - `Shift+Delete`: excluir permanentemente os itens selecionados sem confirmação.
 - `Ctrl+C`: cópia padrão compatível com o shell.

@@ -23,6 +23,21 @@ namespace search
             => string.Format(CultureInfo.CurrentCulture, Text(key), args);
 
         /// <summary>
+        /// The text starting with a capital letter. Command hints are written in lower case
+        /// ("add selected as targets"); a button, menu item or tooltip of the same command
+        /// reuses that translation instead of carrying a second, English-only wording.
+        /// </summary>
+        public static string Caption(string key) => Caption(key, CultureInfo.CurrentUICulture);
+
+        internal static string Caption(string key, CultureInfo culture)
+        {
+            var text = Text(key, culture);
+            return text.Length > 0 && char.IsLower(text[0])
+                ? char.ToUpper(text[0], culture) + text[1..]
+                : text;
+        }
+
+        /// <summary>
         /// The user's Windows regional format. App.ApplyCulture replaces CurrentCulture with the
         /// UI language, so text typed or copied in the regional format ("13.08.2025 11:35") has
         /// to be parsed with this one - under an English UI it would swap day and month or fail.
@@ -51,6 +66,14 @@ namespace search
         public LocExtension(string key) => Key = key;
         [ConstructorArgument("key")]
         public string Key { get; set; }
-        public override object ProvideValue(IServiceProvider serviceProvider) => L.Text(Key);
+        /// <summary>Start with a capital letter - a command hint reused as a caption or tooltip</summary>
+        public bool Capitalize { get; set; }
+        /// <summary>Keyboard shortcut of the command, appended in brackets ("Alt+N")</summary>
+        public string Gesture { get; set; }
+        public override object ProvideValue(IServiceProvider serviceProvider)
+        {
+            var text = Capitalize ? L.Caption(Key) : L.Text(Key);
+            return string.IsNullOrEmpty(Gesture) ? text : $"{text} ({Gesture})";
+        }
     }
 }

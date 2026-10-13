@@ -89,7 +89,7 @@ Escribir cualquier cosa distinta de `Enter` en el campo de búsqueda borra el es
 ## Acciones con el ratón
 
 - Haga clic, Ctrl+clic o Mayús+clic en los resultados para seleccionar elementos individuales o rangos.
-- Haga doble clic en el nombre de un archivo o carpeta para filtrar dentro de ese elemento.
+- Haga doble clic en el nombre de una carpeta o de un archivo comprimido para filtrar dentro de ese elemento. El doble clic en cualquier otro archivo lo abre.
 - Haga doble clic en la columna de carpeta para abrir el Explorador con el elemento seleccionado.
 - Ctrl + clic derecho en un resultado lo abre con la acción predeterminada de Windows.
 - Haga clic en el encabezado de una columna para ordenar por ella.
@@ -161,7 +161,7 @@ Enfoque la lista de resultados y pulse una tecla mostrada en el panel **Pistas**
 
 Comandos habituales:
 
-- `Enter`: filtrar dentro de las carpetas seleccionadas.
+- `Enter`: filtrar dentro de las carpetas y los archivos comprimidos seleccionados. Si solo hay otros archivos seleccionados, se abren.
 - `Delete`: mover los elementos seleccionados a la Papelera tras confirmar.
 - `Shift+Delete`: eliminar permanentemente los elementos seleccionados sin confirmación.
 - `Ctrl+C`: copia estándar compatible con el shell.

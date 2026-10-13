@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -54,11 +55,73 @@ namespace search
                     else CancelPendingCommand();
                     break;
                 default: // Add key to the command
-                    commandKeys.Add(key);
+                    commandKeys.Add(AsCommandKey(key));
                     break;
             }
             OnChange();
         }
+
+        /// <summary>
+        /// The key as the command tree names it. "+" is a command key (C then + appends to the
+        /// clipboard), but only the numeric keypad sends Key.Add. On the main block the
+        /// character sits on a layout-dependent key - OemPlus on a US keyboard, the "1" key on
+        /// a Czech one. Such a key counts as "+" only where a "+" command is offered and the key
+        /// has no command of its own, so digits and typed names are read as before.
+        /// A US keyboard types "+" with Shift held. That Shift has already been recorded as a
+        /// key of the sequence, where it matches no command and would turn "C, +" into a plain
+        /// C with a Shift argument - it only produced the character, so it is taken back out.
+        /// </summary>
+        Key AsCommandKey(Key key)
+        {
+            if (key == Key.Add) return key;
+            var level = Commands;
+            List<int> typingShifts = null;
+            for (var index = 0; index < commandKeys.Count; index++)
+            {
+                var pressed = commandKeys[index];
+                var next = level.Children.FirstOrDefault(c => c.Key == pressed);
+                if (next != null) level = next;
+                // A Shift with a command of its own was followed above; any other is a modifier
+                else if (pressed is Key.LeftShift or Key.RightShift) (typingShifts ??= new()).Add(index);
+                else return key;
+            }
+            if (level.Children.All(c => c.Key != Key.Add) || level.Children.Any(c => c.Key == key))
+                return key;
+            var shiftHeld = keysDown.Contains(Key.LeftShift) || keysDown.Contains(Key.RightShift);
+            if (!TypesPlus(key, shiftHeld)) return key;
+            if (typingShifts != null)
+                for (var i = typingShifts.Count - 1; i >= 0; i--) commandKeys.RemoveAt(typingShifts[i]);
+            return Key.Add;
+        }
+
+        /// <summary>
+        /// The key carries "+": by its name, or as the character it types on the current
+        /// keyboard layout - alone, or with Shift when that is held
+        /// </summary>
+        internal static bool TypesPlus(Key key, bool shiftHeld = false)
+        {
+            if (key == Key.OemPlus) return true;
+            var virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
+            if (virtualKey == 0) return false;
+            if (!shiftHeld)
+                return (char)(MapVirtualKey(virtualKey, VirtualKeyToChar) & 0xFFFF) == '+';
+            var keyboard = new byte[256];
+            keyboard[VirtualKeyShift] = 0x80;
+            var typed = new char[4];
+            return ToUnicode(virtualKey, 0, keyboard, typed, typed.Length, KeepKeyboardState) == 1
+                && typed[0] == '+';
+        }
+
+        const uint VirtualKeyToChar = 2; // MAPVK_VK_TO_CHAR
+        const int VirtualKeyShift = 0x10; // VK_SHIFT
+        const uint KeepKeyboardState = 4; // ToUnicode: leave pending dead keys untouched
+
+        [DllImport("user32.dll")]
+        static extern uint MapVirtualKey(uint code, uint mapType);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int ToUnicode(uint virtualKey, uint scanCode, byte[] keyboardState,
+            [Out] char[] buffer, int bufferSize, uint flags);
 
         /// <summary>
         /// Fired before command execution
@@ -178,6 +241,9 @@ namespace search
             Key.OemBackslash => "\\",
             Key.Decimal or Key.OemPeriod => ".",
             Key.OemComma => ",",
+            // Named as on the keyboard, in the help and in the menus - not "Return"/"Escape"
+            Key.Return => "Enter",
+            Key.Escape => "Esc",
             _ => key.ToString()
         };
     }

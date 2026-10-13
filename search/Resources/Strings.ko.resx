@@ -43,4 +43,99 @@
 전체 크기: {1}
 
 그래도 여시겠습니까?</value></data>
+  <data name="new name" xml:space="preserve"><value>새 이름</value></data>
+  <data name="Change last access time" xml:space="preserve"><value>마지막 액세스 시간 변경</value></data>
+  <data name="ItemCount" xml:space="preserve"><value>항목 {0}개</value></data>
+  <data name="ConfirmRecycle" xml:space="preserve"><value>휴지통으로 이동하시겠습니까?</value></data>
+  <data name="ConfirmPermanentDelete" xml:space="preserve"><value>영구적으로 삭제하시겠습니까?</value></data>
+  <data name="PermanentDelete" xml:space="preserve"><value>영구 삭제</value></data>
+  <data name="Recycling" xml:space="preserve"><value>휴지통으로 이동 중: {0}</value></data>
+  <data name="DeletingPermanently" xml:space="preserve"><value>영구 삭제 중: {0}</value></data>
+  <data name="Recycled" xml:space="preserve"><value>휴지통으로 이동함: {0}</value></data>
+  <data name="DeletedPermanently" xml:space="preserve"><value>영구 삭제함: {0}</value></data>
+  <data name="DeleteNotCancellable" xml:space="preserve"><value>단일 항목 삭제는 안전하게 중단할 수 없습니다.</value></data>
+  <data name="CancelledAfter" xml:space="preserve"><value>{1}개 중 {0}개 후 취소됨</value></data>
+  <data name="CompletedWithErrors" xml:space="preserve"><value>오류와 함께 완료됨 ({0}): {1}</value></data>
+  <data name="ArchiveItemsNotDeleted" xml:space="preserve"><value>아카이브 안의 항목은 삭제할 수 없습니다(건너뜀: {0})</value></data>
+  <data name="OperationRunning" xml:space="preserve"><value>다른 파일 작업이 아직 실행 중입니다</value></data>
+  <data name="NothingSelected" xml:space="preserve"><value>선택한 항목이 없습니다</value></data>
+  <data name="WorkspaceSaveFailed" xml:space="preserve"><value>고정된 필터와 대상을 저장할 수 없습니다: {0}</value></data>
+  <data name="AllFiles" xml:space="preserve"><value>모든 파일</value></data>
+  <data name="EnterName" xml:space="preserve"><value>이름을 입력하세요.</value></data>
+  <data name="PinnedNameExists" xml:space="preserve"><value>이 이름의 고정된 필터가 이미 있습니다.</value></data>
+  <data name="SettingsFileType" xml:space="preserve"><value>File Search Manager 설정</value></data>
+  <data name="JsonFiles" xml:space="preserve"><value>JSON 파일</value></data>
+  <data name="SettingsExported" xml:space="preserve"><value>설정을 "{0}"(으)로 내보냈습니다</value></data>
+  <data name="SettingsExportFailed" xml:space="preserve"><value>설정 내보내기 실패</value></data>
+  <data name="ImportReplaceConfirm" xml:space="preserve"><value>현재 고정된 필터({0})와 대상({1})을 가져온 설정으로 바꾸시겠습니까?</value></data>
+  <data name="SettingsImported" xml:space="preserve"><value>가져옴 - 고정된 필터: {0}, 대상: {1}</value></data>
+  <data name="SettingsImportFailed" xml:space="preserve"><value>설정 가져오기 실패</value></data>
+  <data name="SettingsInvalid" xml:space="preserve"><value>올바른 File Search Manager 설정 파일이 아닙니다.</value></data>
+  <data name="TargetsAdded" xml:space="preserve"><value>추가된 대상: {0}</value></data>
+  <data name="NoNewTargets" xml:space="preserve"><value>추가할 새 유효한 대상이 없습니다</value></data>
+  <data name="OpenTargetFailed" xml:space="preserve"><value>대상을 열 수 없습니다: {0}</value></data>
+  <data name="ClipboardReadFailed" xml:space="preserve"><value>클립보드에서 파일을 읽을 수 없습니다: {0}</value></data>
+  <data name="NoSourcesOrTargets" xml:space="preserve"><value>사용 가능한 원본 또는 대상이 없습니다</value></data>
+  <data name="BasketUseConfirm" xml:space="preserve"><value>대상({0})으로 보내시겠습니까?</value></data>
+  <data name="BasketFolders" xml:space="preserve"><value>폴더: {0}</value></data>
+  <data name="BasketArchives" xml:space="preserve"><value>업데이트할 아카이브: {0}</value></data>
+  <data name="BasketPrograms" xml:space="preserve"><value>시작할 프로그램: {0}</value></data>
+  <data name="BasketUnsupported" xml:space="preserve"><value>건너뛸 지원되지 않는 대상: {0}</value></data>
+  <data name="FolderTransfersIncomplete" xml:space="preserve"><value>하나 이상의 폴더 전송이 완료되지 않았습니다.</value></data>
+  <data name="BasketUsed" xml:space="preserve"><value>대상({1})으로 보냄: {0}</value></data>
+  <data name="EncodingConversionFailed" xml:space="preserve"><value>인코딩 변환 실패: {0}</value></data>
+  <data name="InvalidHex" xml:space="preserve"><value>16진수 형식이 잘못되었습니다. 공백으로 구분된 16진수 바이트를 사용하세요(예: 48 65 6C 6C 6F)</value></data>
+  <data name="NothingToDrag" xml:space="preserve"><value>끌 수 있는 항목이 없습니다</value></data>
+  <data name="DragFailed" xml:space="preserve"><value>끌기 실패: {0}</value></data>
+  <data name="ProgramStarted" xml:space="preserve"><value>"{0}"을(를) 시작했습니다. 놓은 항목: {1}</value></data>
+  <data name="ProgramStartFailed" xml:space="preserve"><value>"{0}"을(를) 시작할 수 없습니다: {1}</value></data>
+  <data name="CopiedToClipboard" xml:space="preserve"><value>클립보드에 복사함: {0}</value></data>
+  <data name="CutToClipboard" xml:space="preserve"><value>클립보드로 잘라냄: {0}</value></data>
+  <data name="AppendedToClipboard" xml:space="preserve"><value>클립보드에 추가함: {0}</value></data>
+  <data name="ArchiveCutCopied" xml:space="preserve"><value>아카이브 안의 항목은 잘라낼 수 없어 대신 복사했습니다</value></data>
+  <data name="NothingToCopy" xml:space="preserve"><value>복사할 기존 파일이 없습니다</value></data>
+  <data name="ClipboardCopyFailed" xml:space="preserve"><value>클립보드에 복사 실패: {0}</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>비교 도구를 찾을 수 없습니다(WinMerge, KDiff3 또는 Meld)</value></data>
+  <data name="RenameOneOnly" xml:space="preserve"><value>제자리에서 이름을 바꿀 수 있는 항목은 하나뿐입니다. 여러 항목에는 F2 명령을 사용하세요.</value></data>
+  <data name="InvalidClipboardDate" xml:space="preserve"><value>클립보드에 올바른 날짜와 시간이 없습니다: {0}</value></data>
+  <data name="TimeChanged" xml:space="preserve"><value>시간을 변경했습니다</value></data>
+  <data name="NoRenameValue" xml:space="preserve"><value>이름 바꾸기에 사용할 값이 입력되지 않았습니다</value></data>
+  <data name="RenameDone" xml:space="preserve"><value>이름을 바꿨습니다</value></data>
+  <data name="RenamedTo" xml:space="preserve"><value>"{0}"을(를) "{1}"(으)로 바꿨습니다</value></data>
+  <data name="RenameOnlyPhysical" xml:space="preserve"><value>제자리에서 이름을 바꿀 수 있는 것은 디스크의 파일 또는 폴더뿐입니다</value></data>
+  <data name="ItemNotVisible" xml:space="preserve"><value>선택한 항목이 현재 보이지 않습니다</value></data>
+  <data name="InvalidName" xml:space="preserve"><value>올바른 파일 또는 폴더 이름을 입력하세요.</value></data>
+  <data name="AlreadyExists" xml:space="preserve"><value>"{0}"이(가) 이미 있습니다.</value></data>
+  <data name="SelectFolderDestination" xml:space="preserve"><value>새 폴더의 위치를 하나 이상 선택하세요</value></data>
+  <data name="CreateFolderIn" xml:space="preserve"><value>{0}에 폴더 만들기:</value></data>
+  <data name="CreateFolderInMany" xml:space="preserve"><value>선택한 위치({0})에 폴더 만들기:</value></data>
+  <data name="CreatedItem" xml:space="preserve"><value>"{0}"을(를) 만들었습니다</value></data>
+  <data name="NoClipboardFiles" xml:space="preserve"><value>클립보드에 파일이 없습니다</value></data>
+  <data name="NoPasteDestination" xml:space="preserve"><value>붙여넣을 위치가 선택되지 않았습니다</value></data>
+  <data name="NothingToTransfer" xml:space="preserve"><value>전송할 항목이 없습니다</value></data>
+  <data name="TransferIntoItself" xml:space="preserve"><value>"{0}"을(를) 자기 자신 안으로 전송할 수 없습니다.</value></data>
+  <data name="SkippedItem" xml:space="preserve"><value>건너뜀: {0}</value></data>
+  <data name="TransferSkipped" xml:space="preserve"><value>완료됨. 건너뛴 충돌: {0}</value></data>
+  <data name="TransferDone" xml:space="preserve"><value>완료됨: {0}</value></data>
+  <data name="Zipping" xml:space="preserve"><value>압축 중: {0}</value></data>
+  <data name="ZipFailed" xml:space="preserve"><value>압축 실패: {0}</value></data>
+  <data name="FileOperation" xml:space="preserve"><value>파일 작업</value></data>
+  <data name="Preparing" xml:space="preserve"><value>준비 중…</value></data>
+  <data name="ProgressCompleted" xml:space="preserve"><value>완료: {0} / {1}</value></data>
+  <data name="ProgressElapsed" xml:space="preserve"><value>경과: {0}</value></data>
+  <data name="ProgressRemainingEstimating" xml:space="preserve"><value>남은 시간: 계산 중…</value></data>
+  <data name="ProgressRemaining" xml:space="preserve"><value>남은 시간: {0}</value></data>
+  <data name="ProgressRemainingAbout" xml:space="preserve"><value>남은 시간: 약 {0}</value></data>
+  <data name="ProgressFinalizing" xml:space="preserve"><value>마무리 중…</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>취소 중…</value></data>
+  <data name="WebFilesNotPassed" xml:space="preserve"><value>파일을 페이지에 전달할 수 없습니다: {0}</value></data>
+  <data name="WebRuntimeTooOld" xml:space="preserve"><value>설치된 Microsoft Edge WebView2 Runtime은 이 창에서 파일을 열 수 없습니다(버전 {0} 이상 필요). 대신 파일을 페이지에 끌어다 놓으세요.</value></data>
+  <data name="WebCouldNotRead" xml:space="preserve"><value>읽을 수 없음:</value></data>
+  <data name="OriginService" xml:space="preserve"><value>서비스</value></data>
+  <data name="OriginDirect" xml:space="preserve"><value>직접 액세스</value></data>
+  <data name="OriginHelper" xml:space="preserve"><value>관리자 도우미</value></data>
+  <data name="OriginWalk" xml:space="preserve"><value>폴더 검색</value></data>
+  <data name="OriginHint" xml:space="preserve"><value>NTFS를 즉시 인덱싱하려면 File Search Manager 서비스를 설치하거나 권한 상승 요청을 승인하세요</value></data>
+  <data name="DriveUnavailableRetrying" xml:space="preserve"><value>네트워크를 사용할 수 없음, 다시 시도 중</value></data>
+  <data name="DriveScanFailedRetrying" xml:space="preserve"><value>검색 실패, 다시 시도 중</value></data>
 </root>

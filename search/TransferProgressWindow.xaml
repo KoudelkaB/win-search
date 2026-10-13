@@ -1,7 +1,8 @@
 <Window x:Class="search.TransferProgressWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="File operation"
+        xmlns:local="clr-namespace:search"
+        Title="{local:Loc Key=FileOperation}"
         Width="560"
         SizeToContent="Height"
         ResizeMode="NoResize"
@@ -22,19 +23,19 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="ProgressText" Text="Starting…"/>
-            <TextBlock x:Name="BytesText" Grid.Column="2" Text="0 B of 0 B"/>
+            <TextBlock x:Name="ProgressText"/>
+            <TextBlock x:Name="BytesText" Grid.Column="2"/>
         </Grid>
         <Grid Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="ElapsedText" Text="Elapsed: 0:00"/>
-            <TextBlock x:Name="RemainingText" Grid.Column="1" Text="Remaining: estimating…"/>
+            <TextBlock x:Name="ElapsedText"/>
+            <TextBlock x:Name="RemainingText" Grid.Column="1"/>
         </Grid>
         <Button x:Name="CancelButton"
-                Content="Cancel"
+                Content="{local:Loc Key=Cancel}"
                 Width="80"
                 HorizontalAlignment="Right"
                 ToolTipService.ShowOnDisabled="True"

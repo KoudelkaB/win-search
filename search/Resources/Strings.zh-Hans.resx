@@ -43,4 +43,99 @@
 总大小: {1}
 
 仍要打开吗？</value></data>
+  <data name="new name" xml:space="preserve"><value>新名称</value></data>
+  <data name="Change last access time" xml:space="preserve"><value>更改最后访问时间</value></data>
+  <data name="ItemCount" xml:space="preserve"><value>{0} 个项目</value></data>
+  <data name="ConfirmRecycle" xml:space="preserve"><value>移到回收站?</value></data>
+  <data name="ConfirmPermanentDelete" xml:space="preserve"><value>永久删除?</value></data>
+  <data name="PermanentDelete" xml:space="preserve"><value>永久删除</value></data>
+  <data name="Recycling" xml:space="preserve"><value>正在移到回收站: {0}</value></data>
+  <data name="DeletingPermanently" xml:space="preserve"><value>正在永久删除: {0}</value></data>
+  <data name="Recycled" xml:space="preserve"><value>已移到回收站: {0}</value></data>
+  <data name="DeletedPermanently" xml:space="preserve"><value>已永久删除: {0}</value></data>
+  <data name="DeleteNotCancellable" xml:space="preserve"><value>无法安全地中断单个项目的删除。</value></data>
+  <data name="CancelledAfter" xml:space="preserve"><value>已在 {0}/{1} 后取消</value></data>
+  <data name="CompletedWithErrors" xml:space="preserve"><value>已完成但有错误 ({0}): {1}</value></data>
+  <data name="ArchiveItemsNotDeleted" xml:space="preserve"><value>无法删除归档内的项目 (已跳过: {0})</value></data>
+  <data name="OperationRunning" xml:space="preserve"><value>另一个文件操作仍在进行</value></data>
+  <data name="NothingSelected" xml:space="preserve"><value>未选择任何项目</value></data>
+  <data name="WorkspaceSaveFailed" xml:space="preserve"><value>无法保存固定的筛选器和目标: {0}</value></data>
+  <data name="AllFiles" xml:space="preserve"><value>所有文件</value></data>
+  <data name="EnterName" xml:space="preserve"><value>请输入名称。</value></data>
+  <data name="PinnedNameExists" xml:space="preserve"><value>已存在同名的固定筛选器。</value></data>
+  <data name="SettingsFileType" xml:space="preserve"><value>File Search Manager 设置</value></data>
+  <data name="JsonFiles" xml:space="preserve"><value>JSON 文件</value></data>
+  <data name="SettingsExported" xml:space="preserve"><value>设置已导出到 "{0}"</value></data>
+  <data name="SettingsExportFailed" xml:space="preserve"><value>设置导出失败</value></data>
+  <data name="ImportReplaceConfirm" xml:space="preserve"><value>是否用导入的设置替换当前的固定筛选器 ({0}) 和目标 ({1})?</value></data>
+  <data name="SettingsImported" xml:space="preserve"><value>已导入 - 固定筛选器: {0}, 目标: {1}</value></data>
+  <data name="SettingsImportFailed" xml:space="preserve"><value>设置导入失败</value></data>
+  <data name="SettingsInvalid" xml:space="preserve"><value>这不是有效的 File Search Manager 设置文件。</value></data>
+  <data name="TargetsAdded" xml:space="preserve"><value>已添加目标: {0}</value></data>
+  <data name="NoNewTargets" xml:space="preserve"><value>没有可添加的新有效目标</value></data>
+  <data name="OpenTargetFailed" xml:space="preserve"><value>无法打开目标: {0}</value></data>
+  <data name="ClipboardReadFailed" xml:space="preserve"><value>无法从剪贴板读取文件: {0}</value></data>
+  <data name="NoSourcesOrTargets" xml:space="preserve"><value>没有可用的源或目标</value></data>
+  <data name="BasketUseConfirm" xml:space="preserve"><value>是否发送到目标 ({0})?</value></data>
+  <data name="BasketFolders" xml:space="preserve"><value>文件夹: {0}</value></data>
+  <data name="BasketArchives" xml:space="preserve"><value>要更新的归档: {0}</value></data>
+  <data name="BasketPrograms" xml:space="preserve"><value>要启动的程序: {0}</value></data>
+  <data name="BasketUnsupported" xml:space="preserve"><value>要跳过的不受支持的目标: {0}</value></data>
+  <data name="FolderTransfersIncomplete" xml:space="preserve"><value>一个或多个文件夹传输未完成。</value></data>
+  <data name="BasketUsed" xml:space="preserve"><value>已发送到目标 ({1}): {0}</value></data>
+  <data name="EncodingConversionFailed" xml:space="preserve"><value>编码转换失败: {0}</value></data>
+  <data name="InvalidHex" xml:space="preserve"><value>十六进制格式无效。请使用空格分隔的十六进制字节，例如 48 65 6C 6C 6F</value></data>
+  <data name="NothingToDrag" xml:space="preserve"><value>没有可拖动的项目</value></data>
+  <data name="DragFailed" xml:space="preserve"><value>拖动失败: {0}</value></data>
+  <data name="ProgramStarted" xml:space="preserve"><value>已启动 "{0}"，拖放的项目: {1}</value></data>
+  <data name="ProgramStartFailed" xml:space="preserve"><value>无法启动 "{0}": {1}</value></data>
+  <data name="CopiedToClipboard" xml:space="preserve"><value>已复制到剪贴板: {0}</value></data>
+  <data name="CutToClipboard" xml:space="preserve"><value>已剪切到剪贴板: {0}</value></data>
+  <data name="AppendedToClipboard" xml:space="preserve"><value>已追加到剪贴板: {0}</value></data>
+  <data name="ArchiveCutCopied" xml:space="preserve"><value>无法剪切归档内的项目，已改为复制</value></data>
+  <data name="NothingToCopy" xml:space="preserve"><value>没有可复制的现有文件</value></data>
+  <data name="ClipboardCopyFailed" xml:space="preserve"><value>复制到剪贴板失败: {0}</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>未找到比较工具 (WinMerge、KDiff3 或 Meld)</value></data>
+  <data name="RenameOneOnly" xml:space="preserve"><value>只能就地重命名一个项目。多个项目请使用 F2 命令。</value></data>
+  <data name="InvalidClipboardDate" xml:space="preserve"><value>剪贴板中没有有效的日期和时间: {0}</value></data>
+  <data name="TimeChanged" xml:space="preserve"><value>已更改时间</value></data>
+  <data name="NoRenameValue" xml:space="preserve"><value>未输入重命名所需的值</value></data>
+  <data name="RenameDone" xml:space="preserve"><value>已重命名</value></data>
+  <data name="RenamedTo" xml:space="preserve"><value>已将 "{0}" 重命名为 "{1}"</value></data>
+  <data name="RenameOnlyPhysical" xml:space="preserve"><value>只能就地重命名磁盘上的文件或文件夹</value></data>
+  <data name="ItemNotVisible" xml:space="preserve"><value>所选项目当前不可见</value></data>
+  <data name="InvalidName" xml:space="preserve"><value>请输入有效的文件或文件夹名称。</value></data>
+  <data name="AlreadyExists" xml:space="preserve"><value>"{0}" 已存在。</value></data>
+  <data name="SelectFolderDestination" xml:space="preserve"><value>请至少为新文件夹选择一个位置</value></data>
+  <data name="CreateFolderIn" xml:space="preserve"><value>在 {0} 中创建文件夹:</value></data>
+  <data name="CreateFolderInMany" xml:space="preserve"><value>在所选位置 ({0}) 创建文件夹:</value></data>
+  <data name="CreatedItem" xml:space="preserve"><value>已创建 "{0}"</value></data>
+  <data name="NoClipboardFiles" xml:space="preserve"><value>剪贴板中没有文件</value></data>
+  <data name="NoPasteDestination" xml:space="preserve"><value>未选择粘贴位置</value></data>
+  <data name="NothingToTransfer" xml:space="preserve"><value>没有可传输的项目</value></data>
+  <data name="TransferIntoItself" xml:space="preserve"><value>无法将 "{0}" 传输到其自身内部。</value></data>
+  <data name="SkippedItem" xml:space="preserve"><value>已跳过: {0}</value></data>
+  <data name="TransferSkipped" xml:space="preserve"><value>已完成; 跳过的冲突: {0}</value></data>
+  <data name="TransferDone" xml:space="preserve"><value>已完成: {0}</value></data>
+  <data name="Zipping" xml:space="preserve"><value>正在压缩: {0}</value></data>
+  <data name="ZipFailed" xml:space="preserve"><value>压缩失败: {0}</value></data>
+  <data name="FileOperation" xml:space="preserve"><value>文件操作</value></data>
+  <data name="Preparing" xml:space="preserve"><value>正在准备…</value></data>
+  <data name="ProgressCompleted" xml:space="preserve"><value>已完成: {0} / {1}</value></data>
+  <data name="ProgressElapsed" xml:space="preserve"><value>已用时间: {0}</value></data>
+  <data name="ProgressRemainingEstimating" xml:space="preserve"><value>剩余: 正在估算…</value></data>
+  <data name="ProgressRemaining" xml:space="preserve"><value>剩余: {0}</value></data>
+  <data name="ProgressRemainingAbout" xml:space="preserve"><value>剩余: 约 {0}</value></data>
+  <data name="ProgressFinalizing" xml:space="preserve"><value>正在完成…</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>正在取消…</value></data>
+  <data name="WebFilesNotPassed" xml:space="preserve"><value>无法将文件传递给页面: {0}</value></data>
+  <data name="WebRuntimeTooOld" xml:space="preserve"><value>已安装的 Microsoft Edge WebView2 Runtime 无法在此窗口中打开文件 (需要 {0} 或更高版本)。请改为将文件拖放到页面中。</value></data>
+  <data name="WebCouldNotRead" xml:space="preserve"><value>无法读取:</value></data>
+  <data name="OriginService" xml:space="preserve"><value>服务</value></data>
+  <data name="OriginDirect" xml:space="preserve"><value>直接访问</value></data>
+  <data name="OriginHelper" xml:space="preserve"><value>管理员助手</value></data>
+  <data name="OriginWalk" xml:space="preserve"><value>遍历文件夹</value></data>
+  <data name="OriginHint" xml:space="preserve"><value>安装 File Search Manager 服务或批准权限提升提示，即可立即为 NTFS 建立索引</value></data>
+  <data name="DriveUnavailableRetrying" xml:space="preserve"><value>网络不可用; 正在重试</value></data>
+  <data name="DriveScanFailedRetrying" xml:space="preserve"><value>扫描失败; 正在重试</value></data>
 </root>

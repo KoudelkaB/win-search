@@ -89,7 +89,7 @@ Jede andere Eingabe als `Enter` im Suchfeld setzt den aktuellen Ergebniszustand 
 ## Mausaktionen
 
 - Klick, Strg+Klick oder Umschalt+Klick auf Ergebnisse wählt einzelne Elemente oder Bereiche aus.
-- Ein Doppelklick auf einen Datei- oder Ordnernamen filtert in dieses Element hinein.
+- Ein Doppelklick auf einen Ordner- oder Archivnamen filtert in dieses Element hinein. Ein Doppelklick auf eine andere Datei öffnet sie.
 - Ein Doppelklick auf die Ordnerspalte öffnet den Explorer mit ausgewähltem Element.
 - Strg + Rechtsklick auf ein Ergebnis öffnet es mit der Windows-Standardaktion.
 - Ein Klick auf eine Spaltenüberschrift sortiert nach dieser Spalte.
@@ -161,7 +161,7 @@ Fokussieren Sie die Ergebnisliste und drücken Sie eine im Feld **Hinweise** gez
 
 Häufige Befehle:
 
-- `Enter`: in ausgewählte Ordner filtern.
+- `Enter`: in ausgewählte Ordner und Archive filtern. Sind nur andere Dateien ausgewählt, werden sie geöffnet.
 - `Delete`: ausgewählte Elemente nach Bestätigung in den Papierkorb verschieben.
 - `Shift+Delete`: ausgewählte Elemente ohne Bestätigung endgültig löschen.
 - `Ctrl+C`: standardmäßiges, shell-kompatibles Kopieren.

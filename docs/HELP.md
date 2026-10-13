@@ -89,7 +89,7 @@ Typing anything other than `Enter` in the search field clears the current conten
 ## Mouse Actions
 
 - Click, Ctrl+click, or Shift+click results to select individual items or ranges.
-- Double-click a file or folder name to filter into that item.
+- Double-click a folder or archive name to filter into it. Double-clicking any other file opens it.
 - Double-click the folder column to open File Explorer with the item selected.
 - Ctrl + right-click a result to open it with the default Windows action.
 - Click a column header to sort by that column.
@@ -161,7 +161,7 @@ Focus the result list and press a key shown in the **Hints** panel. Some command
 
 Common commands:
 
-- `Enter`: filter into selected folders.
+- `Enter`: filter into the selected folders and archives. With only other files selected, open them.
 - `Delete`: move selected items to the Recycle Bin after confirmation.
 - `Shift+Delete`: permanently delete selected items without confirmation.
 - `Ctrl+C`: standard shell-compatible copy.

@@ -89,7 +89,7 @@ Digitare qualcosa di diverso da `Enter` nel campo di ricerca azzera lo stato cor
 ## Azioni con il mouse
 
 - Clic, Ctrl+clic o Maiusc+clic sui risultati per selezionare singoli elementi o intervalli.
-- Doppio clic sul nome di un file o di una cartella per filtrare dentro quell’elemento.
+- Doppio clic sul nome di una cartella o di un archivio per filtrare dentro quell’elemento. Il doppio clic su qualsiasi altro file lo apre.
 - Doppio clic sulla colonna della cartella per aprire Esplora file con l’elemento selezionato.
 - Ctrl + clic destro su un risultato lo apre con l’azione predefinita di Windows.
 - Clic sull’intestazione di una colonna per ordinare in base a essa.
@@ -161,7 +161,7 @@ Porta lo stato attivo sull’elenco dei risultati e premi un tasto mostrato nel 
 
 Comandi comuni:
 
-- `Enter`: filtra dentro le cartelle selezionate.
+- `Enter`: filtra dentro le cartelle e gli archivi selezionati. Se sono selezionati solo altri file, vengono aperti.
 - `Delete`: sposta gli elementi selezionati nel Cestino dopo conferma.
 - `Shift+Delete`: elimina definitivamente gli elementi selezionati senza conferma.
 - `Ctrl+C`: copia standard compatibile con la shell.

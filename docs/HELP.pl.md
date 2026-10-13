@@ -89,7 +89,7 @@ Wpisanie w polu wyszukiwania czegokolwiek innego niż `Enter` czyści bieżący 
 ## Obsługa myszą
 
 - Kliknięcie, Ctrl+kliknięcie lub Shift+kliknięcie wyników zaznacza pojedyncze elementy lub zakresy.
-- Dwukrotne kliknięcie nazwy pliku lub folderu filtruje do tego elementu.
+- Dwukrotne kliknięcie nazwy folderu lub archiwum filtruje do tego elementu. Dwukrotne kliknięcie innego pliku otwiera go.
 - Dwukrotne kliknięcie kolumny folderu otwiera Eksploratora z zaznaczonym elementem.
 - Ctrl + kliknięcie prawym przyciskiem otwiera wynik domyślną akcją systemu Windows.
 - Kliknięcie nagłówka kolumny sortuje według tej kolumny.
@@ -161,7 +161,7 @@ Ustaw fokus na liście wyników i naciśnij klawisz pokazany w panelu **Skróty*
 
 Typowe polecenia:
 
-- `Enter`: filtruj do zaznaczonych folderów.
+- `Enter`: filtruj do zaznaczonych folderów i archiwów. Jeśli zaznaczono tylko inne pliki, zostaną otwarte.
 - `Delete`: przenieś zaznaczone elementy do Kosza po potwierdzeniu.
 - `Shift+Delete`: usuń zaznaczone elementy trwale bez potwierdzenia.
 - `Ctrl+C`: standardowe kopiowanie zgodne z powłoką.

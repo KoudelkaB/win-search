@@ -324,7 +324,7 @@ namespace search
                 }
                 catch (Exception ex)
                 {
-                    ShowNotice($"The files could not be passed to the page: {ex.Message}");
+                    ShowNotice(L.Format("WebFilesNotPassed", ex.Message));
                     return;
                 }
                 view.Focus();
@@ -345,8 +345,7 @@ namespace search
                 Close();
                 return;
             }
-            ShowNotice($"The installed Microsoft Edge WebView2 Runtime cannot open files in this window " +
-                $"(version {MinimumRuntime} or newer is needed). Drop the files into the page instead.");
+            ShowNotice(L.Format("WebRuntimeTooOld", MinimumRuntime));
         }
 
         void ReportUnreadable(string json)
@@ -355,7 +354,7 @@ namespace search
             {
                 using var message = JsonDocument.Parse(json);
                 if (!message.RootElement.TryGetProperty("failed", out var failed)) return;
-                var text = new StringBuilder("Could not read:");
+                var text = new StringBuilder(L.Text("WebCouldNotRead"));
                 foreach (var item in failed.EnumerateArray())
                 {
                     var index = item.GetProperty("index").GetInt32();
