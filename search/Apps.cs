@@ -2,22 +2,47 @@
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
+using System.Threading;
 using static search.Models.SearchModel;
 
 namespace search
 {
     public static class Apps
     {
-        static NonBlocking.ConcurrentDictionary<string, string> paths = new();
-        public static string GetPath(params string[] names)
+        static readonly ConcurrentDictionary<string, string> paths = new(StringComparer.OrdinalIgnoreCase);
+        static int generation;
+
+        public static string GetPath(params string[] names) => GetPath(name => FindExe(name), names);
+
+        internal static string GetPath(Func<string, string> find, params string[] names)
         {
             var key = string.Join("\"", names);
-            return paths.GetOrAdd(key, x => FindExe(names))
-            ?? (paths.TryRemove(new(key, null)) ? null : null); // Do not cache not found file => may be found later (especialy when called during fill up)
+            if (paths.TryGetValue(key, out var cached)) return cached;
+            var started = Volatile.Read(ref generation);
+            string executable = null;
+            foreach (var name in names)
+            {
+                executable = find(name);
+                if (!string.IsNullOrWhiteSpace(executable)) break;
+                executable = null;
+            }
+            // Misses are cached too: every index publication clears the cache, so an executable
+            // appearing as another drive finishes loading is found then. A lookup that raced
+            // a publication may have searched the previous index and is not stored.
+            lock (paths)
+                if (started == generation) paths[key] = executable;
+            return executable;
         }
 
-        static string ProgramFilesDir => Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        static string ProgramFilesDirX86 => Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        // Paths come exclusively from the executable index. Re-resolve cached paths after a reload.
+        internal static void RefreshInstalledApplications()
+        {
+            lock (paths)
+            {
+                generation++;
+                paths.Clear();
+            }
+        }
 
         /// <summary>
         /// Built-in HTML apps (WebApps next to the exe). Open() shows these in a WebAppWindow
@@ -30,13 +55,17 @@ namespace search
         /// Get text viever path  - built-in Log explorer (needs the WebView2 runtime)
         /// </summary>
         /// <returns></returns>
-        public static string TextViever => WebAppWindow.IsAvailable ? LogExplorer : "notepad";
+        public static string TextViever => WebAppWindow.IsAvailable ? LogExplorer : Notepad;
 
         /// <summary>
         /// Get application for editing
         /// </summary>
         /// <returns></returns>
-        public static string TextEditor => GetPath("notepad++.exe") ?? "notepad";
+        public static string TextEditor => GetPath("notepad++.exe", "sublime_text.exe", "kate.exe", "geany.exe") ?? Notepad;
+
+        // Never null: before the system drive is indexed the shell still resolves the name.
+        // A null application would open (run) the file itself instead of editing it.
+        public static string Notepad => GetPath("notepad.exe") ?? "notepad";
 
         public static string Powershell => "powershell";
 
@@ -44,27 +73,7 @@ namespace search
 
         public static string Explorer => "explorer";
 
-        public static string VisualStudio => GetPath("devenv.exe");
-
-        public static string VSCode => GetPath("code.exe", "Code.exe");
-
-        public static string Antigravity => GetPath("antigravity.exe");
-
-        public static string Chrome => GetPath("chrome.exe");
-
-        public static string Firefox => GetPath("firefox.exe");
-
-        public static string IExplore => GetPath("iexplore.exe");
-
-        public static string Edge => GetPath("msedge.exe");
-
-        public static string Opera => GetPath("opera.exe");
-
-        public static string Safari => GetPath("safari.exe");
-
-        public static string AdobeReader => GetPath("AcroRd32.exe", "Acrobat.exe");
-
-        public static string WebBrowser => GetPath("firefox.exe", "chrome.exe", "msedge.exe", "iexplore.exe", "opera.exe", "safari.exe") ?? TextViever;
+        public static string WebBrowser => GetPath("firefox.exe", "chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "opera.exe", "chromium.exe", "waterfox.exe", "librewolf.exe", "iexplore.exe", "safari.exe");
 
         /// <summary>
         /// 
@@ -77,17 +86,10 @@ namespace search
 
         public static string SevenZip => GetPath("7z.exe", "7zz.exe");
 
-        public static string SevenZipFileManager => GetPath("7zFM.exe");
-
         /// <summary>
         /// Command line for displaying poscript file
         /// </summary>
         public static string DisplayPostScript => GhostScript == null ? TextViever : $"{GhostScript}\0-sDEVICE=display -r72";
-
-        /// <summary>
-        /// Tool for comparing text files
-        /// </summary>
-        public static string DiffTool => GetPath("WinMergeU.exe", "KDiff3.exe", "Meld.exe");
 
         /// <summary>
         /// Get application for viewing prn files
@@ -110,7 +112,7 @@ namespace search
             return language switch
             {
                 "POSTSCRIPT" => DisplayPostScript,
-                "PDF" => WebBrowser,
+                "PDF" => WebBrowser ?? TextViever,
                 var x when x.StartsWith("PCL", StringComparison.OrdinalIgnoreCase) && GhostPcl != null => $"{GhostPcl}\0-sDEVICE=display -r120",
                 _ => null
             };
@@ -132,7 +134,8 @@ namespace search
             return extension switch
             {
                 ".ps" => DisplayPostScript,
-                ".htm" or ".html" or ".xml" or ".json" or ".pdf" => WebBrowser,
+                ".pdf" => GetPath("SumatraPDF.exe", "AcroRd32.exe", "Acrobat.exe", "FoxitPDFReader.exe", "FoxitReader.exe", "PDFXEdit.exe", "okular.exe") ?? WebBrowser ?? TextViever,
+                ".htm" or ".html" or ".xml" or ".json" => WebBrowser ?? TextViever,
                 _ => TextViever
             };
         }

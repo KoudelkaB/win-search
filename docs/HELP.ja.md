@@ -169,7 +169,7 @@ NTFS ドライブでは、NTFS のマスター ファイル テーブルを読�
 - `Ctrl+V`: コピー、移動、シンボリック リンク、ハード リンクを選んで貼り付けます。
 - `C`: 選択項目をクリップボードにコピーします。`V`、`T`、`W`、`A` を加えると、代わりにファイルのバージョン、作成日時、最終更新日時、最終アクセス日時をコピーします。先に `+` を押すと、置き換えではなくクリップボードに追加します。
 - `X`: 選択項目をクリップボードに切り取ります。
-- `D`: 設定された差分ツールで比較します。項目をちょうど 2 つ選択しているときのみ使えます。
+- `D`: 2 つのファイルまたは 2 つのフォルダーを、インストール済みの対応する差分ツールで比較します。2 つのファイルには VS Code (`--diff`) も代わりに使えます。適切なツールがインストールされていない場合、このヒントは表示されません。
 - `H`: 1 つのファイルを内蔵の 16 進エディターで開くか、2 つのファイルを比較します。オフラインでも使えます。
 - `L`: 選択したファイルを内蔵の Log Explorer で開きます。オフラインでも使えます。ファイルの合計が 100 MB を超えるか 500 個を超える場合は、Log Explorer がすべてメモリに保持するため、先に確認します。
 - `G`: ファイル内に表示 — 検索したテキストを含むファイル (緑の行) を 1 つのログ エクスプローラー ウィンドウで連結して開き、そのテキストを含む行に絞り込みます。大文字小文字オプションの横にある **ファイル内に表示** ボタンとコンテキスト メニューからも使えます。
@@ -199,7 +199,9 @@ NTFS ドライブでは、NTFS のマスター ファイル テーブルを読�
 - `Ctrl+N`: 選択したフォルダー内に新しいフォルダーを作成します。
 - `Ctrl+J`: 次の選択項目へ移動します。`Ctrl+Shift+J` は前の項目へ移動します。
 
-`O` または `A` の後に選ぶ起動先。各項目は、そのアプリが検出された場合にのみ表示されます。
+`O` または `A` の後に選ぶ起動先。**ヒント** には、選択項目すべてに対応するインストール済みアプリだけが表示され、空のカテゴリは表示されません。カテゴリのキーを押したまま、アプリのキーを押します（例: `O`、`J`、`P` で PhpStorm）。
+
+対応するインストール済みアプリがないカテゴリは表示されません。1つだけの場合、カテゴリのキーでそのアプリを直接開きます（例: `O`、`N`でNotepad++）。サブメニューは2つ以上のアプリが利用できる場合のみ表示されます。`A`の後も同様です。
 
 - `B`: エクスプローラー。
 - `W`: 検出された既定の Web ブラウザー。
@@ -213,6 +215,12 @@ NTFS ドライブでは、NTFS のマスター ファイル テーブルを読�
 - `D`: Visual Studio Code。
 - `V`: Visual Studio。
 - `Y`: Antigravity。
+- `J`: 開発環境 (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: テキストエディター (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: その他のウェブブラウザー (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: ビューアー (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: 圧縮ファイル管理 (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: 差分・マージツール (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript。
 - `P`: GhostPCL。
 - `X`: GhostXPS。

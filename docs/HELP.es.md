@@ -169,7 +169,7 @@ Comandos habituales:
 - `Ctrl+V`: pegar tras elegir copiar, mover, vínculo simbólico o vínculo físico.
 - `C`: copiar los elementos seleccionados al portapapeles. Añada `V`, `T`, `W` o `A` para copiar en su lugar la versión del archivo, la fecha de creación, la de última escritura o la de último acceso; un `+` inicial añade al portapapeles en vez de reemplazarlo.
 - `X`: cortar los elementos seleccionados al portapapeles.
-- `D`: comparar con la herramienta de comparación configurada. Solo disponible con exactamente dos elementos seleccionados.
+- `D`: comparar dos archivos o dos carpetas en una herramienta de comparación instalada y compatible. Para dos archivos, VS Code sirve como alternativa (`--diff`). Sin una herramienta instalada adecuada, la pista se oculta.
 - `H`: abrir un archivo en el editor hexadecimal integrado o comparar dos archivos. Funciona sin conexión.
 - `L`: abrir los archivos seleccionados en el Log Explorer integrado. Funciona sin conexión. Pregunta antes si los archivos suman más de 100 MB o son más de 500, porque el Log Explorer los mantiene en memoria.
 - `G`: mostrar en archivos — abrir los archivos que contienen el texto buscado (filas verdes) en una ventana del explorador de registros, unidos y filtrados a las líneas con el texto. También el botón **Mostrar en archivos** junto a la opción de mayúsculas y el menú contextual.
@@ -199,7 +199,9 @@ Comandos bajo `Ctrl`:
 - `Ctrl+N`: crear carpetas nuevas dentro de las carpetas seleccionadas.
 - `Ctrl+J`: ir al siguiente elemento seleccionado; `Ctrl+Shift+J` al anterior.
 
-Destinos de apertura tras `O` o `A`. Cada entrada aparece solo si se detectó la aplicación:
+Destinos de apertura tras `O` o `A`. **Pistas** muestra solo las aplicaciones instaladas compatibles con toda la selección; las categorías vacías se ocultan. Mantenga pulsada la tecla de la categoría y pulse después la tecla de la aplicación, por ejemplo `O`, `J`, `P` para PhpStorm.
+
+Las categorías sin aplicaciones instaladas compatibles se ocultan. Si hay una sola, la tecla de la categoría la abre directamente (por ejemplo, `O`, `N` abre Notepad++). El submenú aparece solo con dos o más aplicaciones disponibles. Esto también se aplica después de `A`.
 
 - `B`: Explorador de archivos.
 - `W`: navegador web predeterminado detectado.
@@ -213,6 +215,12 @@ Destinos de apertura tras `O` o `A`. Cada entrada aparece solo si se detectó la
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
+- `J`: Entornos de desarrollo (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: Editores de texto (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: Más navegadores web (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: Visores (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: Gestores de archivos comprimidos (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: Herramientas diff / merge (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.

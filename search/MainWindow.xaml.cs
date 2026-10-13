@@ -99,14 +99,6 @@ namespace search
                     ".yaml", ".yml", ".md", ".cs", ".xaml", ".csproj", ".sln", ".ps1",
                     ".bat", ".cmd", ".html", ".htm", ".sql", ".prn" },
             StringComparer.OrdinalIgnoreCase);
-        static readonly HashSet<string> WebExtensions = new(
-            new[] { ".htm", ".html", ".xml", ".json", ".pdf", ".svg", ".png", ".jpg",
-                    ".jpeg", ".gif", ".webp", ".txt" },
-            StringComparer.OrdinalIgnoreCase);
-        static readonly HashSet<string> CodeExtensions = new(
-            TextExtensions.Concat(new[] { ".vb", ".cpp", ".c", ".h", ".hpp", ".js", ".ts",
-                                          ".css", ".scss", ".py", ".java", ".vcxproj", ".vbproj" }),
-            StringComparer.OrdinalIgnoreCase);
         static readonly TimeSpan ProgressDialogDelay = TimeSpan.FromSeconds(1);
 
         public MainWindow()
@@ -133,6 +125,15 @@ namespace search
             //not grid application, owning the startup red interval.
             DataContext = new Models.SearchModel(startFileSystem: false);
             ContentRendered += StartFileSystemAfterFirstRender;
+            Model.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(SearchModel.Loading) && !Model.Loading)
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        filesViewCmd.OnChange();
+                        globalCmd.OnChange();
+                    });
+            };
             // The runtime check reads the installed WebView2 version - kept off the first render
             ContentRendered += (_, __) => Dispatcher.BeginInvoke(() =>
             {
@@ -156,24 +157,15 @@ namespace search
             // Add commander
             CommandTree Enter(string hint) => (Key.None, L.Format("EnterValueKeepingKey", L.Text(hint)));
             var openIn = new CommandTree[] {
-                (Key.T, "Log explorer", n => n.AtLeast(1) && Apps.TextViever !=null),
-                (Key.B, "File browser", n => n.AtLeast(1) && Apps.Explorer !=null),
-                (Key.W, "Web browser", n => n.AtLeast(1) && Apps.WebBrowser !=null),
-                (Key.C, "Chrome", n => n.AtLeast(1) && Apps.Chrome !=null),
-                (Key.F, "Firefox", n => n.AtLeast(1) && Apps.Firefox !=null),
-                (Key.O, "Opera", n => n.AtLeast(1) && Apps.Opera !=null),
-                (Key.E, "Edge", n => n.AtLeast(1) && Apps.Edge !=null),
-                (Key.I, "Internet Explorer", n => n.AtLeast(1) && Apps.IExplore !=null),
-                (Key.A, "Adobe Reader", n => n.AtLeast(1) && Apps.AdobeReader !=null),
+                (Key.T, "Log explorer", n => n.AtLeast(1) && Apps.TextViever != null),
+                (Key.B, "File browser", n => n.AtLeast(1) && Apps.Explorer != null),
+                (Key.W, "Web browser", n => n.AtLeast(1) && Apps.WebBrowser != null),
                 (Key.S, "Shell", (Key.P, "Power Shell")),
-                (Key.V, "Visual Studio", n => n.AtLeast(1) && Apps.VisualStudio !=null),
-                (Key.D, "Visual Studio Code", n => n.AtLeast(1) && Apps.VSCode !=null),
-                (Key.Y, "Antigravity", n => n.AtLeast(1) && Apps.Antigravity !=null),
-                (Key.G, "Ghostscript", n => n.AtLeast(1) && Apps.GhostScript !=null, Enter("DPI")),
-                (Key.P, "GhostPCL",  n => n.AtLeast(1) && Apps.GhostPcl !=null, Enter("DPI")),
-                (Key.X, "GhostXPS",  n => n.AtLeast(1) && Apps.GhostXps !=null, Enter("DPI")),
-                (Key.R, "PRN Viewer", n => n.AtLeast(1) && Apps.TextViever !=null, Enter("DPI"))
-            };
+                (Key.G, "Ghostscript", n => n.AtLeast(1) && Apps.GhostScript != null, Enter("DPI")),
+                (Key.P, "GhostPCL", n => n.AtLeast(1) && Apps.GhostPcl != null, Enter("DPI")),
+                (Key.X, "GhostXPS", n => n.AtLeast(1) && Apps.GhostXps != null, Enter("DPI")),
+                (Key.R, "PRN Viewer", n => n.AtLeast(1) && Apps.TextViever != null, Enter("DPI"))
+            }.Concat(FileApplications.Commands()).ToArray();
 
             var timeSource = new CommandTree[] { (Key.V, "from clipboard"), (Key.C, "current") };
             var f2 = new CommandTree[] {
@@ -220,7 +212,7 @@ namespace search
                 //in this tree makes the working window-wide shortcuts visible in grid hints.
                 (Key.F1, "HintF1"),
                 (Key.F12, "HintF12"),
-                (Key.D, "Compare in diff tool", n => n.IsCount(2),  async (n,a) => await OpenDiff(n)),
+                FileApplications.DiffCommand(async (n,a) => await OpenDiff(n)),
                 (Key.H, "Hex editor / compare", n => (n.IsCount(1) || n.IsCount(2)) && n.All(x => !x.IsDirectory) && WebAppWindow.IsAvailable,
                     async (n,a) => await Open(Apps.HexEditor, n.ToArray())),
                 (Key.L, "Log explorer", n => n.AtLeast(1) && WebAppWindow.IsAvailable,
@@ -239,8 +231,8 @@ namespace search
                 (Key.O, "Open in", async (n,a)=> await OpenIn(n,a), openIn),
                 (Key.A, "Open in (as admin)", async (n,a)=> await OpenIn(n,a,true), openIn),
                 (Key.F2, "Rename / Change", Rename, new CommandTree[] {(Key.O, "Overwrite", f2)}.Concat(f2).ToArray()),
-                (Key.F3, "View node", async (n,a)=>{ if (n.Any()) await Open(Apps.ViewerFor(n.First().GetFileOrTempPath()), Model.ToTextNodes(n.ToArray()).ToArray()); }),
-                (Key.F4, "Edit",async (n,a)=> await Open(Apps.TextEditor, n.ToArray())),
+                (Key.F3, "View node", n => n.AtLeast(1), async (n,a)=>{ if (n.Any()) await Open(Apps.ViewerFor(n.First().GetFileOrTempPath()), Model.ToTextNodes(n.ToArray()).ToArray()); }),
+                (Key.F4, "Edit", n => n.AtLeast(1), async (n,a)=> await Open(Apps.TextEditor, n.ToArray())),
                 (Key.N, "Copy name", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => n.Name)))),
                 (Key.P, "Copy path", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => n.FullName)))),
                 (Key.F, "Copy folder name", (n,a)=>SetCpliboard(String.Join("\r\n", n.Select(n => Model.GetParent(n).FullName)))),
@@ -279,8 +271,8 @@ namespace search
                     (Key.Delete, "Permanently delete - do not confirm", async (n,a)=>await Delete(n,false,true)),
                 }),
                 (Key.RightShift, "Focus filter", (n,a)=>filterTextBox.Focus()),
-                (Key.U, "Unzip archive", async (n,a)=>await Unzip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")}),
-                (Key.Z, "Zip selected", async (n,a)=>await Zip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe")})
+                (Key.U, "Unzip archive", async (n,a)=>await Unzip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe", n => Apps.SevenZip != null)}),
+                (Key.Z, "Zip selected", async (n,a)=>await Zip(n,a), new CommandTree[] {(Key.NumPad7, "Call 7z.exe", n => Apps.SevenZip != null)})
             });
 
             // Save filter to history on any command
@@ -2193,7 +2185,8 @@ namespace search
                 openWith.Items.Add(item);
             }
 
-            var diffTool = Apps.DiffTool;
+            var diffApplication = FileApplications.FindDiff(nodes);
+            var diffTool = diffApplication?.Executable;
             if (nodes.Length == 2 && !string.IsNullOrWhiteSpace(diffTool))
             {
                 var diffItem = new MenuItem { Header = L.Text("Compare in diff tool"), ToolTip = diffTool };
@@ -2207,30 +2200,25 @@ namespace search
                 openWith.Items.Add(hexItem);
             }
 
-            var sevenZipFileManager = Apps.SevenZipFileManager;
-            if (!string.IsNullOrWhiteSpace(sevenZipFileManager) &&
-                nodes.All(n => File.Exists(n.FullName) || Directory.Exists(n.FullName)))
+            foreach (var application in FileApplications.All)
             {
-                var sevenZipItem = new MenuItem { Header = "7-Zip", ToolTip = sevenZipFileManager };
-                sevenZipItem.Click += async (_, __) =>
+                // The default diff tool already has its "Compare in diff tool" entry above.
+                if (application == diffApplication || !application.Supports(nodes)) continue;
+                var executable = application.Executable;
+                if (string.IsNullOrWhiteSpace(executable)) continue;
+                var item = new MenuItem
                 {
-                    foreach (var node in nodes)
-                        await Open(sevenZipFileManager, new[] { node });
+                    Header = application.Name,
+                    ToolTip = executable,
+                    InputGestureText = "O " + string.Join(" ", FileApplications.ShortcutFor(application, nodes).Select(k =>
+                        k is >= Key.D0 and <= Key.D9 ? ((int)k - (int)Key.D0).ToString() : k.ToString()))
                 };
-                openWith.Items.Add(sevenZipItem);
+                item.Click += async (_, __) => await OpenApplication(application, nodes);
+                openWith.Items.Add(item);
             }
 
-            //The T key of "Open in" - the built-in Log explorer, Notepad without WebView2
+            // The built-in Log explorer falls back to Notepad without WebView2.
             Add(WebAppWindow.IsAvailable ? L.Text("Log explorer") : "Notepad", Key.T, Apps.TextViever, TextExtensions.Contains);
-            Add("Chrome", Key.C, Apps.Chrome, WebExtensions.Contains);
-            Add("Edge", Key.E, Apps.Edge, WebExtensions.Contains);
-            Add("Firefox", Key.F, Apps.Firefox, WebExtensions.Contains);
-            Add("Opera", Key.O, Apps.Opera, WebExtensions.Contains);
-            Add("Adobe Reader", Key.A, Apps.AdobeReader,
-                extension => extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase));
-            Add("Visual Studio", Key.V, Apps.VisualStudio, CodeExtensions.Contains);
-            Add("Visual Studio Code", Key.D, Apps.VSCode, CodeExtensions.Contains);
-            Add("Antigravity", Key.Y, Apps.Antigravity, CodeExtensions.Contains);
             Add("Ghostscript", Key.G, Apps.GhostScript,
                 extension => extension.Equals(".ps", StringComparison.OrdinalIgnoreCase) ||
                              extension.Equals(".eps", StringComparison.OrdinalIgnoreCase) ||
@@ -2754,6 +2742,17 @@ namespace search
                 Model.Status = L.Text("NothingSelected");
                 return;
             }
+            var application = FileApplications.Find(arg, nodes.ToArray());
+            if (application != null)
+            {
+                // A comparison needs its pair; any other explicitly chosen application opens
+                // the selection even when its hint is hidden for these file types.
+                if (application.Compare && !application.Supports(nodes.ToArray())) Model.Status = L.Text("NoDiffTool");
+                else await OpenApplication(application, nodes.ToArray(), asAdmin);
+                return;
+            }
+            // Releasing a category key alone does not open the system default application.
+            if (FileApplications.Groups.Any(g => g.Key == arg.FirstOrDefault())) return;
             var a = arg.FirstOrDefault();
             if (a == Key.B)
             {
@@ -2768,21 +2767,12 @@ namespace search
             await Open(a switch
             {
                 Key.T => Apps.TextViever,
-                Key.W => Apps.WebBrowser,
-                Key.E => Apps.Edge,
-                Key.C => Apps.Chrome,
-                Key.F => Apps.Firefox,
-                Key.I => Apps.IExplore,
-                Key.O => Apps.Opera,
-                Key.A => Apps.AdobeReader,
+                Key.W => Apps.WebBrowser ?? Apps.TextViever,
                 Key.S => arg.Last() == Key.P ? Apps.Powershell + "\0-NoExit -Command &" : Apps.Cmd + "\0/k",
-                Key.V => Apps.VisualStudio,
-                Key.D => Apps.VSCode,
                 Key.G => Apps.GhostScript + Resolution(),
                 Key.P => Apps.GhostPcl + Resolution(),
                 Key.X => Apps.GhostXps + Resolution(),
                 Key.R => Apps.ViewerFor(nodes.First().FullName).Split("-r")[0] + Resolution(),
-                Key.Y => Apps.Antigravity,
                 _ => null // Open in default system app
             }, nodes.ToArray(), asAdmin);
             string Resolution()
@@ -2794,10 +2784,30 @@ namespace search
         }
 
 
+        async Task OpenApplication(FileApplications.Application application, INode[] nodes, bool asAdmin = false)
+        {
+            var executable = application.Executable;
+            if (string.IsNullOrWhiteSpace(executable))
+            {
+                Model.Status = L.Format("ApplicationNotFound", application.Name);
+                return;
+            }
+            // Diff tools compare text: a workbook is compared as the text of its sheets,
+            // one file per workbook - the tool takes exactly one file per side.
+            if (application.Compare) nodes = Model.ToComparisonNodes(nodes).ToArray();
+            var command = application.CommandFor(executable);
+            if (application.Separate)
+            {
+                foreach (var node in nodes) await Open(command, new[] { node }, asAdmin);
+            }
+            else await Open(command, nodes, asAdmin);
+        }
+
         async Task OpenDiff(IEnumerable<INode> nodes)
         {
-            var diff = Apps.DiffTool;
-            if (diff != null) await Open(diff, Model.ToTextNodes(nodes.ToArray()).ToArray());
+            var selection = nodes.ToArray();
+            var application = FileApplications.FindDiff(selection);
+            if (application != null) await OpenApplication(application, selection);
             else Model.Status = L.Text("NoDiffTool");
         }
 

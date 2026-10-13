@@ -108,7 +108,7 @@ Přesto je otevřít?</value></data>
   <data name="ArchiveCutCopied" xml:space="preserve"><value>Položky uvnitř archivu nelze vyjmout; byly místo toho zkopírovány</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>Žádné existující soubory ke kopírování</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>Kopírování do schránky selhalo: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>Nebyl nalezen žádný nástroj diff (WinMerge, KDiff3 nebo Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>Pro tento výběr nebyl nalezen žádný nainstalovaný nástroj diff.</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>Přímo v řádku lze přejmenovat jen jednu položku. Pro více položek použijte příkazy F2.</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>Schránka neobsahuje platné datum a čas: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>Čas změněn</value></data>
@@ -151,4 +151,11 @@ Přesto je otevřít?</value></data>
   <data name="OriginHint" xml:space="preserve"><value>pro okamžité indexování NTFS nainstalujte službu File Search Manager nebo potvrďte výzvu k elevaci</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>síť nedostupná; zkouší se znovu</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>skenování selhalo; zkouší se znovu</value></data>
+  <data name="Development environments" xml:space="preserve"><value>Vývojová prostředí</value></data>
+  <data name="Text editors" xml:space="preserve"><value>Textové editory</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>Další webové prohlížeče</value></data>
+  <data name="Viewers" xml:space="preserve"><value>Prohlížeče souborů</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>Správci archivů</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>Nástroje diff / merge</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>Aplikace nebyla nalezena: {0}</value></data>
 </root>

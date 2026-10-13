@@ -95,7 +95,7 @@ Trotzdem öffnen?</value></data>
   <data name="ArchiveCutCopied" xml:space="preserve"><value>Elemente in einem Archiv können nicht ausgeschnitten werden; sie wurden stattdessen kopiert</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>Keine vorhandenen Dateien zum Kopieren</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>Kopieren in die Zwischenablage fehlgeschlagen: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>Kein Diff-Tool gefunden (WinMerge, KDiff3 oder Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>Kein installiertes Diff-Werkzeug unterstützt diese Auswahl.</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>Nur ein Element kann direkt umbenannt werden. Verwenden Sie für mehrere Elemente die F2-Befehle.</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>Die Zwischenablage enthält kein gültiges Datum mit Uhrzeit: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>Zeit geändert</value></data>
@@ -138,4 +138,11 @@ Trotzdem öffnen?</value></data>
   <data name="OriginHint" xml:space="preserve"><value>für sofortige NTFS-Indizierung den File Search Manager-Dienst installieren oder die Abfrage zur Rechteerhöhung bestätigen</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>Netzwerk nicht verfügbar; erneuter Versuch</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>Scan fehlgeschlagen; erneuter Versuch</value></data>
+  <data name="Development environments" xml:space="preserve"><value>Entwicklungsumgebungen</value></data>
+  <data name="Text editors" xml:space="preserve"><value>Texteditoren</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>Weitere Webbrowser</value></data>
+  <data name="Viewers" xml:space="preserve"><value>Dateibetrachter</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>Archivprogramme</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>Diff- / Merge-Werkzeuge</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>Anwendung nicht gefunden: {0}</value></data>
 </root>

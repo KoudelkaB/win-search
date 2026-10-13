@@ -95,7 +95,7 @@ Tamaño total: {1}
   <data name="ArchiveCutCopied" xml:space="preserve"><value>Los elementos dentro de un archivo comprimido no se pueden cortar; se copiaron en su lugar</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>No hay archivos existentes que copiar</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>Error al copiar al portapapeles: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>No se encontró ninguna herramienta de comparación (WinMerge, KDiff3 o Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>Ninguna herramienta diff instalada admite esta selección.</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>Solo se puede cambiar el nombre de un elemento directamente. Para varios elementos use los comandos de F2.</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>El portapapeles no contiene una fecha y hora válidas: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>Hora cambiada</value></data>
@@ -138,4 +138,11 @@ Tamaño total: {1}
   <data name="OriginHint" xml:space="preserve"><value>instale el servicio de File Search Manager o acepte el aviso de elevación para indexar NTFS al instante</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>red no disponible; reintentando</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>error de análisis; reintentando</value></data>
+  <data name="Development environments" xml:space="preserve"><value>Entornos de desarrollo</value></data>
+  <data name="Text editors" xml:space="preserve"><value>Editores de texto</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>Más navegadores web</value></data>
+  <data name="Viewers" xml:space="preserve"><value>Visores</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>Gestores de archivos comprimidos</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>Herramientas diff / merge</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>Aplicación no encontrada: {0}</value></data>
 </root>

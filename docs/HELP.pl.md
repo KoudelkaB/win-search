@@ -169,7 +169,7 @@ Typowe polecenia:
 - `Ctrl+V`: wklej po wybraniu kopiowania, przeniesienia, dowiązania symbolicznego lub twardego.
 - `C`: skopiuj zaznaczone elementy do schowka. Dodanie `V`, `T`, `W` lub `A` kopiuje zamiast tego wersję pliku, czas utworzenia, czas ostatniego zapisu albo czas ostatniego dostępu; `+` na początku dopisuje do schowka zamiast go zastępować.
 - `X`: wytnij zaznaczone elementy do schowka.
-- `D`: porównaj w skonfigurowanym narzędziu porównującym. Dostępne tylko przy zaznaczeniu dokładnie dwóch elementów.
+- `D`: porównaj dwa pliki lub dwa foldery w zainstalowanym, zgodnym narzędziu porównującym. Dla dwóch plików rozwiązaniem zapasowym jest VS Code (`--diff`). Bez odpowiedniego zainstalowanego narzędzia skrót jest ukryty.
 - `H`: otwórz jeden plik we wbudowanym edytorze szesnastkowym lub porównaj dwa pliki. Działa offline.
 - `L`: otwórz zaznaczone pliki we wbudowanym Log Explorerze. Działa offline. Gdy pliki mają łącznie ponad 100 MB lub jest ich ponad 500, najpierw pyta, bo Log Explorer trzyma wszystko w pamięci.
 - `G`: pokaż w plikach — otwórz pliki zawierające szukany tekst (zielone wiersze) w jednym oknie przeglądarki logów, połączone jeden za drugim i z filtrem na wiersze z tym tekstem. Także przycisk **Pokaż w plikach** obok opcji wielkości liter i menu kontekstowe.
@@ -199,7 +199,9 @@ Polecenia pod `Ctrl`:
 - `Ctrl+N`: utwórz nowe foldery w zaznaczonych folderach.
 - `Ctrl+J`: przejdź do następnego zaznaczonego elementu; `Ctrl+Shift+J` do poprzedniego.
 
-Cele otwierania po `O` lub `A`. Każda pozycja pojawia się tylko wtedy, gdy aplikacja została wykryta:
+Cele otwierania po `O` lub `A`. Panel **Skróty** pokazuje tylko zainstalowane aplikacje zgodne z całym zaznaczeniem; puste kategorie są ukryte. Przytrzymaj klawisz kategorii, a następnie naciśnij klawisz aplikacji, na przykład `O`, `J`, `P` dla PhpStorm.
+
+Kategorie bez zgodnych zainstalowanych aplikacji są ukryte. Jeśli dostępna jest tylko jedna aplikacja, klawisz kategorii otwiera ją bezpośrednio (na przykład `O`, `N` otwiera Notepad++). Podmenu pojawia się tylko przy co najmniej dwóch dostępnych aplikacjach. Dotyczy to także sekwencji po `A`.
 
 - `B`: Eksplorator plików.
 - `W`: wykryta domyślna przeglądarka internetowa.
@@ -213,6 +215,12 @@ Cele otwierania po `O` lub `A`. Każda pozycja pojawia się tylko wtedy, gdy apl
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
+- `J`: Środowiska programistyczne (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: Edytory tekstu (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: Inne przeglądarki internetowe (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: Przeglądarki plików (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: Programy archiwizujące (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: Narzędzia diff / merge (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.

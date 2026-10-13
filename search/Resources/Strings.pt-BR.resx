@@ -95,7 +95,7 @@ Abrir mesmo assim?</value></data>
   <data name="ArchiveCutCopied" xml:space="preserve"><value>Itens dentro de um arquivo compactado não podem ser recortados; foram copiados</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>Nenhum arquivo existente para copiar</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>Falha ao copiar para a área de transferência: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>Nenhuma ferramenta de comparação encontrada (WinMerge, KDiff3 ou Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>Nenhuma ferramenta diff instalada suporta esta seleção.</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>Apenas um item pode ser renomeado diretamente. Para vários itens, use os comandos de F2.</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>A área de transferência não contém uma data e hora válidas: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>Data alterada</value></data>
@@ -138,4 +138,11 @@ Abrir mesmo assim?</value></data>
   <data name="OriginHint" xml:space="preserve"><value>instale o serviço do File Search Manager ou aprove a solicitação de elevação para indexar o NTFS instantaneamente</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>rede indisponível; tentando novamente</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>falha na verificação; tentando novamente</value></data>
+  <data name="Development environments" xml:space="preserve"><value>Ambientes de desenvolvimento</value></data>
+  <data name="Text editors" xml:space="preserve"><value>Editores de texto</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>Outros navegadores web</value></data>
+  <data name="Viewers" xml:space="preserve"><value>Visualizadores</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>Gerenciadores de arquivos compactados</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>Ferramentas diff / merge</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>Aplicativo não encontrado: {0}</value></data>
 </root>

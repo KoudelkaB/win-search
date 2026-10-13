@@ -169,7 +169,7 @@ Běžné příkazy:
 - `Ctrl+V`: vložit po volbě kopírování, přesunu, symbolického nebo pevného odkazu.
 - `C`: zkopírovat vybrané položky do schránky. Přidáním `V`, `T`, `W` nebo `A` zkopírujete místo toho verzi souboru, čas vytvoření, čas poslední změny nebo čas posledního přístupu; `+` na začátku obsah schránky doplní, místo aby jej nahradil.
 - `X`: vyjmout vybrané položky do schránky.
-- `D`: porovnat v nastaveném porovnávacím nástroji. Dostupné jen při výběru přesně dvou položek.
+- `D`: porovnat dva soubory nebo dvě složky v nainstalovaném vhodném nástroji diff. Pro dva soubory lze použít i VS Code (`--diff`). Bez vhodného nástroje je tato nápověda skrytá.
 - `H`: otevřít jeden soubor ve vestavěném hex editoru nebo porovnat dva soubory. Funguje offline.
 - `L`: otevřít vybrané soubory ve vestavěném prohlížeči logů (Log Explorer). Funguje offline. Pokud mají soubory dohromady víc než 100 MB nebo je jich víc než 500, nejdřív se zeptá, protože prohlížeč logů drží vše v paměti.
 - `G`: zobrazit v souborech — otevřít soubory obsahující hledaný text (zelené řádky) v jednom okně prohlížeče logů, spojené za sebou a s filtrem na řádky s tímto textem. Totéž dělá tlačítko **Zobrazit v souborech** vedle **Nerozlišovat velikost písmen** a kontextová nabídka.
@@ -199,7 +199,9 @@ Příkazy pod `Ctrl`:
 - `Ctrl+N`: vytvořit nové složky ve vybraných složkách.
 - `Ctrl+J`: přejít na další vybranou položku; `Ctrl+Shift+J` na předchozí.
 
-Cíle otevření po `O` nebo `A`. Každá položka se zobrazí, jen když byla aplikace nalezena:
+Cíle otevření po `O` nebo `A`. Panel **Nápověda** zobrazuje pouze nainstalované aplikace vhodné pro celý výběr; prázdné kategorie jsou skryté. Podržte klávesu kategorie a pak stiskněte klávesu aplikace, například `O`, `J`, `P` pro PhpStorm.
+
+Kategorie bez vhodné nainstalované aplikace je skrytá. Má-li právě jednu aplikaci, její klávesa otevře přímo tuto aplikaci (například `O`, `N` otevře Notepad++). Podnabídka se zobrazí pouze při dvou či více dostupných aplikacích. Stejně funguje i spuštění po `A`.
 
 - `B`: Průzkumník souborů.
 - `W`: výchozí zjištěný webový prohlížeč.
@@ -213,6 +215,12 @@ Cíle otevření po `O` nebo `A`. Každá položka se zobrazí, jen když byla a
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
+- `J`: Vývojová prostředí (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: Textové editory (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: Další webové prohlížeče (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: Prohlížeče souborů (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: Správci archivů (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: Nástroje diff / merge (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.

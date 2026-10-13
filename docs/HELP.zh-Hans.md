@@ -169,7 +169,7 @@ File Search Manager 有两个主要输入框：
 - `Ctrl+V`：在选择复制、移动、符号链接或硬链接后粘贴。
 - `C`：将选中项目复制到剪贴板。加上 `V`、`T`、`W` 或 `A` 可改为复制文件版本、创建时间、最后写入时间或最后访问时间；先按 `+` 则追加到剪贴板而不是替换。
 - `X`：将选中项目剪切到剪贴板。
-- `D`：在已配置的比较工具中比较。仅在恰好选中两个项目时可用。
+- `D`：在已安装的兼容比较工具中比较两个文件或两个文件夹。比较两个文件时，VS Code（`--diff`）可作为备选。没有合适的已安装工具时，该提示隐藏。
 - `H`：在内置十六进制编辑器中打开一个文件，或比较两个文件。可离线使用。
 - `L`：在内置 Log Explorer 中打开所选文件。可离线使用。如果文件总大小超过 100 MB 或数量超过 500 个，会先询问，因为 Log Explorer 会把它们全部保存在内存中。
 - `G`：在文件中显示 — 在一个日志浏览器窗口中依次合并打开包含搜索文本的文件（绿色行），并筛选出包含该文本的行。也可以使用大小写选项旁的 **在文件中显示** 按钮和上下文菜单。
@@ -199,7 +199,9 @@ File Search Manager 有两个主要输入框：
 - `Ctrl+N`：在选中的文件夹中创建新文件夹。
 - `Ctrl+J`：跳到下一个选中项目；`Ctrl+Shift+J` 跳到上一个。
 
-在 `O` 或 `A` 之后的打开目标。每一项仅在检测到相应应用时才会出现：
+在 `O` 或 `A` 之后的打开目标。**提示** 仅显示与整个选择兼容的已安装应用程序；空类别隐藏。按住类别按键，再按应用程序按键，例如 `O`、`J`、`P` 打开 PhpStorm。
+
+没有兼容的已安装应用程序时，该类别隐藏。只有一个应用程序时，类别按键直接打开它（例如，`O`、`N`打开Notepad++）。仅在有两个或更多可用应用程序时显示子菜单。`A`之后也遵循此规则。
 
 - `B`：文件资源管理器。
 - `W`：检测到的默认网页浏览器。
@@ -213,6 +215,12 @@ File Search Manager 有两个主要输入框：
 - `D`：Visual Studio Code。
 - `V`：Visual Studio。
 - `Y`：Antigravity。
+- `J`: 开发环境 (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: 文本编辑器 (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: 更多网页浏览器 (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: 查看器 (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: 压缩文件管理器 (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: 比较 / 合并工具 (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`：Ghostscript。
 - `P`：GhostPCL。
 - `X`：GhostXPS。

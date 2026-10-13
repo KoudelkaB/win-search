@@ -194,18 +194,20 @@ namespace search
                 return;
             }
             var currentNodes = nodes().ToArray();
-            var filtered = Commands.Children.AsEnumerable().Where(x => x.Visible(currentNodes)).ToArray();
+            var filtered = Commands.Children.Select(x => x.ForNodes(currentNodes)).Where(x => x != null && x.Visible(currentNodes)).ToArray();
             var title = "";
-            var level = 1;
+            var level = 0;
             foreach (var key in commandKeys.ToArray())
             {
-                filtered = filtered.Where(x => x.Key == key).SelectMany(x =>
+                var matching = filtered.Where(x => x.Key == key).ToArray();
+                if (matching.Length > 0) level++;
+                filtered = matching.SelectMany(x =>
                 {
                     title += " " + x.Help;
                     return x.Children;
-                }).Where(x => x.Visible(currentNodes)).ToArray();
-                if (filtered.Count() > 1) level++;
+                }).Select(x => x.ForNodes(currentNodes)).Where(x => x != null && x.Visible(currentNodes)).ToArray();
             }
+            level = Math.Max(1, level);
             StringBuilder sb = new();
             if (commandKeys.Count > 0)
             {
@@ -217,7 +219,7 @@ namespace search
             }
             foreach (var h in filtered)
             {
-                var submenu = h.Children.Any(x => x.Visible(currentNodes)) ? " ›" : "";
+                var submenu = h.Children.Select(x => x.ForNodes(currentNodes)).Any(x => x != null && x.Visible(currentNodes)) ? " ›" : "";
                 sb.AppendLine(h.Key == Key.None ? h.Help + submenu : $"<{GetKeyDisplayName(h.Key)}> {h.Help}{submenu}");
             }
             var canGoBack = commandKeys.Count > 1;
@@ -244,6 +246,7 @@ namespace search
             // Named as on the keyboard, in the help and in the menus - not "Return"/"Escape"
             Key.Return => "Enter",
             Key.Escape => "Esc",
+            >= Key.D0 and <= Key.D9 => (key - Key.D0).ToString(),
             _ => key.ToString()
         };
     }
@@ -321,5 +324,7 @@ namespace search
         public List<CommandTree> Children = new();
         public Command Cmd = null;
         public Func<IEnumerable<INode>, bool> Visible = n => true;
+        public Func<IEnumerable<INode>, CommandTree> ResolveForNodes;
+        public CommandTree ForNodes(IEnumerable<INode> nodes) => ResolveForNodes == null ? this : ResolveForNodes(nodes);
     };
 }

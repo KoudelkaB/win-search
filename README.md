@@ -23,7 +23,7 @@ The WPF desktop app can read the NTFS Master File Table through an optional Wind
 - Standard `Ctrl+C`, `Ctrl+X`, and `Ctrl+V` shell-compatible clipboard operations.
 - Collision handling with overwrite, skip, rename, and apply-to-all choices.
 - Transfer progress and cancellation, plus restore-friendly best-effort deletion through the Recycle Bin.
-- Dynamic **Open with** menu for installed compatible applications, including diff tools, 7-Zip, browsers, editors, and Ghostscript-family viewers.
+- Dynamic **Open with** menu for installed compatible applications, including JetBrains IDEs, Visual Studio, VS Code, Notepad++, PSPad, browsers, PDF/image/media viewers, diff/merge tools, 7-Zip, WinRAR, PeaZip, and Bandizip. Keyboard hints hide missing applications and empty categories.
 - ZIP and 7z creation, archive extraction, and browsing of supported archive contents.
 - Persistent filter/search history and window layout under `%LOCALAPPDATA%\win-search`.
 

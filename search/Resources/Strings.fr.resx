@@ -95,7 +95,7 @@ Les ouvrir quand même ?</value></data>
   <data name="ArchiveCutCopied" xml:space="preserve"><value>Les éléments d'une archive ne peuvent pas être coupés ; ils ont été copiés à la place</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>Aucun fichier existant à copier</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>Échec de la copie dans le presse-papiers : {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>Aucun outil de comparaison trouvé (WinMerge, KDiff3 ou Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>Aucun outil diff installé ne prend en charge cette sélection.</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>Un seul élément peut être renommé sur place. Pour plusieurs éléments, utilisez les commandes F2.</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>Le presse-papiers ne contient pas de date et d'heure valides : {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>Heure modifiée</value></data>
@@ -138,4 +138,11 @@ Les ouvrir quand même ?</value></data>
   <data name="OriginHint" xml:space="preserve"><value>installez le service File Search Manager ou acceptez la demande d'élévation pour une indexation NTFS instantanée</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>réseau indisponible ; nouvelle tentative</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>échec de l'analyse ; nouvelle tentative</value></data>
+  <data name="Development environments" xml:space="preserve"><value>Environnements de développement</value></data>
+  <data name="Text editors" xml:space="preserve"><value>Éditeurs de texte</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>Autres navigateurs web</value></data>
+  <data name="Viewers" xml:space="preserve"><value>Visionneuses</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>Gestionnaires d’archives</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>Outils diff / fusion</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>Application introuvable : {0}</value></data>
 </root>

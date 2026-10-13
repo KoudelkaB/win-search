@@ -249,7 +249,7 @@ Open them anyway?</value></data>
   <data name="ArchiveCutCopied" xml:space="preserve"><value>Items inside an archive cannot be cut; they were copied instead</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>No existing files to copy</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>Copying to the clipboard failed: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>No diff tool found (WinMerge, KDiff3 or Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>No installed diff tool supports this selection.</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>Only one item can be renamed in place. For several items use the F2 commands.</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>The clipboard does not contain a valid date and time: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>Time changed</value></data>
@@ -292,4 +292,11 @@ Open them anyway?</value></data>
   <data name="OriginHint" xml:space="preserve"><value>install the File Search Manager service or accept the admin prompt for instant NTFS indexing</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>network unavailable; retrying</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>scan failed; retrying</value></data>
+  <data name="Development environments" xml:space="preserve"><value>Development environments</value></data>
+  <data name="Text editors" xml:space="preserve"><value>Text editors</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>More web browsers</value></data>
+  <data name="Viewers" xml:space="preserve"><value>Viewers</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>Archive managers</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>Diff / merge tools</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>Application not found: {0}</value></data>
 </root>

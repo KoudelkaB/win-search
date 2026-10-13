@@ -169,7 +169,7 @@ Häufige Befehle:
 - `Ctrl+V`: einfügen nach Wahl von Kopieren, Verschieben, symbolischer oder harter Verknüpfung.
 - `C`: ausgewählte Elemente in die Zwischenablage kopieren. Mit `V`, `T`, `W` oder `A` werden stattdessen Dateiversion, Erstellungszeit, letzte Änderungszeit oder letzte Zugriffszeit kopiert; ein vorangestelltes `+` hängt an die Zwischenablage an, statt sie zu ersetzen.
 - `X`: ausgewählte Elemente in die Zwischenablage ausschneiden.
-- `D`: im konfigurierten Vergleichswerkzeug vergleichen. Nur verfügbar, wenn genau zwei Elemente ausgewählt sind.
+- `D`: zwei Dateien oder zwei Ordner in einem installierten, passenden Vergleichswerkzeug vergleichen. Für zwei Dateien dient VS Code als Ausweichlösung (`--diff`). Ohne passendes installiertes Werkzeug ist der Hinweis ausgeblendet.
 - `H`: eine Datei im integrierten Hex-Editor öffnen oder zwei Dateien vergleichen. Funktioniert offline.
 - `L`: ausgewählte Dateien im integrierten Log Explorer öffnen. Funktioniert offline. Fragt vorher nach, wenn die Dateien zusammen mehr als 100 MB haben oder mehr als 500 sind, weil der Log Explorer alles im Speicher hält.
 - `G`: in Dateien anzeigen — die Dateien mit dem gesuchten Text (grüne Zeilen) in einem Log-Explorer-Fenster öffnen, aneinandergehängt und auf die Zeilen mit dem Text gefiltert. Ebenso die Schaltfläche **In Dateien anzeigen** neben der Groß-/Kleinschreibungsoption und das Kontextmenü.
@@ -199,7 +199,9 @@ Befehle unter `Ctrl`:
 - `Ctrl+N`: neue Ordner in den ausgewählten Ordnern anlegen.
 - `Ctrl+J`: zum nächsten ausgewählten Element springen; `Ctrl+Shift+J` zum vorherigen.
 
-Öffnen-Ziele nach `O` oder `A`. Jeder Eintrag erscheint nur, wenn die Anwendung erkannt wurde:
+Öffnen-Ziele nach `O` oder `A`. **Hinweise** zeigt nur installierte Anwendungen, die zur gesamten Auswahl passen; leere Kategorien sind ausgeblendet. Halten Sie die Kategorietaste gedrückt und drücken Sie dann die Taste der Anwendung, zum Beispiel `O`, `J`, `P` für PhpStorm.
+
+Kategorien ohne passende installierte Anwendung sind ausgeblendet. Bei genau einer Anwendung öffnet die Kategorietaste diese direkt (zum Beispiel öffnet `O`, `N` Notepad++). Ein Untermenü erscheint nur bei mindestens zwei verfügbaren Anwendungen. Dies gilt auch nach `A`.
 
 - `B`: Explorer.
 - `W`: erkannter Standard-Webbrowser.
@@ -213,6 +215,12 @@ Befehle unter `Ctrl`:
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
+- `J`: Entwicklungsumgebungen (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: Texteditoren (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: Weitere Webbrowser (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: Dateibetrachter (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: Archivprogramme (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: Diff- / Merge-Werkzeuge (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.

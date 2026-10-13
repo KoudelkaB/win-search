@@ -169,7 +169,7 @@ Common commands:
 - `Ctrl+V`: paste after choosing copy, move, symbolic link, or hard link.
 - `C`: copy selected items to the clipboard. Add `V`, `T`, `W`, or `A` to copy the file version, creation time, last write time, or last access time instead; `+` first appends to the clipboard rather than replacing it.
 - `X`: cut selected items to the clipboard.
-- `D`: compare in the configured diff tool. Available only with exactly two items selected.
+- `D`: compare two files or two directories in an installed compatible diff tool. VS Code is a fallback for two files (`--diff`). The hint is hidden without a suitable installed tool.
 - `H`: open one file in the built-in hex editor, or compare two files. Works offline.
 - `L`: open the selected files in the built-in Log explorer. Works offline. Asks first when the files total more than 100 MB or 500 files, because Log explorer holds them in memory.
 - `G`: show in files — open the files containing the searched text (green rows) in one Log explorer window, appended and filtered to the lines with the text. Also the **Show in files** button next to **Case insensitive** and the context menu.
@@ -199,7 +199,9 @@ Commands held under `Ctrl`:
 - `Ctrl+N`: create new folders in the selected folders.
 - `Ctrl+J`: scroll to the next selected item; `Ctrl+Shift+J` goes to the previous one.
 
-Open targets after `O` or `A`. Each entry appears only when the application was detected:
+Open targets after `O` or `A`. **Hints** shows only installed applications compatible with the entire selection; empty application categories are hidden. Hold the category key, then press the application key, for example `O`, `J`, `P` for PhpStorm.
+
+With no compatible installed application, a category is hidden. With exactly one, its key opens that application directly (for example, `O`, `N` opens Notepad++). A submenu is shown only when two or more applications are available. This also applies after `A`.
 
 - `B`: File Explorer.
 - `W`: default detected web browser.
@@ -213,6 +215,12 @@ Open targets after `O` or `A`. Each entry appears only when the application was 
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
+- `J`: Development environments (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: Text editors (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: More web browsers (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: Viewers (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: Archive managers (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: Diff / merge tools (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.

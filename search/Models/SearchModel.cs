@@ -3547,6 +3547,7 @@ namespace search.Models
             }
             exes = files.Values.AsParallel()
                 .Where(n => !n.IsDirectory && NodePath.LeafEndsWith(n, ".exe")).ToArray();
+            Apps.RefreshInstalledApplications();
             LoadStatusTooltip = OriginsInfo(origins).Trim();
             return true;
         }
@@ -3828,7 +3829,15 @@ namespace search.Models
             }
         }
 
-        public IEnumerable<INode> ToTextNodes(params INode[] nodes)
+        public IEnumerable<INode> ToTextNodes(params INode[] nodes) => TextNodes(false, nodes);
+
+        /// <summary>
+        /// Text nodes for a diff tool, which takes exactly one file per side: every node
+        /// stays one node, a workbook becomes a single file of all its sheets.
+        /// </summary>
+        public IEnumerable<INode> ToComparisonNodes(params INode[] nodes) => TextNodes(true, nodes);
+
+        internal static IEnumerable<INode> TextNodes(bool onePerNode, INode[] nodes)
         {
             foreach (var n in nodes)
             {
@@ -3837,7 +3846,15 @@ namespace search.Models
                     case ".xlsx":
                         {
                             string dir = App.CreateTempFolder();
-                            foreach (var txt in n.GetExcelSheets())
+                            if (onePerNode)
+                            {
+                                //Named after the workbook - the diff tool shows it as the side's title
+                                var path = Path.Combine(dir, n.Name + ".txt");
+                                File.WriteAllText(path, string.Join("\r\n", n.GetExcelSheets()
+                                    .Select((txt, i) => $"=== Sheet {i + 1} ===\r\n{txt}")), Encoding.UTF8);
+                                yield return new FileNode(path);
+                            }
+                            else foreach (var txt in n.GetExcelSheets())
                             {
                                 var path = Path.Combine(dir, Path.GetRandomFileName());
                                 File.WriteAllText(path, txt, Encoding.UTF8);

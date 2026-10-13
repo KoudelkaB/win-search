@@ -95,7 +95,7 @@
   <data name="ArchiveCutCopied" xml:space="preserve"><value>无法剪切归档内的项目，已改为复制</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>没有可复制的现有文件</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>复制到剪贴板失败: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>未找到比较工具 (WinMerge、KDiff3 或 Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>没有已安装的比较工具支持此选择。</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>只能就地重命名一个项目。多个项目请使用 F2 命令。</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>剪贴板中没有有效的日期和时间: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>已更改时间</value></data>
@@ -138,4 +138,11 @@
   <data name="OriginHint" xml:space="preserve"><value>安装 File Search Manager 服务或批准权限提升提示，即可立即为 NTFS 建立索引</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>网络不可用; 正在重试</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>扫描失败; 正在重试</value></data>
+  <data name="Development environments" xml:space="preserve"><value>开发环境</value></data>
+  <data name="Text editors" xml:space="preserve"><value>文本编辑器</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>更多网页浏览器</value></data>
+  <data name="Viewers" xml:space="preserve"><value>查看器</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>压缩文件管理器</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>比较 / 合并工具</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>未找到应用程序: {0}</value></data>
 </root>

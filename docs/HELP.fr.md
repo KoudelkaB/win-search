@@ -169,7 +169,7 @@ Commandes courantes :
 - `Ctrl+V` : coller après avoir choisi copier, déplacer, lien symbolique ou lien physique.
 - `C` : copier les éléments sélectionnés dans le presse-papiers. Ajoutez `V`, `T`, `W` ou `A` pour copier à la place la version du fichier, la date de création, la date de dernière écriture ou la date de dernier accès ; un `+` initial ajoute au presse-papiers au lieu de le remplacer.
 - `X` : couper les éléments sélectionnés dans le presse-papiers.
-- `D` : comparer dans l’outil de comparaison configuré. Disponible uniquement avec exactement deux éléments sélectionnés.
+- `D` : comparer deux fichiers ou deux dossiers dans un outil de comparaison installé et compatible. Pour deux fichiers, VS Code sert de solution de repli (`--diff`). Sans outil installé adapté, le raccourci est masqué.
 - `H` : ouvrir un fichier dans l’éditeur hexadécimal intégré ou comparer deux fichiers. Fonctionne hors ligne.
 - `L` : ouvrir les fichiers sélectionnés dans le Log Explorer intégré. Fonctionne hors ligne. Demande d’abord confirmation si les fichiers dépassent 100 Mo au total ou sont plus de 500, car le Log Explorer les garde en mémoire.
 - `G` : afficher dans les fichiers — ouvrir les fichiers contenant le texte recherché (lignes vertes) dans une fenêtre de l'explorateur de journaux, mis bout à bout et filtrés sur les lignes contenant ce texte. Également le bouton **Afficher dans les fichiers** à côté de l'option de casse et le menu contextuel.
@@ -199,7 +199,9 @@ Commandes sous `Ctrl` :
 - `Ctrl+N` : créer de nouveaux dossiers dans les dossiers sélectionnés.
 - `Ctrl+J` : aller à l’élément sélectionné suivant ; `Ctrl+Shift+J` au précédent.
 
-Cibles d’ouverture après `O` ou `A`. Chaque entrée n’apparaît que si l’application a été détectée :
+Cibles d’ouverture après `O` ou `A`. **Raccourcis** n’affiche que les applications installées compatibles avec toute la sélection ; les catégories vides sont masquées. Maintenez la touche de la catégorie, puis appuyez sur la touche de l’application, par exemple `O`, `J`, `P` pour PhpStorm.
+
+Une catégorie sans application installée compatible est masquée. Avec une seule application, sa touche l’ouvre directement (par exemple, `O`, `N` ouvre Notepad++). Le sous-menu apparaît uniquement si au moins deux applications sont disponibles. Cela fonctionne aussi après `A`.
 
 - `B` : Explorateur de fichiers.
 - `W` : navigateur web par défaut détecté.
@@ -213,6 +215,12 @@ Cibles d’ouverture après `O` ou `A`. Chaque entrée n’apparaît que si l’
 - `D` : Visual Studio Code.
 - `V` : Visual Studio.
 - `Y` : Antigravity.
+- `J`: Environnements de développement (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: Éditeurs de texte (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: Autres navigateurs web (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: Visionneuses (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: Gestionnaires d’archives (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: Outils diff / fusion (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G` : Ghostscript.
 - `P` : GhostPCL.
 - `X` : GhostXPS.

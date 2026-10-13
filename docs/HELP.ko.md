@@ -169,7 +169,7 @@ NTFS 드라이브에서는 NTFS 마스터 파일 테이블을 읽는 것이 가�
 - `Ctrl+V`: 복사, 이동, 심볼릭 링크, 하드 링크를 선택한 뒤 붙여넣습니다.
 - `C`: 선택 항목을 클립보드로 복사합니다. `V`, `T`, `W`, `A`를 더하면 대신 파일 버전, 만든 시간, 마지막 쓴 시간, 마지막 액세스 시간을 복사합니다. 앞에 `+`를 누르면 클립보드를 바꾸지 않고 덧붙입니다.
 - `X`: 선택 항목을 클립보드로 잘라냅니다.
-- `D`: 설정된 비교 도구로 비교합니다. 항목을 정확히 두 개 선택했을 때만 사용할 수 있습니다.
+- `D`: 두 파일 또는 두 폴더를 설치된 호환 비교 도구로 비교합니다. 두 파일의 경우 VS Code(`--diff`)를 대신 사용할 수 있습니다. 적합한 도구가 설치되어 있지 않으면 이 힌트는 숨겨집니다.
 - `H`: 파일 하나를 내장 16진수 편집기로 열거나 두 파일을 비교합니다. 오프라인에서도 사용할 수 있습니다.
 - `L`: 선택한 파일을 내장 Log Explorer에서 엽니다. 오프라인에서도 사용할 수 있습니다. 파일 합계가 100MB를 넘거나 500개를 넘으면 Log Explorer가 모두 메모리에 보관하므로 먼저 확인합니다.
 - `G`: 파일에서 보기 — 검색한 텍스트가 포함된 파일(초록색 행)을 하나의 로그 탐색기 창에 이어 붙여 열고 해당 텍스트가 있는 줄로 필터링합니다. 대소문자 옵션 옆의 **파일에서 보기** 버튼과 상황에 맞는 메뉴에서도 사용할 수 있습니다.
@@ -199,7 +199,9 @@ NTFS 드라이브에서는 NTFS 마스터 파일 테이블을 읽는 것이 가�
 - `Ctrl+N`: 선택한 폴더 안에 새 폴더를 만듭니다.
 - `Ctrl+J`: 다음 선택 항목으로 이동합니다. `Ctrl+Shift+J`는 이전 항목으로 이동합니다.
 
-`O` 또는 `A` 다음의 열기 대상. 각 항목은 해당 앱이 감지된 경우에만 표시됩니다.
+`O` 또는 `A` 다음의 열기 대상. **힌트**에는 선택 항목 전체와 호환되는 설치된 앱만 표시되며 빈 범주는 숨겨집니다. 범주 키를 누른 채 앱 키를 누릅니다(예: `O`, `J`, `P`로 PhpStorm 열기).
+
+호환되는 설치된 앱이 없는 범주는 숨겨집니다. 앱이 하나뿐이면 범주 키로 앱을 바로 엽니다(예: `O`, `N`으로 Notepad++ 열기). 하위 메뉴는 사용 가능한 앱이 두 개 이상일 때만 표시됩니다. `A` 뒤에서도 동일하게 작동합니다.
 
 - `B`: 파일 탐색기.
 - `W`: 감지된 기본 웹 브라우저.
@@ -213,6 +215,12 @@ NTFS 드라이브에서는 NTFS 마스터 파일 테이블을 읽는 것이 가�
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
+- `J`: 개발 환경 (R Rider, P PhpStorm, C CLion, Y PyCharm, I IntelliJ IDEA, W WebStorm, G GoLand, U RustRover, A Android Studio, Q Qt Creator, B Code::Blocks).
+- `N`: 텍스트 편집기 (T Notepad++, S Sublime Text, C Cursor, D VSCodium, P PSPad, U UltraEdit, I EditPlus, K Kate, G Geany, V gVim, E Emacs).
+- `Q`: 다른 웹 브라우저 (B Brave, V Vivaldi, C Chromium, W Waterfox, L LibreWolf).
+- `U`: 뷰어 (S SumatraPDF, F Foxit PDF Reader, P PDF-XChange Editor, O Okular, I IrfanView, X XnView, T FastStone Image Viewer, V VLC, M mpv, H MPC-HC).
+- `Z`: 압축 파일 관리자 (7 7-Zip, R WinRAR, P PeaZip, B Bandizip).
+- `M`: 비교 / 병합 도구 (W WinMerge, K KDiff3, L Meld, B Beyond Compare, D DiffMerge, V Visual Studio Code).
 - `G`: Ghostscript.
 - `P`: GhostPCL.
 - `X`: GhostXPS.

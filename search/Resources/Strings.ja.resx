@@ -95,7 +95,7 @@
   <data name="ArchiveCutCopied" xml:space="preserve"><value>アーカイブ内の項目は切り取れないため、代わりにコピーしました</value></data>
   <data name="NothingToCopy" xml:space="preserve"><value>コピーできる既存のファイルがありません</value></data>
   <data name="ClipboardCopyFailed" xml:space="preserve"><value>クリップボードへのコピーに失敗しました: {0}</value></data>
-  <data name="NoDiffTool" xml:space="preserve"><value>差分ツールが見つかりません (WinMerge、KDiff3、Meld)</value></data>
+  <data name="NoDiffTool" xml:space="preserve"><value>この選択に対応するインストール済み差分ツールがありません。</value></data>
   <data name="RenameOneOnly" xml:space="preserve"><value>その場で名前を変更できるのは 1 項目だけです。複数の項目には F2 コマンドを使用してください。</value></data>
   <data name="InvalidClipboardDate" xml:space="preserve"><value>クリップボードに有効な日時がありません: {0}</value></data>
   <data name="TimeChanged" xml:space="preserve"><value>日時を変更しました</value></data>
@@ -138,4 +138,11 @@
   <data name="OriginHint" xml:space="preserve"><value>NTFS をすぐにインデックス化するには、File Search Manager サービスをインストールするか、権限昇格の確認を承認してください</value></data>
   <data name="DriveUnavailableRetrying" xml:space="preserve"><value>ネットワークを利用できません。再試行中</value></data>
   <data name="DriveScanFailedRetrying" xml:space="preserve"><value>スキャンに失敗しました。再試行中</value></data>
+  <data name="Development environments" xml:space="preserve"><value>開発環境</value></data>
+  <data name="Text editors" xml:space="preserve"><value>テキストエディター</value></data>
+  <data name="More web browsers" xml:space="preserve"><value>その他のウェブブラウザー</value></data>
+  <data name="Viewers" xml:space="preserve"><value>ビューアー</value></data>
+  <data name="Archive managers" xml:space="preserve"><value>圧縮ファイル管理</value></data>
+  <data name="Diff / merge tools" xml:space="preserve"><value>差分・マージツール</value></data>
+  <data name="ApplicationNotFound" xml:space="preserve"><value>アプリケーションが見つかりません: {0}</value></data>
 </root>
