@@ -75,6 +75,7 @@ namespace search
 
             Exit += (o, e) =>
             {
+                WebAppWindow.Shutdown();
                 $"App exiting with {e.ApplicationExitCode}".Debug();
                 //Best-effort removal of this run's temp folder; anything locked here
                 //is swept by the stale-folder cleanup on the next start
@@ -109,11 +110,13 @@ namespace search
                 return;
             }
             var picker = new LanguageSelectionWindow(initial);
-            // The picker is the only window yet - closing it would shut the app down with
-            // OnLastWindowClose before the StartupUri main window is even created
+            // The first window becomes Application.MainWindow. Keep the startup picker from
+            // ending the application before the real MainWindow is constructed.
+            var shutdownMode = ShutdownMode;
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var selected = picker.ShowDialog() == true ? picker.SelectedCulture : "en";
-            ShutdownMode = ShutdownMode.OnLastWindowClose;
+            string selected;
+            try { selected = picker.ShowDialog() == true ? picker.SelectedCulture : "en"; }
+            finally { ShutdownMode = shutdownMode; }
             LanguageSettingsStore.Save(selected);
             ApplyCulture(selected);
         }

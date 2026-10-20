@@ -33,6 +33,7 @@
   <data name="ItemToFolders" xml:space="preserve"><value>{0}을(를) {1}개 폴더로:</value></data>
   <data name="Hex editor / compare" xml:space="preserve"><value>16진수 편집기 / 비교</value></data>
   <data name="Log explorer" xml:space="preserve"><value>로그 탐색기</value></data>
+  <data name="Calculator" xml:space="preserve"><value>계산기</value></data>
   <data name="Show in files" xml:space="preserve"><value>파일에서 보기</value></data>
   <data name="SelectFound" xml:space="preserve"><value>찾은 파일 선택</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>검색한 텍스트가 포함된 파일을 하나의 로그 탐색기 창에서 열고 해당 텍스트가 있는 줄로 필터링합니다 (G)</value></data>

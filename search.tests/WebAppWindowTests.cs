@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Windows;
 using search.Models;
 using Xunit;
 
@@ -31,6 +32,46 @@ namespace search.Tests
             var saved = WebAppLayoutStore.Load(page);
             Assert.Equal((1.1, 900d, 600d, true), (saved.Zoom, saved.Width, saved.Height, saved.Maximized));
             Assert.Equal(WebAppWindow.DefaultZoom, WebAppLayoutStore.Load(other).Zoom);
+        }
+
+        [Fact]
+        public void CalculatorGrowsForExtendedModesAndShrinksBackWithoutKeepingTheOldHeight()
+        {
+            var screen = new Rect(0, 0, 1920, 1400);
+            var frame = new Size(16, 39);
+            var previous = new Rect(300, 300, 1280, 860);
+            var standard = WebAppWindow.CalculatorBoundsFor(new Size(924, 1011), .8, frame, previous, screen);
+            var scientific = WebAppWindow.CalculatorBoundsFor(new Size(924, 1296), .8, frame, standard, screen);
+            var programmer = WebAppWindow.CalculatorBoundsFor(new Size(924, 1409), .8, frame, scientific, screen);
+            var restored = WebAppWindow.CalculatorBoundsFor(new Size(924, 1011), .8, frame, programmer, screen);
+
+            Assert.InRange(standard.Width, 750, 760);
+            Assert.True(scientific.Height > standard.Height);
+            Assert.True(programmer.Height > scientific.Height);
+            Assert.Equal(standard.Size, restored.Size);
+            Assert.True(screen.Contains(programmer));
+        }
+
+        [Fact]
+        public void CalculatorStaysInsideTheCurrentMonitorEvenWhenZoomedOrNearItsEdge()
+        {
+            var screen = new Rect(-1280, -100, 1280, 984);
+            var result = WebAppWindow.CalculatorBoundsFor(new Size(924, 1409), 1.5, new Size(16, 39),
+                new Rect(-300, 700, 760, 860), screen);
+
+            Assert.Equal(screen, result);
+        }
+
+        [Fact]
+        public void CalculatorContentUsesBrowserZoomAndAddsTheWindowFrameOnlyOnce()
+        {
+            var content = new Size(924, 1011);
+            var screen = new Rect(0, 0, 3840, 2160);
+            var result = WebAppWindow.CalculatorBoundsFor(content, 1.25, new Size(16, 39),
+                new Rect(50, 70, 760, 860), screen);
+
+            Assert.Equal(new Point(50, 70), result.TopLeft);
+            Assert.Equal(new Size(1171, 1303), result.Size);
         }
 
         static System.Text.Json.JsonElement LogExplorerOptions(string[] files, LogExplorerLoad load)

@@ -33,6 +33,7 @@
   <data name="ItemToFolders" xml:space="preserve"><value>{0} 到 {1} 个文件夹:</value></data>
   <data name="Hex editor / compare" xml:space="preserve"><value>十六进制编辑器 / 比较</value></data>
   <data name="Log explorer" xml:space="preserve"><value>日志浏览器</value></data>
+  <data name="Calculator" xml:space="preserve"><value>计算器</value></data>
   <data name="Show in files" xml:space="preserve"><value>在文件中显示</value></data>
   <data name="SelectFound" xml:space="preserve"><value>选择找到的文件</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>在一个日志浏览器窗口中打开包含搜索文本的文件，并筛选出包含该文本的行 (G)</value></data>

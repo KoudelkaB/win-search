@@ -33,6 +33,7 @@
   <data name="ItemToFolders" xml:space="preserve"><value>{0} を {1} 個のフォルダーへ:</value></data>
   <data name="Hex editor / compare" xml:space="preserve"><value>16 進エディター / 比較</value></data>
   <data name="Log explorer" xml:space="preserve"><value>ログ エクスプローラー</value></data>
+  <data name="Calculator" xml:space="preserve"><value>電卓</value></data>
   <data name="Show in files" xml:space="preserve"><value>ファイル内に表示</value></data>
   <data name="SelectFound" xml:space="preserve"><value>見つかったファイルを選択</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>検索したテキストを含むファイルを 1 つのログ エクスプローラー ウィンドウで開き、そのテキストを含む行に絞り込みます (G)</value></data>

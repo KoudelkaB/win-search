@@ -50,6 +50,7 @@ namespace search
         /// </summary>
         public const string LogExplorer = "LogExplorer.html";
         public const string HexEditor = "HexEditorAndComparer.html";
+        public const string Calculator = "calculator.html";
 
         /// <summary>
         /// Get text viever path  - built-in Log explorer (needs the WebView2 runtime)

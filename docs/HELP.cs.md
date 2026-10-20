@@ -149,6 +149,10 @@ Košík se automaticky ukládá mezi spuštěními aplikace. Chybějící cíle 
 
 Všechny příkazy pro cíle a filtry jsou pod klávesou `Alt` a chovají se stejně kdekoli v okně: podržte `Alt`, abyste je viděli v panelu **Nápověda**, a pak stiskněte `N` (přidat vybrané názvy jako cíle), `F` (přidat nadřazené složky), `V` (odeslat schránku všem cílům – držte dál a přidejte `L`/`H`/`O` pro odkaz, pevný odkaz, přepsání), `C` (vymazat cíle), `P` (připnout filtr), `I`/`E` (importovat/exportovat připnuté filtry a cíle). Klávesové sekvence přenášejí přímo se zvolenou akcí; dialog volby akce otevírá jen tlačítko na panelu nástrojů a puštění myší.
 
+`Alt+K` otevře vestavěnou **Kalkulačku** odkudkoli v okně, bez výběru souboru. Můžete také klepnout na tlačítko **Kalkulačka** ve spodní liště. Funguje offline s nainstalovaným Microsoft Edge WebView2 Runtime a nabízí režimy Standard, Scientific a Programmer. Při změně režimu nebo rozbalení panelu se okno automaticky přizpůsobí aktuálnímu obsahu až do velikosti dostupné pracovní plochy monitoru; větší obsah lze posouvat. Pro přesné zlomky a zkratky pro jejich zadávání zvolte pod výsledkem **Fraction** nebo **Mixed**. Historie, paměť, přiblížení a stav maximalizace se zachovávají mezi spuštěními.
+
+Zavřením hlavního okna File Search Manager se aplikace ukončí a zavřou se všechna okna vestavěných HTML nástrojů, včetně kalkulačky, prohlížeče logů a hex editoru.
+
 Když je aktivní klávesová sekvence, **Nápověda** zobrazuje jen platné následující klávesy. `Esc` se nabízí jen tehdy, když by uvolnění držených kláves provedlo akci a `Alt` právě není držen. Funguje to i v sekvenci s `Alt` po jeho uvolnění, pokud držíte jinou klávesu sekvence. `Backspace` se vždy vrátí o krok zpět. Ovládání toku je od voleb příkazů odděleno čárou.
 
 Položky končící znakem `›` mají další úroveň voleb; držte klávesu sekvence a stiskněte tuto klávesu, aby se podnabídka zobrazila.

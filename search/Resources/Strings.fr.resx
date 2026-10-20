@@ -33,6 +33,7 @@
   <data name="ItemToFolders" xml:space="preserve"><value>{0} vers {1} dossier(s) :</value></data>
   <data name="Hex editor / compare" xml:space="preserve"><value>Éditeur hexadécimal / comparaison</value></data>
   <data name="Log explorer" xml:space="preserve"><value>Explorateur de journaux</value></data>
+  <data name="Calculator" xml:space="preserve"><value>Calculatrice</value></data>
   <data name="Show in files" xml:space="preserve"><value>Afficher dans les fichiers</value></data>
   <data name="SelectFound" xml:space="preserve"><value>Sélectionner les fichiers trouvés</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>Ouvrir les fichiers contenant le texte recherché dans une fenêtre de l'explorateur de journaux, filtrés sur les lignes contenant ce texte (G)</value></data>

@@ -104,6 +104,8 @@ namespace search
         public MainWindow()
         {
             InitializeComponent();
+            // A startup language picker may have been the application's first window.
+            if (Application.Current is App application) application.MainWindow = this;
             Broker.StartupElevationAccepted += Broker_StartupElevationAccepted;
             elevateAtStart.IsChecked = ElevationSettingsStore.StartHelperAtLaunch();
             ApplyWorkspaceSettings(WorkspaceSettingsStore.Load());
@@ -143,6 +145,7 @@ namespace search
             ContentRendered += (_, __) => Dispatcher.BeginInvoke(() =>
             {
                 showInFilesButton.Visibility = WebAppWindow.IsAvailable ? Visibility.Visible : Visibility.Collapsed;
+                calculatorButton.Visibility = WebAppWindow.IsBrowserAvailable ? Visibility.Visible : Visibility.Collapsed;
                 PrewarmWebAppsAfterLoad();
             }, DispatcherPriority.ApplicationIdle);
             ShowSortIndicator(Models.SearchModel.DefaultSort);
@@ -200,6 +203,7 @@ namespace search
             //One ALT command set - the result-list commander and the window-wide commander
             //(hints panel) share it, so the same sequences behave the same everywhere
             var altCommands = new CommandTree[] {
+                (Key.K, "Calculator", n => WebAppWindow.IsBrowserAvailable, (n,a) => OpenCalculator()),
                 (Key.N, L.Caption("add selected as targets"), n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(NameTargetPath))),
                 (Key.F, L.Caption("add parent Folders as targets"), n => n.AtLeast(1), (n,a) => AddBasketTargets(n.Select(x => IOPath.GetDirectoryName(x.FullName)))),
                 (Key.V, L.Caption("send clipboard to all targets"), pasteToAllTargets, pasteToAllKeys),
@@ -1689,11 +1693,14 @@ namespace search
         /// <returns></returns>
         async Task Open(INode n, bool asAdmin = false) => await WaitFor(() => n.GetFileOrTempPath().Open(elevated: asAdmin));
 
-        /// <summary>
-        /// Open node in program
-        /// </summary>
-        /// <param name="n"></param>
-        /// <returns></returns>
+        void OpenCalculator()
+        {
+            if (WebAppWindow.IsBrowserAvailable) WebAppWindow.Open(Apps.Calculator);
+        }
+
+        void Calculator_Click(object sender, RoutedEventArgs e) => OpenCalculator();
+
+        /// <summary>Open nodes in a program.</summary>
         async Task Open(string path, INode[] nodes, bool asAdmin = false, LogExplorerLoad load = null)
         {
             if (nodes.Length == 0)

@@ -149,6 +149,10 @@ The basket is saved automatically between application runs. Missing targets rema
 
 All target and filter commands live under `Alt` and behave the same everywhere in the window: hold `Alt` to see them in the **Hints** panel, then press `N` (add selected Names as targets), `F` (add parent Folders), `V` (send clipboard to all targets - keep holding and add `L`/`H`/`O` for link, hard link, overwrite), `C` (clear targets), `P` (pin the filter), `I`/`E` (import/export pinned filters and targets). Keyboard sequences transfer directly with the chosen action; only the toolbar button and mouse drops open the action chooser dialog.
 
+`Alt+K` opens the built-in **Calculator** from anywhere in the window, without selecting a file. You can also click **Calculator** on the bottom bar. It works offline with an installed Microsoft Edge WebView2 Runtime and includes Standard, Scientific and Programmer modes. The window automatically fits the current content when you switch modes or expand a panel, up to the monitor's available work area; larger content remains scrollable. Select **Fraction** or **Mixed** below the result for exact fractions and fraction-entry shortcuts. History, memory, zoom and maximized state are kept between runs.
+
+Closing the main File Search Manager window exits the application and closes every built-in HTML tool window, including Calculator, Log explorer and Hex editor.
+
 While a keyboard sequence is active, **Hints** shows only valid next keys. `Esc` is offered only when releasing the held keys would execute an action and `Alt` is not currently held. This also works in an `Alt` sequence after releasing `Alt` while keeping another sequence key held. `Backspace` always returns by one step. Flow controls are separated from the command choices by a line.
 
 Entries ending in `›` have another level of command choices; keep a sequence key held and press that key to show the submenu.

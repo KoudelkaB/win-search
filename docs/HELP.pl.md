@@ -149,6 +149,10 @@ Koszyk jest zapisywany automatycznie między uruchomieniami aplikacji. Brakując
 
 Wszystkie polecenia celów i filtrów znajdują się pod `Alt` i działają tak samo w całym oknie: przytrzymaj `Alt`, aby zobaczyć je w panelu **Skróty**, a następnie naciśnij `N` (dodaj zaznaczone nazwy jako cele), `F` (dodaj foldery nadrzędne), `V` (wyślij schowek do wszystkich celów — trzymaj dalej i dodaj `L`/`H`/`O` dla dowiązania, dowiązania twardego, nadpisania), `C` (wyczyść cele), `P` (przypnij filtr), `I`/`E` (importuj/eksportuj przypięte filtry i cele). Sekwencje klawiszy przenoszą od razu z wybraną akcją; okno wyboru akcji otwiera tylko przycisk na pasku narzędzi oraz upuszczanie myszą.
 
+`Alt+K` otwiera wbudowany **Kalkulator** z dowolnego miejsca w oknie, bez wybierania pliku. Można też kliknąć **Kalkulator** na dolnym pasku. Działa on offline po zainstalowaniu Microsoft Edge WebView2 Runtime i oferuje tryby Standard, Scientific oraz Programmer. Po zmianie trybu lub rozwinięciu panelu okno automatycznie dopasowuje się do bieżącej zawartości, nie przekraczając dostępnego obszaru roboczego monitora; większą zawartość można przewijać. Wybierz **Fraction** lub **Mixed** pod wynikiem, aby wyświetlić dokładne ułamki i skróty do ich wprowadzania. Historia, pamięć, powiększenie i stan maksymalizacji są zachowywane między uruchomieniami.
+
+Zamknięcie głównego okna File Search Manager kończy działanie aplikacji i zamyka wszystkie okna wbudowanych narzędzi HTML, w tym kalkulatora, przeglądarki logów i edytora szesnastkowego.
+
 Gdy sekwencja klawiszy jest aktywna, **Skróty** pokazują tylko prawidłowe kolejne klawisze. `Esc` jest oferowany tylko wtedy, gdy zwolnienie trzymanych klawiszy wykonałoby akcję, a `Alt` nie jest właśnie wciśnięty. Działa to również w sekwencji z `Alt` po jego zwolnieniu, gdy trzymany jest inny klawisz sekwencji. `Backspace` zawsze cofa o jeden krok. Elementy sterujące są oddzielone od wyborów poleceń linią.
 
 Pozycje kończące się znakiem `›` mają kolejny poziom wyborów; przytrzymaj klawisz sekwencji i naciśnij ten klawisz, aby wyświetlić podmenu.
