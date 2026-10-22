@@ -58,6 +58,8 @@ namespace search
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
+                //Secondary HTML/help windows must not keep the application running alone.
+                desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.Exit += (_, e) => OnExit(e.ApplicationExitCode);
                 var saved = LanguageSettingsStore.Load();
                 if (!string.IsNullOrWhiteSpace(saved))

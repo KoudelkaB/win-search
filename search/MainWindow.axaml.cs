@@ -171,9 +171,9 @@ namespace search
                 PrewarmWebAppsAfterLoad();
             }, DispatcherPriority.ApplicationIdle);
             Opened += Window_Opened;
-            ShowSortIndicator(SearchModel.DefaultSort);
             ConfigureTextBoxes();
             ConfigureGrid();
+            ShowSortIndicator(SearchModel.DefaultSort);
             ConfigureDragAndDrop();
             ConfigureCommands();
             ConfigureSelectionPreservation();

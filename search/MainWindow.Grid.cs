@@ -30,7 +30,12 @@ namespace search
         void ConfigureGrid()
         {
             foreach (var column in filesView.Columns)
+            {
                 columnHeaders[column] = column.Header as string ?? "";
+                //Template columns cannot infer a comparable property. Sorting is handled
+                //by the model (including the computed C column), not by the grid's view.
+                column.CanUserSort = true;
+            }
             filesView.LoadingRow += (_, e) =>
             {
                 realizedRows.Add(e.Row);
@@ -39,6 +44,7 @@ namespace search
             filesView.UnloadingRow += (_, e) => realizedRows.Remove(e.Row);
             filesView.Sorting += ListViewColumnHeader_Click;
             filesView.AddHandler(KeyDownEvent, ListView_KeyDown, RoutingStrategies.Tunnel);
+            filesView.AddHandler(KeyDownEvent, ListView_AfterKeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
             filesView.AddHandler(KeyUpEvent, ListView_PreviewKeyUp, RoutingStrategies.Tunnel);
             filesView.AddHandler(PointerPressedEvent, FilesView_PointerPressed, RoutingStrategies.Tunnel);
             filesView.AddHandler(PointerMovedEvent, FilesView_PointerMoved, RoutingStrategies.Tunnel);
@@ -633,6 +639,14 @@ namespace search
             return IsPinnedNameEditor(source, out var pinned) && pinned.DataContext is PinnedFilter { IsEditing: true };
         }
 
+        void ListView_AfterKeyDown(object sender, KeyEventArgs e)
+        {
+            if (inlineRenameEditor == null && e.Handled && e.KeyModifiers == KeyModifiers.Shift
+                && e.Key is Key.Up or Key.Down or Key.PageUp or Key.PageDown
+                && filesViewCmd.TryUseModifiersForNavigation())
+                GridSelection.ReplaceKeyboardRange(filesView);
+        }
+
         void ListView_KeyDown(object sender, KeyEventArgs e)
         {
             if (IsInlineEditorEvent(e))
@@ -647,8 +661,8 @@ namespace search
                 case Key.Left:
                 case Key.Right:
                     // Grid navigation keys
-                    if (filesViewCmd.IsReceivingCommandKeys) break;
-                    return;
+                    if (filesViewCmd.TryUseModifiersForNavigation()) return;
+                    break;
                 case Key.F4 when e.KeyModifiers.HasFlag(KeyModifiers.Alt):
                     // Leave Alt+F4 to the system so the window can close
                     return;
@@ -997,6 +1011,16 @@ namespace search
         #endregion
     }
 
+    /// <summary>Ordinary files need no marker; keep colours only for meaningful row states.</summary>
+    public class RowMarkerBrushConverter : Avalonia.Data.Converters.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+            => value is ISolidColorBrush brush && brush.Color != Colors.Black ? brush : Brushes.Transparent;
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
     /// <summary>
     /// Highlight of a pinned filter equal to the current filter text
     /// </summary>
@@ -1005,8 +1029,11 @@ namespace search
         static readonly IBrush Active = new ImmutableSolidColorBrush(Color.FromRgb(190, 220, 250));
 
         public object Convert(IList<object> values, Type targetType, object parameter, CultureInfo culture)
-            => values.Count >= 2 && string.Equals(values[0] as string, values[1] as string, StringComparison.Ordinal)
+            //UnsetValue clears the binding after an active pin is deselected; it does not
+            //restore the themed background. Always return an explicit brush instead.
+            => values.Count >= 2 && values[0] is string pinned && values[1] is string current &&
+                string.Equals(pinned, current, StringComparison.Ordinal)
                 ? Active
-                : Avalonia.AvaloniaProperty.UnsetValue;
+                : parameter as IBrush ?? Brushes.Transparent;
     }
 }

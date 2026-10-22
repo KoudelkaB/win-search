@@ -9,9 +9,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <StartupObject>search.Program</StartupObject>
     <NeutralLanguage>en</NeutralLanguage>
-    <NoWin32Manifest>true</NoWin32Manifest>
+    <!-- NativeControlHost needs the supported-OS declaration for layered child HWNDs. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <!-- The Microsoft WebView2 Core wrapper uses built-in COM interop on Windows. -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Windows-only code paths (MFT, USN journal, service, UAC broker) are guarded by
          OperatingSystem.IsWindows() at run time; the analyzer cannot follow those guards

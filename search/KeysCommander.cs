@@ -53,6 +53,22 @@ namespace search
         HashSet<Key> keysDown = new();
         List<Key> commandKeys = new(); //All keys pressed during this command in time order
         bool commandCanceled;
+        bool modifiersUsedForNavigation;
+
+        /// <summary>
+        /// Modifiers alone may belong to grid navigation instead of a command. Keep them
+        /// tracked for a later chord (e.g. Shift+Delete), but do not execute a standalone
+        /// modifier command when navigation has already used it (Right Shift focuses the filter).
+        /// </summary>
+        public bool TryUseModifiersForNavigation()
+        {
+            if (!commandKeys.All(IsNavigationModifier)) return false;
+            modifiersUsedForNavigation |= commandKeys.Count > 0;
+            return true;
+        }
+
+        static bool IsNavigationModifier(Key key)
+            => key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl;
 
         /// <summary>
         /// A key went down. keySymbol is the text the key types on the current layout
@@ -135,7 +151,8 @@ namespace search
             if (keysDown.Count == 0)
             {
                 // Run the command action
-                (CommandTree.Command cmd, IEnumerable<Key> arg) command = commandCanceled
+                var navigationOnly = modifiersUsedForNavigation && commandKeys.All(IsNavigationModifier);
+                (CommandTree.Command cmd, IEnumerable<Key> arg) command = commandCanceled || navigationOnly
                     ? (null, Enumerable.Empty<Key>())
                     : Commands.Find(commandKeys);
                 if (command.cmd != null)
@@ -157,6 +174,7 @@ namespace search
                 // Load the main menu
                 commandKeys.Clear();
                 commandCanceled = false;
+                modifiersUsedForNavigation = false;
                 OnChange();
             }
             else OnChange();
@@ -176,6 +194,7 @@ namespace search
             keysDown.Clear();
             IsReceivingCommandKeys = false;
             commandCanceled = false;
+            modifiersUsedForNavigation = false;
 
             // Load the main menu
             commandKeys.Clear();

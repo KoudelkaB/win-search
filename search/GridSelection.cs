@@ -24,6 +24,8 @@ namespace search
         static readonly MethodInfo slotFromRowIndex = typeof(DataGrid).GetMethod("SlotFromRowIndex", Instance, null,
             new[] { typeof(int) }, null);
         static readonly PropertyInfo noSelectionChangeCount = typeof(DataGrid).GetProperty("NoSelectionChangeCount", Instance);
+        static readonly PropertyInfo anchorSlot = typeof(DataGrid).GetProperty("AnchorSlot", Instance);
+        static readonly PropertyInfo currentSlot = typeof(DataGrid).GetProperty("CurrentSlot", Instance);
         static readonly MethodInfo setCurrentCellCore = typeof(DataGrid).GetMethod("SetCurrentCellCore", Instance, null,
             new[] { typeof(int), typeof(int) }, null);
 
@@ -86,6 +88,30 @@ namespace search
         }
 
         static int Slot(DataGrid grid, int rowIndex) => (int)slotFromRowIndex.Invoke(grid, new object[] { rowIndex });
+
+        /// <summary>
+        /// The grid's Shift navigation adds the anchor-to-current range without removing
+        /// rows outside it. Replace that range after navigation so reversing direction
+        /// shrinks the selection, keeping the native anchor and keyboard row intact.
+        /// </summary>
+        public static void ReplaceKeyboardRange(DataGrid grid)
+        {
+            if (!FastPath || anchorSlot == null || currentSlot == null) return;
+            var anchor = (int)anchorSlot.GetValue(grid);
+            var current = (int)currentSlot.GetValue(grid);
+            if (anchor < 0 || current < 0) return;
+            var start = Math.Min(anchor, current);
+            var end = Math.Max(anchor, current);
+            if (grid.SelectedItems.Count == end - start + 1) return;
+            var count = (int)noSelectionChangeCount.GetValue(grid);
+            noSelectionChangeCount.SetValue(grid, count + 1);
+            try
+            {
+                clearRowSelection.Invoke(grid, new object[] { false });
+                setRowsSelection.Invoke(grid, new object[] { start, end });
+            }
+            finally { noSelectionChangeCount.SetValue(grid, count); }
+        }
 
         /// <summary>
         /// Move the keyboard row (the anchor of Shift+arrows) without touching the selection.

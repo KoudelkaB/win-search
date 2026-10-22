@@ -3,8 +3,39 @@
              x:Class="search.App"
              Name="File Search Manager"
              RequestedThemeVariant="Light">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <!-- Dark content stays readable on the softer blue accent. -->
+                    <SolidColorBrush x:Key="AccentContentBrush" Color="#173B50" />
+                    <StaticResource x:Key="AccentButtonForeground" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="AccentButtonForegroundPointerOver" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="AccentButtonForegroundPressed" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="CheckBoxCheckGlyphForegroundChecked" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminate" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminatePointerOver" ResourceKey="AccentContentBrush" />
+                    <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminatePressed" ResourceKey="AccentContentBrush" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#24668C" />
+                    <StaticResource x:Key="HyperlinkButtonForegroundPointerOver" ResourceKey="HyperlinkButtonForeground" />
+                    <StaticResource x:Key="HyperlinkButtonForegroundPressed" ResourceKey="AccentContentBrush" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
     <Application.Styles>
-        <FluentTheme DensityStyle="Compact" />
+        <FluentTheme DensityStyle="Compact">
+            <!-- Soft blue selection and lighter neutral surfaces, closer to the WPF UI. -->
+            <FluentTheme.Palettes>
+                <ColorPaletteResources x:Key="Light" Accent="#6BB9DE" BaseLow="#14000000" />
+                <ColorPaletteResources x:Key="Dark" Accent="#0078D7" />
+            </FluentTheme.Palettes>
+        </FluentTheme>
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
 
         <!-- A file manager shows many rows: keep the classic desktop density -->
@@ -14,6 +45,7 @@
         <Style Selector="Button">
             <Setter Property="Padding" Value="6,2" />
             <Setter Property="MinHeight" Value="22" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
         <Style Selector="ToggleButton">

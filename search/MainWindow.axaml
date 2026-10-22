@@ -9,8 +9,13 @@
     <Window.Resources>
         <local:LiveUpdateHealthBrushConverter x:Key="LiveUpdateHealthBrushConverter" />
         <local:ActiveFilterBrushConverter x:Key="ActiveFilterBrushConverter" />
+        <local:RowMarkerBrushConverter x:Key="RowMarkerBrushConverter" />
     </Window.Resources>
     <Window.Styles>
+        <!-- Selection is shown by the row highlight, without a second outline on the focused cell. -->
+        <Style Selector="DataGrid#filesView DataGridCell:focus /template/ Grid#FocusVisual">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
         <Style Selector="Border.dropZone">
             <Setter Property="MinHeight" Value="34" />
             <Setter Property="BorderThickness" Value="1" />
@@ -184,7 +189,8 @@
                             <Button Content="{Binding Name}" Tag="{Binding}" Click="PinnedFilter_Click"
                                     ToolTip.Tip="{Binding Filter}" Padding="7,1" IsVisible="{Binding !IsEditing}">
                                 <Button.Background>
-                                    <MultiBinding Converter="{StaticResource ActiveFilterBrushConverter}">
+                                    <MultiBinding Converter="{StaticResource ActiveFilterBrushConverter}"
+                                                  ConverterParameter="{StaticResource ButtonBackground}">
                                         <Binding Path="Filter"/>
                                         <Binding Path="FilterText" ElementName="Root"/>
                                     </MultiBinding>
@@ -253,7 +259,9 @@
                     <DataGridTemplateColumn Header="C" Width="20" Tag="C" CanUserResize="False">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <Border Background="{Binding $parent[DataGridRow].Foreground}" Margin="2,1"/>
+                                <Border Background="{Binding $parent[DataGridRow].Foreground, Converter={StaticResource RowMarkerBrushConverter}}"
+                                        Width="10" Height="10" CornerRadius="2" Opacity="0.22"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>

@@ -178,6 +178,50 @@ namespace search.Tests
             });
         }
 
+        [AvaloniaTheory]
+        [InlineData(Key.LeftShift)]
+        [InlineData(Key.RightShift)]
+        [InlineData(Key.LeftCtrl)]
+        [InlineData(Key.RightCtrl)]
+        public void NavigationUsesModifiersWithoutBreakingTheirLaterCommands(Key modifier)
+        {
+            var standalone = 0;
+            var chord = 0;
+            var commander = new KeysCommander();
+            commander.Commands.Add(new CommandTree[]
+            {
+                (modifier, "modifier", (n, a) => standalone++, new CommandTree[]
+                {
+                    (Key.Delete, "chord", (n, a) => chord++)
+                }),
+                (Key.C, "copy", (n, a) => { })
+            });
+
+            commander.KeyPressed(modifier);
+            Assert.True(commander.TryUseModifiersForNavigation());
+            commander.KeyReleased(modifier);
+            Assert.Equal(0, standalone);
+
+            //The same modifier used alone again still has its original command.
+            commander.KeyPressed(modifier);
+            commander.KeyReleased(modifier);
+            Assert.Equal(1, standalone);
+
+            //Keep Shift held after selecting a range, then press Delete: the Shift chord
+            //must still run, rather than dropping Shift and using the ordinary command.
+            commander.KeyPressed(modifier);
+            Assert.True(commander.TryUseModifiersForNavigation());
+            commander.KeyPressed(Key.Delete);
+            commander.KeyReleased(Key.Delete);
+            commander.KeyReleased(modifier);
+            Assert.Equal(1, chord);
+            Assert.Equal(1, standalone);
+
+            commander.KeyPressed(Key.C);
+            Assert.False(commander.TryUseModifiersForNavigation());
+            commander.Cancel();
+        }
+
         //[AvaloniaFact] already runs the test on the Avalonia UI thread
         static void RunSta(Action action) => action();
     }

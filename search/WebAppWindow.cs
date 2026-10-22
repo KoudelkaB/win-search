@@ -24,8 +24,8 @@ namespace search
     ///
     /// Windows: Avalonia's NativeWebView runs WebView2, driven through its CoreWebView2 - the
     /// pages come from a virtual https host mapped to the local folder and the files arrive
-    /// as FileSystemFileHandles. The origin and the WebView2 profile folder are the ones of the
-    /// WPF version, so the pages keep their localStorage (Log explorer profiles) after an update.
+    /// as FileSystemFileHandles. The origin stays the same; a separate browser profile allows
+    /// the WPF and Avalonia versions to run concurrently (see WebAppProfile).
     ///
     /// Linux: <see cref="WebAppServer"/> serves pages and files on loopback, shown by WebKitGTK
     /// inside this window, in a native web dialog, or - without WebKitGTK - in the default browser.
@@ -54,6 +54,8 @@ namespace search
             catch { return null; } // Runtime not installed or WebView2Loader.dll missing
         });
         static readonly Lazy<bool> runtimeSupported = new(() => SupportsFileHandoff(runtimeVersion.Value));
+        static readonly Lazy<string> windowsProfile = new(() =>
+            WebAppProfile.Prepare(Path.GetDirectoryName(UserDataPaths.For(WebAppProfile.FolderName))));
 
         /// <summary>How Linux shows the pages: inside this window, a native dialog, or a browser</summary>
         enum LinuxHost { Embedded, Dialog, Browser }
@@ -290,8 +292,7 @@ namespace search
             switch (e)
             {
                 case WindowsWebView2EnvironmentRequestedEventArgs webView2:
-                    //The WPF version's profile: localStorage of the pages survives the update
-                    webView2.UserDataFolder = UserDataPaths.For("WebView2");
+                    webView2.UserDataFolder = windowsProfile.Value;
                     break;
                 case GtkWebViewEnvironmentRequestedEventArgs gtk:
                     gtk.BaseDataDirectory = UserDataPaths.For("WebKit");
@@ -339,7 +340,6 @@ namespace search
             DockPanel.SetDock(noticeBar, Dock.Top);
             root.Children.Add(noticeBar);
             root.Children.Add(view);
-            Content = root;
             view.EnvironmentRequested += ConfigureEnvironment;
             view.AdapterCreated += async (_, e) => await Start(e);
             view.NavigationCompleted += async (_, e) =>
@@ -361,6 +361,9 @@ namespace search
                 saveLayout.Stop();
                 WebAppServer.Unregister(serverToken);
             };
+            //Attaching the view can request its environment immediately. Register every
+            //handler first so the initial browser uses our profile and navigation setup.
+            Content = root;
         }
 
         void LayoutChanged()
@@ -507,6 +510,7 @@ namespace search
             }
             catch (Exception e)
             {
+                $"Web app {page} initialization failed: {e}".Debug();
                 if (closed || shuttingDown) return;
                 await MessageDialog.Show(this, e.Message, Title, MessageDialogButtons.Ok, MessageDialogIcon.Error);
                 Close();
