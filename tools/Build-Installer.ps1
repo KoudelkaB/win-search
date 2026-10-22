@@ -51,7 +51,7 @@ try {
         "--self-contained", "true", "-o", $servicePublish
     )
 
-    $appExe = Get-Item -LiteralPath (Join-Path $appPublish "File Search Manager.exe")
+    $appExe = Get-Item -LiteralPath (Join-Path $appPublish "FileSearchManager.exe")
     $serviceExe = Get-Item -LiteralPath (Join-Path $servicePublish "search.service.exe")
     $appFileVersion = $appExe.VersionInfo.FileVersion
     $serviceFileVersion = $serviceExe.VersionInfo.FileVersion

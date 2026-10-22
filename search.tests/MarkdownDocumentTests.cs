@@ -1,7 +1,4 @@
-using System;
 using System.Linq;
-using System.Threading;
-using System.Windows.Documents;
 using Xunit;
 
 namespace search.Tests
@@ -11,23 +8,22 @@ namespace search.Tests
         [Fact]
         public void RendersSingleLetterInlineCodeWithoutThrowing()
         {
-            RunSta(() =>
-            {
-                var document = MarkdownDocument.Parse(new[] { "Use `O`, `A`, and **F1**." });
-                var paragraph = Assert.IsType<Paragraph>(document.Blocks.FirstBlock);
-                var code = Assert.IsType<Run>(paragraph.Inlines.ElementAt(1));
-                Assert.Equal("O", code.Text);
-            });
+            var document = MarkdownDocument.Parse(new[] { "Use `O`, `A`, and **F1**." });
+            var paragraph = Assert.Single(document);
+            var code = paragraph.Inlines.ElementAt(1);
+            Assert.Equal("O", code.Text);
+            Assert.True(code.Code);
+            Assert.True(paragraph.Inlines.Last(i => i.Bold).Text == "F1");
         }
 
-        static void RunSta(Action action)
+        [Fact]
+        public void HeadingsAndBulletsKeepTheirLevelAndText()
         {
-            Exception failure = null;
-            var thread = new Thread(() => { try { action(); } catch (Exception ex) { failure = ex; } });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-            if (failure != null) throw failure;
+            var document = MarkdownDocument.Parse(new[] { "# Title", "", "## Part", "- item **one**", "text" });
+            Assert.Equal(new[] { 1, 2, 0, 0 }, document.Select(b => b.Level));
+            Assert.True(document[2].ListItem);
+            Assert.Equal("item one", document[2].Text);
+            Assert.False(document[3].ListItem);
         }
     }
 }

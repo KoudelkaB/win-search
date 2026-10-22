@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using static search.Models.SearchModel;
@@ -12,17 +13,24 @@ namespace search
         static readonly ConcurrentDictionary<string, string> paths = new(StringComparer.OrdinalIgnoreCase);
         static int generation;
 
+        /// <summary>
+        /// The first installed program of the names. Windows looks the .exe names up in the
+        /// file index; Linux searches the PATH (of the host when sandboxed) for the names
+        /// without an extension - so one list can name both.
+        /// </summary>
         public static string GetPath(params string[] names) => GetPath(name => FindExe(name), names);
 
         internal static string GetPath(Func<string, string> find, params string[] names)
         {
+            names = ForPlatform(names);
+            if (names.Length == 0) return null;
             var key = string.Join("\"", names);
             if (paths.TryGetValue(key, out var cached)) return cached;
             var started = Volatile.Read(ref generation);
             string executable = null;
             foreach (var name in names)
             {
-                executable = find(name);
+                executable = OperatingSystem.IsWindows() ? find(name) : Shell.Which(name);
                 if (!string.IsNullOrWhiteSpace(executable)) break;
                 executable = null;
             }
@@ -33,6 +41,10 @@ namespace search
                 if (started == generation) paths[key] = executable;
             return executable;
         }
+
+        /// <summary>Windows programs are the ".exe" names, Linux programs the others</summary>
+        internal static string[] ForPlatform(string[] names)
+            => names.Where(n => n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == OperatingSystem.IsWindows()).ToArray();
 
         // Paths come exclusively from the executable index. Re-resolve cached paths after a reload.
         internal static void RefreshInstalledApplications()
@@ -53,39 +65,40 @@ namespace search
         public const string Calculator = "calculator.html";
 
         /// <summary>
-        /// Get text viever path  - built-in Log explorer (needs the WebView2 runtime)
+        /// Get text viewer path - built-in Log explorer (needs a web view or a browser)
         /// </summary>
-        /// <returns></returns>
         public static string TextViever => WebAppWindow.IsAvailable ? LogExplorer : Notepad;
 
         /// <summary>
         /// Get application for editing
         /// </summary>
-        /// <returns></returns>
-        public static string TextEditor => GetPath("notepad++.exe", "sublime_text.exe", "kate.exe", "geany.exe") ?? Notepad;
+        public static string TextEditor => GetPath("notepad++.exe", "sublime_text.exe", "kate.exe", "geany.exe",
+            "gnome-text-editor", "gedit", "kate", "kwrite", "mousepad", "xed", "pluma", "featherpad", "geany", "code") ?? Notepad;
 
         // Never null: before the system drive is indexed the shell still resolves the name.
         // A null application would open (run) the file itself instead of editing it.
-        public static string Notepad => GetPath("notepad.exe") ?? "notepad";
+        public static string Notepad => OperatingSystem.IsWindows()
+            ? GetPath("notepad.exe") ?? "notepad"
+            : GetPath("gnome-text-editor", "gedit", "kwrite", "kate", "mousepad", "xed", "pluma", "featherpad") ?? "xdg-open";
 
-        public static string Powershell => "powershell";
+        public static string Powershell => OperatingSystem.IsWindows() ? "powershell" : GetPath("pwsh") ?? "pwsh";
 
         public static string Cmd => "cmd";
 
-        public static string Explorer => "explorer";
+        public static string Explorer => OperatingSystem.IsWindows()
+            ? "explorer"
+            : GetPath("nautilus", "dolphin", "nemo", "thunar", "caja", "pcmanfm-qt", "pcmanfm") ?? "xdg-open";
 
-        public static string WebBrowser => GetPath("firefox.exe", "chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "opera.exe", "chromium.exe", "waterfox.exe", "librewolf.exe", "iexplore.exe", "safari.exe");
+        public static string WebBrowser => GetPath("firefox.exe", "chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "opera.exe", "chromium.exe", "waterfox.exe", "librewolf.exe", "iexplore.exe", "safari.exe",
+            "firefox", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "microsoft-edge", "vivaldi", "opera", "librewolf", "epiphany");
 
-        /// <summary>
-        /// 
-        /// </summary>
-        public static string GhostPcl => GetPath("gpcl6win64.exe", "gpcl6win32.exe");
+        public static string GhostPcl => GetPath("gpcl6win64.exe", "gpcl6win32.exe", "gpcl6");
 
-        public static string GhostScript => GetPath("gswin64c.exe", "gswin32c.exe");
+        public static string GhostScript => GetPath("gswin64c.exe", "gswin32c.exe", "gs");
 
-        public static string GhostXps => GetPath("gxpswin64.exe", "gxpswin32.exe");
+        public static string GhostXps => GetPath("gxpswin64.exe", "gxpswin32.exe", "gxps");
 
-        public static string SevenZip => GetPath("7z.exe", "7zz.exe");
+        public static string SevenZip => GetPath("7z.exe", "7zz.exe", "7z", "7zz", "7za");
 
         /// <summary>
         /// Command line for displaying poscript file
@@ -95,8 +108,6 @@ namespace search
         /// <summary>
         /// Get application for viewing prn files
         /// </summary>
-        /// <param name="path"></param>
-        /// <returns></returns>
         static string PrnViewerFor(this string path)
         {
             //Switch by PJL LANGUAGE
@@ -122,8 +133,6 @@ namespace search
         /// <summary>
         /// Path to installed application that can view this file type
         /// </summary>
-        /// <param name="path"></param>
-        /// <returns></returns>
         public static string ViewerFor(string path)
         {
             var extension = Path.GetExtension(path).ToLowerInvariant();
@@ -135,7 +144,8 @@ namespace search
             return extension switch
             {
                 ".ps" => DisplayPostScript,
-                ".pdf" => GetPath("SumatraPDF.exe", "AcroRd32.exe", "Acrobat.exe", "FoxitPDFReader.exe", "FoxitReader.exe", "PDFXEdit.exe", "okular.exe") ?? WebBrowser ?? TextViever,
+                ".pdf" => GetPath("SumatraPDF.exe", "AcroRd32.exe", "Acrobat.exe", "FoxitPDFReader.exe", "FoxitReader.exe", "PDFXEdit.exe", "okular.exe",
+                    "evince", "okular", "atril", "xreader", "papers", "zathura", "mupdf") ?? WebBrowser ?? TextViever,
                 ".htm" or ".html" or ".xml" or ".json" => WebBrowser ?? TextViever,
                 _ => TextViever
             };

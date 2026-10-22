@@ -1,0 +1,18 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:search"
+        x:Class="search.LanguageSelectionWindow"
+        Title="{local:Loc Key=Language}"
+        Icon="/Assets/app.ico"
+        SizeToContent="WidthAndHeight"
+        CanResize="False"
+        CanMinimize="False"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="16" MinWidth="330">
+        <TextBlock Text="{local:Loc Key=ChooseLanguage}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+        <ComboBox x:Name="languages" MinWidth="280" HorizontalAlignment="Stretch"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="{local:Loc Key=OK}" IsDefault="True" Classes="accent" Click="Ok_Click" MinWidth="80"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

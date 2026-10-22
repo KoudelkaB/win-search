@@ -10,7 +10,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Threading;
+using Avalonia.Threading;
 using System.Buffers;
 
 namespace search.Models
@@ -192,7 +192,7 @@ namespace search.Models
         static readonly DriveNodeIndex files = new();
         static ConcurrentBag<ZipNode> zipNodes = new();
         static INode[] exes;
-        Dispatcher Dispatcher = Dispatcher.CurrentDispatcher; //Constructor is called from UI thread => get its dispatcher
+        Dispatcher Dispatcher = Dispatcher.UIThread;
         SemaphoreSlim Updating = new SemaphoreSlim(1, 1);
         readonly LiveUpdateHealthMonitor health;
         internal const string DefaultSort = "+" + nameof(INode.LastChangeTime);
@@ -778,7 +778,7 @@ namespace search.Models
                         //the refresh semaphore or altering presentation behavior.
                         try
                         {
-                            _ = Dispatcher.BeginInvoke(() => health.RefreshUiSettled(refreshGeneration,
+                            Dispatcher.Post(() => health.RefreshUiSettled(refreshGeneration,
                                 Math.Max(0, Environment.TickCount64 - uiAppliedAt)),
                                 DispatcherPriority.ContextIdle);
                         }
@@ -2750,7 +2750,7 @@ namespace search.Models
                                 //paths (1601 times, empty sizes) - rescan the drive instead.
                                 if (IsDriveRoot(e.OldFullPath) || IsDriveRoot(e.FullPath))
                                 {
-                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
+                                    _ = InitFromNTFS(FsRoots.RootOf(e.FullPath),
                                         DriveScanReason.MalformedRootRename);
                                     break;
                                 }
@@ -2801,7 +2801,7 @@ namespace search.Models
                                 //really vanished drive is handled by its own scan, never from here
                                 if (IsDriveRoot(e.FullPath))
                                 {
-                                    _ = InitFromNTFS(Path.GetPathRoot(e.FullPath),
+                                    _ = InitFromNTFS(FsRoots.RootOf(e.FullPath),
                                         DriveScanReason.MalformedRootDelete);
                                     break;
                                 }
@@ -3105,7 +3105,7 @@ namespace search.Models
         /// half of the pair to buffer pressure and .NET substituted the watcher root.
         /// </summary>
         internal static bool IsDriveRoot(string path)
-            => string.IsNullOrEmpty(path) || string.IsNullOrEmpty(Path.GetDirectoryName(path));
+            => string.IsNullOrEmpty(path) || FsRoots.IsRoot(path);
 
         /// <summary>
         /// Find file by name
@@ -3188,7 +3188,7 @@ namespace search.Models
                         var requestSummary = requested.Summary;
                         $"drive {root} scan started (covering {requested.Total} requests: {requestSummary})".Debug();
                         await Log($"Drive {root} scan started: requests={requested.Total}; reasons={requestSummary}");
-                        var key = root.TrimEnd(Path.DirectorySeparatorChar);
+                        var key = FsRoots.KeyOf(root);
                         var streamed = 0L;
                         var drivePublished = false;
                         Task deferredCancellationWork = null;
@@ -3211,7 +3211,7 @@ namespace search.Models
                             string skip;
                             if (hasExplicitSelection && !explicitlyEnabled)
                                 skip = "not selected for indexing";
-                            else if (!hasExplicitSelection && drive.DriveType == DriveType.Network)
+                            else if (!hasExplicitSelection && FsRoots.TypeOfRoot(root) == DriveType.Network)
                                 //An unknown network drive is opt-in. Do not even probe/reconnect
                                 //the SMB mapping until the user explicitly selects it.
                                 skip = "not selected for indexing";
@@ -3652,7 +3652,7 @@ namespace search.Models
         }
 
         internal static bool CanUseMftSource(DriveType driveType, string format)
-            => driveType != DriveType.Network
+            => OperatingSystem.IsWindows() && driveType != DriveType.Network
             && string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
@@ -3764,7 +3764,7 @@ namespace search.Models
         {
             if (string.IsNullOrEmpty(path)) return null;
             if (files.TryGetValue(path, out var n)) return n;
-            return path[^1] != '\\' && files.TryGetValue(path + '\\', out n) ? n : null;
+            return path[^1] != PathText.Sep && files.TryGetValue(path + PathText.Sep, out n) ? n : null;
         }
 
         /// <summary>

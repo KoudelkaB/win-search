@@ -1,16 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.IO;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
-using System.Windows;
-using System.Windows.Media;
-using System.Windows.Controls;
-using System.Runtime.CompilerServices;
-using System.Reflection;
-using System.Windows.Input;
+using Avalonia.Input;
 
 namespace search
 {
@@ -19,15 +13,9 @@ namespace search
         /// <summary>
         /// Safe Get returning default value if the key not found
         /// </summary>
-        /// <typeparam name="K"></typeparam>
-        /// <typeparam name="V"></typeparam>
-        /// <param name="d"></param>
-        /// <param name="key"></param>
-        /// <param name="def">Default value to return when key not present</param>
-        /// <returns></returns>
         public static V Get<K, V>(this Dictionary<K, V> d, K key, V def = default(V)) => d.TryGetValue(key, out var v) ? v : def;
 
-        public static void Debug(this string text, bool msgBox = false)
+        public static void Debug(this string text)
         {
             System.Diagnostics.Debug.WriteLine(text);
 #if DEBUG
@@ -38,7 +26,6 @@ namespace search
                 System.Diagnostics.Debug.WriteLine(log);
                 //Write to user data so unelevated runs never depend on install-folder access.
                 StorageMaintenance.AppendLog("search.run.log", log + Environment.NewLine);
-                if (msgBox) MessageBox.Show(text, "Debug", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch { } //Do not break application
 #endif
@@ -52,14 +39,13 @@ namespace search
 
         /// <summary>
         /// Open file by shell or run process.
-        /// Elevated opens go through the broker when it is available (no prompt);
-        /// otherwise each one shows its own UAC prompt.
+        /// Windows: elevated opens go through the broker when it is available (no prompt);
+        /// otherwise each one shows its own UAC prompt. Linux: a document opens in its default
+        /// application, a program runs (on the host when sandboxed), "as admin" asks polkit.
         /// </summary>
-        /// <param name="name"></param>
-        /// <param name="args"></param>
-        /// <returns></returns>
         public static Process Open(this string name, string args = "", string workDir = "", bool elevated = false)
         {
+            if (!OperatingSystem.IsWindows()) return OpenUnix(name, args, workDir, elevated);
             if (elevated && !Program.IsProcessElevated)
             {
                 if (Broker.Available) return Broker.OpenElevated(name, args, workDir);
@@ -107,8 +93,30 @@ namespace search
             });
         }
 
+        static Process OpenUnix(string name, string args, string workDir, bool elevated)
+        {
+            if (string.IsNullOrEmpty(workDir)) workDir = null;
+            var isDocument = string.IsNullOrWhiteSpace(args)
+                && (Directory.Exists(name) || File.Exists(name) && !IsUnixExecutable(name));
+            if (isDocument && !elevated) return Shell.OpenDefault(name);
+            var program = Shell.Which(name) ?? name;
+            if (elevated && !Program.IsProcessElevated)
+                return Shell.StartElevated(program, args, workDir ?? (isDocument ? Path.GetDirectoryName(name) : null));
+            return Shell.Start(program, args, workDir);
+        }
+
+        static bool IsUnixExecutable(string path)
+        {
+            try
+            {
+                return (File.GetUnixFileMode(path)
+                    & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+            }
+            catch { return false; }
+        }
+
         /// <summary>
-        /// Show the path in Windows Explorer, selected in its folder.
+        /// Show the path in the file manager, selected in its folder.
         /// "explorer /select,X" silently opens Explorer's default page (Quick access /
         /// This PC) when X does not exist - which is exactly what a stale grid row or a
         /// file renamed away meanwhile hits, and it looks like the app did nothing.
@@ -117,11 +125,18 @@ namespace search
         /// </summary>
         /// <param name="path">File or folder to reveal</param>
         /// <param name="elevated">Run Explorer elevated - the user asked to open as admin</param>
-        /// <returns>The started Explorer process, or null when nothing could be shown</returns>
+        /// <returns>The started file manager process, or null when nothing could be shown</returns>
         public static Process Reveal(this string path, bool elevated = false)
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
-            if (File.Exists(path) || Directory.Exists(path))
+            var exists = File.Exists(path) || Directory.Exists(path);
+            if (!OperatingSystem.IsWindows())
+            {
+                if (exists) return Shell.Reveal(path, isFolder: false);
+                var nearest = NearestExistingFolder(path);
+                return nearest == null ? null : Shell.Reveal(nearest, isFolder: true);
+            }
+            if (exists)
                 return Apps.Explorer.Open($"/select,\"{path}\"", elevated: elevated);
             var folder = NearestExistingFolder(path);
             //No ancestor left (the whole drive is gone) - opening the default page would
@@ -156,35 +171,8 @@ namespace search
         }
 
         /// <summary>
-        /// Returns Visual parent control of events sender
-        /// </summary>
-        /// <param name="o"></param>
-        /// <returns></returns>
-        public static Control ParentControl(this object o)
-        {
-            var p = VisualTreeHelper.GetParent(o as Visual);
-            if (p == null) return null;
-            if (p is Control c) return c;
-            return ParentControl(p);
-        }
-
-        /// <summary>
-        /// Not needed remove
-        /// </summary>
-        /// <param name="files"></param>
-        public static void FilesToClipBoard(this IEnumerable<string> files)
-        {
-            StringCollection paths = new StringCollection();
-            foreach (var file in files) paths.Add(file);
-            System.Windows.Clipboard.SetFileDropList(paths);
-        }
-
-        /// <summary>
         /// Copies only number of bytes from stream to another
         /// </summary>
-        /// <param name="input"></param>
-        /// <param name="output"></param>
-        /// <param name="bytes"></param>
         public static void CopyStream(this Stream input, Stream output, long bytes)
         {
             var buffer = new byte[32768];
@@ -197,23 +185,9 @@ namespace search
             }
         }
 
-        public static void Select(this ListView lv, System.Collections.IEnumerable items)
-        {
-            // Usable up to few tenth of thousands selected items i.e. 5s
-            // For more we need to implement out own selecting:
-            // https://stackoverflow.com/questions/21940875/how-can-i-get-around-this-poor-wpf-listview-selecteditems-performance
-            var setter = typeof(ListView).GetMethod("SetSelectedItems", BindingFlags.Instance | BindingFlags.NonPublic);
-            setter.Invoke(lv, new[] { items });
-        }
-        public static void ToogleSelectAll(this ListView lv)
-        {
-            if (lv.SelectedItems.Count == lv.Items.Count) lv.UnselectAll(); else lv.SelectAll();
-        }
-
         /// <summary>
-        /// Delete Directory or file with given path - if it exis
+        /// Delete Directory or file with given path - if it exists
         /// </summary>
-        /// <param name="path"></param>
         public static void DeletePathIfExists(this string path)
         {
             if (File.Exists(path)) File.Delete(path);
@@ -223,10 +197,7 @@ namespace search
         /// <summary>
         /// Readable string representation of the key
         /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="key"></param>
-        /// <returns></returns>
-        public static string Str(this System.Windows.Input.Key key) => key switch
+        public static string Str(this Key key) => key switch
         {
             // special chars
             Key.OemComma => ",",
@@ -246,11 +217,8 @@ namespace search
         public static string ReadTill(this IEnumerable<Key> e, params Key[] stoppers) => e.GetEnumerator().ReadTill(stoppers);
 
         /// <summary>
-        /// Read until one of the given keys is encontered or the end
+        /// Read until one of the given keys is encountered or the end
         /// </summary>
-        /// <param name="e"></param>
-        /// <param name="stoppers"></param>
-        /// <returns></returns>
         public static string ReadTill(this IEnumerator<Key> e, params Key[] stoppers)
         {
             var sb = new StringBuilder();
@@ -279,11 +247,10 @@ namespace search
             }
             return sb.ToString();
         }
+
         /// <summary>
         /// Read digits keys
         /// </summary>
-        /// <param name="e"></param>
-        /// <returns></returns>
         public static long ReadDigits(this IEnumerator<Key> e)
         {
             long i = 0;
@@ -310,12 +277,8 @@ namespace search
         }
 
         /// <summary>
-        /// Enusure to have at least n-elements 
+        /// Ensure to have at least n-elements
         /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="e"></param>
-        /// <param name="n"></param>
-        /// <returns></returns>
         public static bool AtLeast<T>(this IEnumerable<T> e, int n)
         {
             var x = e.GetEnumerator();
@@ -326,10 +289,6 @@ namespace search
         /// <summary>
         /// Fast Count comparison
         /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="e"></param>
-        /// <param name="n"></param>
-        /// <returns></returns>
         public static bool IsCount<T>(this IEnumerable<T> e, int n)
         {
             var x = e.GetEnumerator();

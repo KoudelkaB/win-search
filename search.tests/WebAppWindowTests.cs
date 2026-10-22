@@ -1,5 +1,5 @@
 using System.Linq;
-using System.Windows;
+using Avalonia;
 using search.Models;
 using Xunit;
 

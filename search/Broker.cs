@@ -471,7 +471,7 @@ namespace search
                         }
 
                         case Command.FILES_TO_CLIPBOARD:
-                            ReadLinesUntilEmpty(server).FilesToClipBoard(); // Main is [STAThread]
+                            ReadLinesUntilEmpty(server).SetFileDropList();
                             break;
 
                         case Command.READ_MFT:

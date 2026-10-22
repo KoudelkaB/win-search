@@ -540,7 +540,7 @@ namespace search.Models
             lock (mutationLock)
             {
                 var current = shards;
-                var at = Array.FindIndex(current, x => string.Equals(x.Root, root, StringComparison.OrdinalIgnoreCase));
+                var at = Array.FindIndex(current, x => string.Equals(x.Root, root, PathText.Comparison));
                 var preserved = at < 0 || preserveMutationsAfter == long.MaxValue
                     ? Array.Empty<KeyValuePair<object, DeltaEntry>>()
                     : current[at].Delta.Where(pair => pair.Value.Version > preserveMutationsAfter
@@ -766,7 +766,7 @@ namespace search.Models
             if (root == null) return null;
             root = NormalizeRoot(root);
             foreach (var shard in source)
-                if (string.Equals(shard.Root, root, StringComparison.OrdinalIgnoreCase)) return shard;
+                if (string.Equals(shard.Root, root, PathText.Comparison)) return shard;
             return null;
         }
 
@@ -776,7 +776,7 @@ namespace search.Models
             {
                 return key switch
                 {
-                    string path => Path.GetPathRoot(path),
+                    string path => FsRoots.RootOf(path),
                     INode node => NodePath.RootOf(node),
                     _ => null
                 };
@@ -787,8 +787,8 @@ namespace search.Models
         static string NormalizeRoot(string root)
         {
             if (string.IsNullOrEmpty(root)) return "";
-            if (root.Length == 2 && root[1] == ':') return root + Path.DirectorySeparatorChar;
-            return root;
+            if (OperatingSystem.IsWindows() && root.Length == 2 && root[1] == ':') return root + Path.DirectorySeparatorChar;
+            return OperatingSystem.IsWindows() ? root : PathText.TrimEndSeparators(root);
         }
 
         sealed class ConcatReadOnlyList : IReadOnlyList<INode>

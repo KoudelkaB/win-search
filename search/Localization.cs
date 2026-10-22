@@ -1,7 +1,7 @@
 using System;
 using System.Globalization;
 using System.Resources;
-using System.Windows.Markup;
+using Avalonia.Markup.Xaml;
 
 namespace search
 {
@@ -38,7 +38,7 @@ namespace search
         }
 
         /// <summary>
-        /// The user's Windows regional format. App.ApplyCulture replaces CurrentCulture with the
+        /// The user's regional format. App.ApplyCulture replaces CurrentCulture with the
         /// UI language, so text typed or copied in the regional format ("13.08.2025 11:35") has
         /// to be parsed with this one - under an English UI it would swap day and month or fail.
         /// </summary>
@@ -59,12 +59,10 @@ namespace search
             || DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out time);
     }
 
-    [MarkupExtensionReturnType(typeof(string))]
     public sealed class LocExtension : MarkupExtension
     {
         public LocExtension() { }
         public LocExtension(string key) => Key = key;
-        [ConstructorArgument("key")]
         public string Key { get; set; }
         /// <summary>Start with a capital letter - a command hint reused as a caption or tooltip</summary>
         public bool Capitalize { get; set; }

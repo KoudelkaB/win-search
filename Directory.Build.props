@@ -16,6 +16,16 @@
     <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
   </ItemGroup>
 
+  <!-- SkiaSharp/HarfBuzz ship debug symbols of their native libraries (tens of MB per
+       platform) as runtime assets. Nothing debugs into them; keep them out of every build,
+       test run and published package. -->
+  <Target Name="DropNativeLibrarySymbols" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <RuntimeTargetsCopyLocalItems Remove="@(RuntimeTargetsCopyLocalItems)" Condition="'%(Extension)' == '.pdb'" />
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+
   <!-- Keep the assembly identity fixed: the WPF markup compiler bakes AssemblyVersion
        into pack URIs (";V1.0.0.0;component/...") before MinVer's target runs, so a
        tag-derived AssemblyVersion makes every LoadComponent throw FileNotFoundException

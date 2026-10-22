@@ -59,7 +59,7 @@ namespace search.Models
             var terminal = n;
             for (var guard = 0; terminal.PathParent != null && guard < MaxWalk; guard++)
                 terminal = terminal.PathParent;
-            try { return Path.GetPathRoot(terminal.FullName); }
+            try { return FsRoots.RootOf(terminal.FullName); }
             catch { return null; }
         }
 
@@ -84,7 +84,7 @@ namespace search.Models
             var result = new StringBuilder(prefix.Length + names.Count * 12).Append(prefix);
             for (var i = names.Count - 1; i >= 0; i--)
             {
-                if (result.Length == 0 || result[^1] != '\\') result.Append('\\');
+                if (result.Length == 0 || result[^1] != PathText.Sep) result.Append(PathText.Sep);
                 result.Append(names[i]);
             }
             return result.ToString();
@@ -125,12 +125,12 @@ namespace search.Models
             {
                 if (x.SameAs(y)) return true;
                 bool xb = x.IsBase, yb = y.IsBase;
-                if (xb || yb) return xb && yb && x.Span.Equals(y.Span, StringComparison.OrdinalIgnoreCase);
-                if (!x.Span.Equals(y.Span, StringComparison.OrdinalIgnoreCase)) return false;
+                if (xb || yb) return xb && yb && x.Span.Equals(y.Span, PathText.Comparison);
+                if (!x.Span.Equals(y.Span, PathText.Comparison)) return false;
                 x = x.Up();
                 y = y.Up();
             }
-            return string.Equals(x.MaterializeRest(), y.MaterializeRest(), StringComparison.OrdinalIgnoreCase);
+            return string.Equals(x.MaterializeRest(), y.MaterializeRest(), PathText.Comparison);
         }
 
         /// <summary>
@@ -159,7 +159,7 @@ namespace search.Models
             //Within one immutable tree, the identity walk is conclusive. NodeFilter
             //caches the criterion's terminal once, keeping its normal hot loop unchanged.
             if (dir != null && ReferenceEquals(m, directoryTerminal)) return false;
-            if (m.FullName.StartsWith(dirPrefixWithSlash, StringComparison.OrdinalIgnoreCase)) return true;
+            if (m.FullName.StartsWith(dirPrefixWithSlash, PathText.Comparison)) return true;
 
             //A live overlay can retain a child from the preceding scan while its
             //directory comes from the new one. Only mixed trees need path comparison.
@@ -189,7 +189,7 @@ namespace search.Models
             }
             var full = m.FullName;
             for (var i = 0; i < prefixes.Count; i++)
-                if (full.StartsWith(prefixes[i], StringComparison.OrdinalIgnoreCase)) return true;
+                if (full.StartsWith(prefixes[i], PathText.Comparison)) return true;
             return false;
         }
 
@@ -205,16 +205,16 @@ namespace search.Models
         /// </summary>
         public static bool LeafEquals(INode n, string name)
             => n.PathParent != null
-                ? string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase)
+                ? string.Equals(n.Name, name, PathText.Comparison)
                 : n.FullName.Length > name.Length
-                  && n.FullName[^(name.Length + 1)] == '\\'
-                  && n.FullName.EndsWith(name, StringComparison.OrdinalIgnoreCase);
+                  && n.FullName[^(name.Length + 1)] == PathText.Sep
+                  && n.FullName.EndsWith(name, PathText.Comparison);
 
         /// <summary>
         /// The node's leaf name ends with the suffix (e.g. ".exe"), without allocation
         /// </summary>
         public static bool LeafEndsWith(INode n, string suffix)
-            => (n.PathParent != null ? n.Name : n.FullName).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+            => (n.PathParent != null ? n.Name : n.FullName).EndsWith(suffix, PathText.Comparison);
 
         /// <summary>
         /// True when some directory component of the path equals name
@@ -226,10 +226,10 @@ namespace search.Models
             for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
             {
                 m = m.PathParent;
-                if (m.PathParent != null && string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase))
+                if (m.PathParent != null && string.Equals(m.Name, name, PathText.Comparison))
                     return true;
             }
-            return m.FullName.Contains($"\\{name}\\", StringComparison.OrdinalIgnoreCase);
+            return m.FullName.Contains(PathText.Sep + name + PathText.Sep, PathText.Comparison);
         }
 
         // ------------------------------------------------------------------
@@ -256,8 +256,8 @@ namespace search.Models
             var hash = parent.TryGetPathHash(out var cached)
                 ? (uint)cached : HashUp(parent, MaxWalk).Hash;
             var tail = parent.PathParent == null ? parent.FullName : parent.Name;
-            if (string.IsNullOrEmpty(tail) || tail[^1] != '\\')
-                hash = (hash ^ '\\') * FnvPrime;
+            if (string.IsNullOrEmpty(tail) || tail[^1] != PathText.Sep)
+                hash = (hash ^ PathText.Sep) * FnvPrime;
             return (int)HashChars(hash, name ?? "");
         }
 
@@ -268,10 +268,10 @@ namespace search.Models
                 return (HashChars(FnvSeed, prefix), prefix.Length > 0 ? prefix[^1] : '\0');
 
             var (hash, last) = HashUp(n.PathParent, budget - 1);
-            if (last != '\\')
+            if (last != PathText.Sep)
             {
-                hash = (hash ^ '\\') * FnvPrime;
-                last = '\\';
+                hash = (hash ^ PathText.Sep) * FnvPrime;
+                last = PathText.Sep;
             }
             var name = n.Name;
             return (HashChars(hash, name), name.Length > 0 ? name[^1] : last);
@@ -280,7 +280,7 @@ namespace search.Models
         static uint HashChars(uint hash, string s)
         {
             foreach (var c in s)
-                hash = (hash ^ char.ToUpperInvariant(c)) * FnvPrime;
+                hash = (hash ^ (PathText.IgnoreCase ? char.ToUpperInvariant(c) : c)) * FnvPrime;
             return hash;
         }
 
@@ -289,7 +289,7 @@ namespace search.Models
             if (ReferenceEquals(a, b)) return true;
             if (a is string sa)
                 return b is string sb
-                    ? string.Equals(sa, sb, StringComparison.OrdinalIgnoreCase)
+                    ? string.Equals(sa, sb, PathText.Comparison)
                     : b is INode nb && PathEquals(nb, sa);
             if (a is INode na)
                 return b is string s ? PathEquals(na, s) : b is INode n && PathEquals(na, n);
@@ -333,7 +333,7 @@ namespace search.Models
                 budget = 0;
                 this.s = s;
                 this.end = end;
-                firstSep = s.IndexOf('\\');
+                firstSep = s.IndexOf(PathText.Sep);
             }
 
             public static Cursor For(INode n)
@@ -344,8 +344,8 @@ namespace search.Models
             public static Cursor ForDirectoryPrefix(string path)
             {
                 var end = path.Length;
-                var rootEnd = path.IndexOf('\\') + 1;
-                while (end > rootEnd && path[end - 1] == '\\') end--;
+                var rootEnd = path.IndexOf(PathText.Sep) + 1;
+                while (end > rootEnd && path[end - 1] == PathText.Sep) end--;
                 return new Cursor(path, end);
             }
 
@@ -364,7 +364,7 @@ namespace search.Models
                 {
                     if (node != null) return node.Name;
                     if (IsBase) return s.AsSpan(0, end);
-                    var sep = s.LastIndexOf('\\', end - 1);
+                    var sep = s.LastIndexOf(PathText.Sep, end - 1);
                     return s.AsSpan(sep + 1, end - sep - 1);
                 }
             }
@@ -378,7 +378,7 @@ namespace search.Models
                     if (budget <= 1) return ForString(p.Name); // Cycle guard: same cut as Materialize
                     return new Cursor(p, budget - 1);
                 }
-                var sep = s.LastIndexOf('\\', end - 1);
+                var sep = s.LastIndexOf(PathText.Sep, end - 1);
                 return new Cursor(s, sep == firstSep ? sep + 1 : sep);
             }
 

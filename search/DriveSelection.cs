@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
+using search.Models;
 
 namespace search
 {
@@ -52,9 +53,7 @@ namespace search
         }
 
         public static bool TryGetExplicit(string root, out bool enabled)
-            => Load().Drives.TryGetValue(
-                root?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? "",
-                out enabled);
+            => Load().Drives.TryGetValue(FsRoots.KeyOf(root) ?? "", out enabled);
 
         /// <summary>
         /// Apply the choices made in the drive dialog and return only roots whose effective
@@ -87,16 +86,15 @@ namespace search
             if (TryGetExplicit(root, out var enabled)) return enabled;
             try
             {
-                var drive = new DriveInfo(root);
-                if (drive.DriveType == DriveType.Network) return false;
-                return DefaultEnabled(drive.DriveType, drive.DriveFormat);
+                var type = FsRoots.TypeOfRoot(root);
+                if (type == DriveType.Network) return false;
+                return DefaultEnabled(root, type, FsRoots.FormatOf(root));
             }
             catch { return false; }
         }
 
-        internal static bool DefaultEnabled(DriveType type, string format)
-            => type != DriveType.Network
-            && string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase);
+        internal static bool DefaultEnabled(string root, DriveType type, string format)
+            => search.Models.FsRoots.DefaultEnabled(root, type, format);
     }
 
     /// <summary>

@@ -2,28 +2,36 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyName>File Search Manager</AssemblyName>
+    <!-- No spaces: the executable keeps a plain name on every platform. The application is
+         still shown as "File Search Manager" (window title, shortcuts, desktop entry). -->
+    <AssemblyName>FileSearchManager</AssemblyName>
     <RootNamespace>search</RootNamespace>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <ApplicationIcon>app.ico</ApplicationIcon>
+    <TargetFramework>net10.0</TargetFramework>
     <StartupObject>search.Program</StartupObject>
     <NeutralLanguage>en</NeutralLanguage>
     <NoWin32Manifest>true</NoWin32Manifest>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Windows-only code paths (MFT, USN journal, service, UAC broker) are guarded by
+         OperatingSystem.IsWindows() at run time; the analyzer cannot follow those guards
+         across the static helpers, so its warnings would only be noise here. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <Prefer32Bit>false</Prefer32Bit>
+  <!-- The Win32 icon only exists in a Windows apphost -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('win'))">
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
     <None Include="FodyWeavers.xsd" />
     <None Include="..\docs\HELP*.md" Link="Docs\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- HTML apps hosted by WebAppWindow, shipped next to the exe so they work offline.
@@ -32,6 +40,14 @@
     <None Include="..\external\singleHtmlApps\HexEditorAndComparer.html;..\external\singleHtmlApps\LogExplorer.html;..\external\singleHtmlApps\calculator.html" Link="WebApps\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\external\singleHtmlApps\LICENSE" Link="WebApps\LICENSE.singleHtmlApps.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- The WebView2 package always references its WPF and WinForms controls; only its Core
+       interop is used (behind Avalonia's NativeWebView), and the WPF one drags in WindowsBase -->
+  <Target Name="DropWebView2UiReferences" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf' Or '%(Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
+    </ItemGroup>
+  </Target>
 
   <!-- A clone made without submodules has no web apps - fetch the pinned commit instead of failing the copy -->
   <Target Name="InitWebAppsSubmodule" BeforeTargets="BeforeBuild" Condition="!Exists('..\external\singleHtmlApps\LogExplorer.html')">
@@ -47,10 +63,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Controls.WebView" Version="12.1.1" />
     <PackageReference Include="NonBlocking" Version="2.1.2" />
     <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" PrivateAssets="All" />
     <PackageReference Include="SharpCompress" Version="0.50.4" />
+    <!-- WebView2 interop on Windows: the CoreWebView2 behind Avalonia's NativeWebView -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
-	
+
 </Project>

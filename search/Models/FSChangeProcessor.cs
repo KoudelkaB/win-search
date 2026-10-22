@@ -229,7 +229,7 @@ namespace search.Models
         internal static FsEvent[] CoalesceChangedEvents(IEnumerable<FsEvent> events)
         {
             var result = new List<FsEvent>();
-            var pending = new Dictionary<string, FsEvent>(StringComparer.OrdinalIgnoreCase);
+            var pending = new Dictionary<string, FsEvent>(PathText.Comparer);
             var order = new List<string>();
 
             void Flush()
@@ -248,8 +248,7 @@ namespace search.Models
                     //already pending for the same path is included in that transition.
                     //Keeping both would propagate the canonical size change twice.
                     if (pending.Remove(e.FullPath))
-                        order.RemoveAll(path => string.Equals(path, e.FullPath,
-                            StringComparison.OrdinalIgnoreCase));
+                        order.RemoveAll(path => string.Equals(path, e.FullPath, PathText.Comparison));
                     Flush();
                     result.Add(e);
                     continue;
@@ -284,7 +283,7 @@ namespace search.Models
                     if (!repeatable || prior == null || prior.ChangeType != e.ChangeType
                         || (prior.Frn != 0 && e.Frn != 0 && prior.Frn != e.Frn)
                         || !string.Equals(prior.FullPath, e.FullPath,
-                            StringComparison.OrdinalIgnoreCase))
+                            PathText.Comparison))
                         result.Add(e);
                     else if ((prior.Frn == 0 && e.Frn != 0)
                         || (!prior.DescendantDeletesReported
@@ -299,8 +298,8 @@ namespace search.Models
             return result.ToArray();
         }
 
-        static readonly NonBlocking.ConcurrentDictionary<string, DriveQueue> queues = new(StringComparer.OrdinalIgnoreCase);
-        static readonly NonBlocking.ConcurrentDictionary<string, IDisposable> sources = new(StringComparer.OrdinalIgnoreCase); //Watcher or USN reader per drive root
+        static readonly NonBlocking.ConcurrentDictionary<string, DriveQueue> queues = new(PathText.Comparer);
+        static readonly NonBlocking.ConcurrentDictionary<string, IDisposable> sources = new(PathText.Comparer); //Watcher or USN reader per drive root
         const int RecentEventCapacity = 32;
         static readonly FsEvent[] recentEvents = new FsEvent[RecentEventCapacity];
         static readonly long[] recentEventTicks = new long[RecentEventCapacity];
@@ -342,7 +341,7 @@ namespace search.Models
 
             //Watch all drives - each on its own task: creating a watcher on a dead network
             //mapping blocks in SMB timeouts and must not delay the local drives behind it
-            foreach (var d in DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName).Distinct())
+            foreach (var d in FsRoots.AllPaths().Distinct(PathText.Comparer))
                 Task.Run(() => AddFolder(d, DriveScanReason.Startup));
             return true;
         }
@@ -363,8 +362,7 @@ namespace search.Models
 
         static string RootOf(string path)
         {
-            try { return Path.GetPathRoot(path) is { Length: > 0 } r ? r : path; }
-            catch { return path; }
+            return FsRoots.RootOf(path) ?? path;
         }
 
         /// <summary>
@@ -520,8 +518,8 @@ namespace search.Models
         /// Refresh all drives from NTFS - every current drive plus any previously watched
         /// root (a vanished drive gets one last scan that prunes its stale entries)
         /// </summary>
-        public static void RefreshFromNFT() => DriveInfo.GetDrives().Select(x => x.RootDirectory.FullName)
-            .Union(sources.Keys, StringComparer.OrdinalIgnoreCase).ToList()
+        public static void RefreshFromNFT() => FsRoots.AllPaths()
+            .Union(sources.Keys, PathText.Comparer).ToList()
             .ForEach(root => RefreshDrive(root, DriveScanReason.ManualRefresh));
 
         /// <summary>
@@ -556,10 +554,15 @@ namespace search.Models
                 //watch); anything else (FAT, exFAT, ReFS, network mappings) => FileSystemWatcher.
                 //A journal that later proves unreadable on this system swaps itself for a
                 //watcher too - USN is an upgrade where available, never a requirement.
-                var source = UsnDriveWatcher.TryStart(path,
-                    e => queue.Enqueue(e),
-                    rescanReason => { try { Started(path, rescanReason); } catch { } },
-                    w => FallBackToWatcher(path, w, queue))
+                //Linux has no journal; inotify (with a watch budget) replaces FileSystemWatcher.
+                var source = (OperatingSystem.IsWindows()
+                    ? UsnDriveWatcher.TryStart(path,
+                        e => queue.Enqueue(e),
+                        rescanReason => { try { Started(path, rescanReason); } catch { } },
+                        w => FallBackToWatcher(path, w, queue))
+                    : (IDisposable)InotifyWatcher.TryStart(path,
+                        e => queue.Enqueue(e),
+                        rescanReason => { try { Started(path, rescanReason); } catch { } }))
                     ?? CreateWatcher(path, queue);
                 if (source == null) return;
 

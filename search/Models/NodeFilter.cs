@@ -66,8 +66,8 @@ namespace search.Models
             public Pattern(string pattern)
             {
                 this.pattern = pattern;
-                PlainContains = pattern.Split('|').All(x => !x.StartsWith(':') && !x.EndsWith(':') && !x.Contains('\\'));
-                ComponentMatch = !pattern.Contains('\\');
+                PlainContains = pattern.Split('|').All(x => !x.StartsWith(':') && !x.EndsWith(':') && !x.Contains(PathText.Sep));
+                ComponentMatch = !pattern.Contains(PathText.Sep);
 
                 //Create and compile expression for comparison
                 ParameterExpression text = Ex.Parameter(typeof(string));
@@ -89,7 +89,7 @@ namespace search.Models
                 // ':' binds to a path component boundary exactly like it binds to the
                 // start/end of a name, so "\" stands in for it on "\<path>\"
                 pathAlternatives = pattern.Split('|').Distinct()
-                    .Select(x => ((x.StartsWith(':') ? "\\" : "") + x.Trim(':') + (x.EndsWith(':') ? "\\" : ""),
+                    .Select(x => ((x.StartsWith(':') ? PathText.SepString : "") + x.Trim(':') + (x.EndsWith(':') ? PathText.SepString : ""),
                         x.EndsWith(':')))
                     .ToArray();
             }
@@ -106,7 +106,7 @@ namespace search.Models
             /// </summary>
             public bool MatchesPathText(string path, bool endInLastComponent)
             {
-                var text = "\\" + path.TrimEnd('\\') + "\\";
+                var text = PathText.SepString + path.TrimEnd(PathText.Sep) + PathText.SepString;
                 foreach (var (needle, ends) in pathAlternatives)
                 {
                     // The latest occurrence ends latest - if any ends in the last component, it does
@@ -116,7 +116,7 @@ namespace search.Models
                     if (at < 0) continue;
                     if (!endInLastComponent) return true;
                     var end = at + needle.Length - (ends ? 1 : 0);
-                    if (text.IndexOf('\\', end) == text.Length - 1) return true;
+                    if (text.IndexOf(PathText.Sep, end) == text.Length - 1) return true;
                 }
                 return false;
             }
@@ -144,7 +144,7 @@ namespace search.Models
             public DirCriterion(string path, bool recursive)
             {
                 Path = path;
-                Prefix = path + '\\';
+                Prefix = path.EndsWith(PathText.Sep) ? path : path + PathText.Sep;
                 Recursive = recursive;
             }
 
@@ -186,13 +186,13 @@ namespace search.Models
             {
                 var raw = m.Value.Trim('\"');
                 var val = raw.AsSpan();
-                if (val.IndexOf(":\\") == 1)
+                if (PathText.IsAbsoluteFilterPath(val))
                 {
                     // Count trailing backslashes
                     int trailing = 0;
-                    for (int i = val.Length - 1; i >= 0 && val[i] == '\\'; i--) trailing++;
+                    for (int i = val.Length - 1; i >= 0 && val[i] == PathText.Sep; i--) trailing++;
                     bool recursive = trailing >= 2; // double backslash => recursive subtree
-                    var path = raw.TrimEnd('\\');
+                    var path = TrimDirectory(raw);
                     if (!dirs.Any(d => d.Recursive == recursive && string.Equals(d.Path, path, StringComparison.OrdinalIgnoreCase)))
                         dirs.Add(new DirCriterion(path, recursive));
                 }
@@ -205,8 +205,8 @@ namespace search.Models
                     //  trailing >=2          => inParentsName (matches any parent in full path)
                     //  A leading ':' makes a drive path (":C:\Work\") a pattern, not a folder
                     int trailing = 0;
-                    for (int i = val.Length - 1; i >= 0 && val[i] == '\\'; i--) trailing++;
-                    var core = raw.TrimEnd('\\');
+                    for (int i = val.Length - 1; i >= 0 && val[i] == PathText.Sep; i--) trailing++;
+                    var core = raw.TrimEnd(PathText.Sep);
                     if (trailing >= 2) inParentsName.Add(core);
                     else if (trailing == 1) inParentName.Add(core);
                     else inName.Add(core);
@@ -311,7 +311,7 @@ namespace search.Models
             if (p.PlainContains) return p.Matches(m.FullName);
 
             // Anchored: test the remaining path-backed prefix component by component
-            foreach (var part in m.FullName.Split('\\'))
+            foreach (var part in m.FullName.Split(PathText.Sep))
                 if (part.Length > 0 && p.Matches(part)) return true;
             return false;
         }
@@ -331,9 +331,16 @@ namespace search.Models
         static bool HasParent(INode n, DirCriterion d)
         {
             if (n.PathParent != null) return NodePath.HasParent(n, d.Node);
-            var parentDir = Path.GetDirectoryName(n.FullName)?.TrimEnd('\\');
-            return string.Equals(parentDir, d.Path, StringComparison.OrdinalIgnoreCase);
+            var parentDir = Path.GetDirectoryName(n.FullName);
+            return parentDir != null && string.Equals(TrimDirectory(parentDir), d.Path, PathText.Comparison);
         }
+
+        /// <summary>
+        /// A directory term without its trailing separators. Windows keeps the historic
+        /// "C:" form of a drive root; the Linux root stays "/".
+        /// </summary>
+        static string TrimDirectory(string path)
+            => OperatingSystem.IsWindows() ? path.TrimEnd(PathText.Sep) : PathText.TrimEndSeparators(path);
 
         /// <summary>
         ///String represenation of the filter
@@ -342,9 +349,13 @@ namespace search.Models
         public override string ToString()
         {
             // A bare "C:" would read back as a name term - a drive root keeps its backslash
-            var tokens = dirs.Select(d => d.Path + (d.Recursive ? "\\\\" : d.Path.EndsWith(':') ? "\\" : ""))
-                .Concat(inParentsName.Select(x => $"{x}\\\\"))
-                .Concat(inParentName.Select(x => $"{x}\\"))
+            // The Linux root "/" already ends with its separator
+            var sep = PathText.SepString;
+            var tokens = dirs.Select(d => d.Recursive
+                    ? d.Path.EndsWith(PathText.Sep) ? d.Path + sep : d.Path + sep + sep
+                    : d.Path.EndsWith(':') ? d.Path + sep : d.Path)
+                .Concat(inParentsName.Select(x => x + sep + sep))
+                .Concat(inParentName.Select(x => x + sep))
                 .Concat(inName.Select(x => $"{x}"));
             return string.Join(" ", tokens.Select(x => x.IndexOf(' ') == -1 ? x : $"\"{x}\""));
         }

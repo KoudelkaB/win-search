@@ -1,14 +1,15 @@
 using System;
 using System.Linq;
 using System.Threading;
-using System.Windows.Input;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Xunit;
 
 namespace search.Tests
 {
     public class KeysCommanderTests
     {
-        [Fact]
+        [AvaloniaFact]
         public void ActiveSequenceShowsOnlyCurrentChoicesAndFlowControls()
         {
             RunSta(() =>
@@ -81,7 +82,7 @@ namespace search.Tests
             });
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void PlusOfTheMainKeyBlockReachesThePlusCommand()
         {
             RunSta(() =>
@@ -112,7 +113,7 @@ namespace search.Tests
             });
         }
 
-        [Theory]
+        [AvaloniaTheory]
         [InlineData(Key.LeftShift)]
         [InlineData(Key.RightShift)]
         public void ShiftHeldToTypePlusIsNotAStepOfTheSequence(Key shift)
@@ -177,18 +178,7 @@ namespace search.Tests
             });
         }
 
-        static void RunSta(Action action)
-        {
-            Exception failure = null;
-            var thread = new Thread(() =>
-            {
-                try { action(); }
-                catch (Exception ex) { failure = ex; }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-            if (failure != null) throw failure;
-        }
+        //[AvaloniaFact] already runs the test on the Avalonia UI thread
+        static void RunSta(Action action) => action();
     }
 }

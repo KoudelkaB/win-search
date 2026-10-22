@@ -1,3 +1,4 @@
+#if WINDOWS_HOST
 using System;
 using System.IO;
 using System.IO.Pipes;
@@ -233,3 +234,5 @@ namespace search.Tests
         }
     }
 }
+
+#endif

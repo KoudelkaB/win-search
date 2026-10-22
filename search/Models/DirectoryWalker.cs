@@ -45,6 +45,7 @@ namespace search.Models
             var result = new ConcurrentBag<INode>();
             var queue = new ConcurrentQueue<string>();
             var root = FileNode.Create(drive.RootDirectory); // The MFT path has a root node too
+            var rootPath = drive.RootDirectory.FullName;
             result.Add(root);
             queue.Enqueue(drive.RootDirectory.FullName);
             var pending = 1;
@@ -76,6 +77,8 @@ namespace search.Models
                             foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
                             {
                                 if (token.IsCancellationRequested || cancellationToken.IsCancellationRequested) break;
+                                //Another file system mounted here is its own root (Linux) - never part of this one
+                                if (info is DirectoryInfo && FsRoots.IsForeignMountPoint(info.FullName, rootPath)) continue;
                                 var node = FileNode.Create(info);
                                 result.Add(node);
                                 Volatile.Write(ref lastProgress, Environment.TickCount64);
@@ -133,7 +136,7 @@ namespace search.Models
         internal static void AggregateFolderSizes(IEnumerable<INode> nodes,
             CancellationToken cancellationToken)
         {
-            var dirs = new Dictionary<string, FileNode>(StringComparer.OrdinalIgnoreCase);
+            var dirs = new Dictionary<string, FileNode>(PathText.Comparer);
             var checkedNodes = 0;
             foreach (var n in nodes)
             {

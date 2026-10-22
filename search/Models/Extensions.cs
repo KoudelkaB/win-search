@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Text;
 using System.Linq;
 using System.IO;
-using System.DirectoryServices.ActiveDirectory;
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
@@ -79,7 +78,16 @@ namespace search.Models
             try
             {
                 if (overwrite) dest.DeletePathIfExistsKeeping(file);
-                if (System.IO.Directory.Exists(file))
+                if (!OperatingSystem.IsWindows())
+                {
+                    // Directories cannot be hard linked on Unix - the closest equivalent of a
+                    // junction is a symbolic link to the absolute target
+                    if (System.IO.Directory.Exists(file))
+                        System.IO.Directory.CreateSymbolicLink(dest, Path.GetFullPath(file));
+                    else if (UnixLink(file, dest) != 0)
+                        throw new IOException($"Cannot create hard link '{dest}': {Marshal.GetLastPInvokeErrorMessage()}");
+                }
+                else if (System.IO.Directory.Exists(file))
                 {
                     // Hardlink to directory i.e. NTFS Junction
                     var e = Process.Start(new ProcessStartInfo("cmd.exe", $" /C mklink /J \"{dest}\" \"{file}\"")
@@ -207,6 +215,12 @@ namespace search.Models
             {
                 // The source is not visible to this unelevated process (ACL-protected shows
                 // as access denied) => pull it through the elevated broker
+                if (!OperatingSystem.IsWindows())
+                {
+                    //No elevated helper outside Windows - report what the file system said
+                    errors.Add(e.Message);
+                    return errors;
+                }
                 try
                 {
                     // Bring the helper up on demand when startup skipped it (service was serving
@@ -251,7 +265,8 @@ namespace search.Models
                             // The volume check can be wrong both ways: one volume under two
                             // roots (D:\ and C:\Mount) is refused by Directory.Move's root check,
                             // and a failed volume query assumed "same" - copy and delete then
-                            catch (IOException e) when (e.HResult == ErrorNotSameDevice || !SameRoot(file, dest))
+                            catch (IOException e) when (e.HResult == ErrorNotSameDevice || !SameRoot(file, dest)
+                                || !OperatingSystem.IsWindows() && !OnSameVolume(file, dest))
                             {
                                 errors.AddRange(MoveDirectoryAcrossVolumes(
                                     file, dest, overwrite, isLink, cancellationToken, nativeCancellation));
@@ -282,7 +297,7 @@ namespace search.Models
             {
                 throw;
             }
-            catch (UnauthorizedAccessException) when (move && Broker.EnsureStarted(Broker.ElevationWait))
+            catch (UnauthorizedAccessException) when (move && OperatingSystem.IsWindows() && Broker.EnsureStarted(Broker.ElevationWait))
             {
                 // The source was readable (otherwise the GET_FILE path above would have taken
                 // over) but the rename itself is denied - typically anything under Program
@@ -379,6 +394,11 @@ namespace search.Models
                 finally { File.Delete(staged); }
                 return;
             }
+            if (!OperatingSystem.IsWindows())
+            {
+                CopyFileChunked(source, destination, overwrite, cancellation?.Token ?? CancellationToken.None);
+                return;
+            }
             var flags = overwrite ? CopyFileFlags.None : CopyFileFlags.FailIfExists;
             if (CopyFileEx(
                 source,
@@ -396,6 +416,52 @@ namespace search.Models
                 $"Cannot copy '{source}' to '{destination}': {new Win32Exception(error).Message}",
                 new Win32Exception(error));
         }
+
+        /// <summary>
+        /// Cancellable copy outside Windows (File.Copy cannot be interrupted). Written to a
+        /// staged name beside the destination and renamed over it at the end, so a cancelled
+        /// or failed copy never leaves a truncated file under the real name. Keeps the
+        /// modification time and the Unix permission bits like cp -p would.
+        /// </summary>
+        static void CopyFileChunked(string source, string destination, bool overwrite,
+            CancellationToken cancellationToken)
+        {
+            if (!overwrite && (File.Exists(destination) || System.IO.Directory.Exists(destination)))
+                throw new IOException($"Destination '{destination}' already exists.");
+            var staged = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(destination)),
+                $".fsm-copy-{Guid.NewGuid():N}");
+            try
+            {
+                using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                    1 << 20, FileOptions.SequentialScan))
+                using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20))
+                {
+                    if (input.CanSeek) output.SetLength(input.Length);
+                    var buffer = new byte[1 << 20];
+                    int read;
+                    while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        output.Write(buffer, 0, read);
+                    }
+                    output.SetLength(output.Position);
+                }
+                try
+                {
+                    if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(staged, File.GetUnixFileMode(source));
+                    File.SetLastWriteTimeUtc(staged, File.GetLastWriteTimeUtc(source));
+                }
+                catch { } //Metadata is best effort - the content is what was asked for
+                File.Move(staged, destination, overwrite);
+            }
+            finally
+            {
+                try { if (File.Exists(staged)) File.Delete(staged); } catch { }
+            }
+        }
+
+        [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+        static extern int UnixLink(string oldPath, string newPath);
 
         sealed class NativeCopyCancellation : IDisposable
         {
@@ -503,7 +569,7 @@ namespace search.Models
         {
             try
             {
-                return string.Equals(VolumeOf(first), VolumeOf(second), StringComparison.OrdinalIgnoreCase);
+                return string.Equals(VolumeOf(first), VolumeOf(second), PathText.Comparison);
             }
             catch { return true; } // Directory.Move then reports ERROR_NOT_SAME_DEVICE if it is not
         }
@@ -520,6 +586,7 @@ namespace search.Models
             while (!System.IO.Directory.Exists(existing) && !File.Exists(existing)
                 && Path.GetDirectoryName(existing) is { } parent)
                 existing = parent;
+            if (!OperatingSystem.IsWindows()) return FsRoots.MountPointOf(existing);
             var mountPoint = new StringBuilder(1024);
             if (!GetVolumePathName(existing, mountPoint, mountPoint.Capacity))
                 return Path.GetPathRoot(existing);
@@ -636,7 +703,7 @@ namespace search.Models
             try
             {
                 var parent = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                return Path.GetFullPath(path).StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                return Path.GetFullPath(path).StartsWith(parent + Path.DirectorySeparatorChar, PathText.Comparison);
             }
             catch { return false; }
         }
@@ -653,11 +720,11 @@ namespace search.Models
             {
                 static string Normalize(string path) => Path.GetFullPath(path)
                     .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                return string.Equals(Normalize(first), Normalize(second), StringComparison.OrdinalIgnoreCase);
+                return string.Equals(Normalize(first), Normalize(second), PathText.Comparison);
             }
             catch
             {
-                return string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
+                return string.Equals(first, second, PathText.Comparison);
             }
         }
 

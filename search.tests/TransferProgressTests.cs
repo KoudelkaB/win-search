@@ -3,7 +3,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using System.Windows;
+using Avalonia.Controls;
+using Avalonia.Headless.XUnit;
 using search.Models;
 using Xunit;
 
@@ -160,70 +161,37 @@ namespace search.Tests
             }
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void CompletedVisibleProgressWindowCloses()
         {
-            Exception failure = null;
-            var thread = new Thread(() =>
-            {
-                try
-                {
-                    var window = new TransferProgressWindow("Test operation");
-                    window.Begin(100);
-                    window.Show();
-                    Assert.True(window.IsVisible);
+            var window = new TransferProgressWindow("Test operation");
+            window.Begin(100);
+            window.Show();
+            Assert.True(window.IsVisible);
 
-                    window.Complete();
+            window.Complete();
 
-                    Assert.False(window.IsVisible);
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-            if (failure != null)
-                throw failure;
+            Assert.False(window.IsVisible);
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void CollisionDialogDoesNotUseProgressWindowBeforeItIsShown()
         {
-            Exception failure = null;
-            var thread = new Thread(() =>
-            {
-                try
-                {
-                    var main = new Window();
-                    var progress = new TransferProgressWindow("Test operation");
-                    main.Show();
+            var main = new Window();
+            var progress = new TransferProgressWindow("Test operation");
+            main.Show();
 
-                    var collision = new Window
-                    {
-                        Owner = MainWindow.CollisionDialogOwner(progress, main)
-                    };
-                    Assert.Same(main, collision.Owner);
-                    collision.Show();
-                    collision.Close();
+            //A dialog needs a visible owner - the hidden progress window cannot be one
+            var owner = MainWindow.CollisionDialogOwner(progress, main);
+            Assert.Same(main, owner);
+            var collision = new Window();
+            collision.Show(owner);
+            collision.Close();
 
-                    progress.Show();
-                    Assert.Same(progress, MainWindow.CollisionDialogOwner(progress, main));
-                    progress.Complete();
-                    main.Close();
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-            if (failure != null)
-                throw failure;
+            progress.Show(main);
+            Assert.Same(progress, MainWindow.CollisionDialogOwner(progress, main));
+            progress.Complete();
+            main.Close();
         }
 
         [Theory]

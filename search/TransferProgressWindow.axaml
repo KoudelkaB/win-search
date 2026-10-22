@@ -1,15 +1,16 @@
-<Window x:Class="search.TransferProgressWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:search"
+        x:Class="search.TransferProgressWindow"
         Title="{local:Loc Key=FileOperation}"
         Width="560"
         SizeToContent="Height"
-        ResizeMode="NoResize"
-        WindowStartupLocation="CenterOwner"
-        Closing="Window_Closing">
+        CanResize="False"
+        CanMinimize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
     <StackPanel Margin="12">
-        <TextBlock x:Name="Operation" FontWeight="SemiBold"/>
+        <TextBlock x:Name="Operation" FontWeight="SemiBold" TextWrapping="Wrap"/>
         <TextBlock x:Name="CurrentItem" TextWrapping="Wrap" Margin="0,6"/>
         <ProgressBar x:Name="Progress"
                      Height="18"
@@ -17,28 +18,19 @@
                      Maximum="100"
                      Foreground="#FF16A34A"
                      Margin="0,4,0,4"/>
-        <Grid Margin="0,0,0,2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,2">
             <TextBlock x:Name="ProgressText"/>
             <TextBlock x:Name="BytesText" Grid.Column="2"/>
         </Grid>
-        <Grid Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
             <TextBlock x:Name="ElapsedText"/>
             <TextBlock x:Name="RemainingText" Grid.Column="1"/>
         </Grid>
         <Button x:Name="CancelButton"
                 Content="{local:Loc Key=Cancel}"
-                Width="80"
+                MinWidth="80"
                 HorizontalAlignment="Right"
-                ToolTipService.ShowOnDisabled="True"
+                HorizontalContentAlignment="Center"
                 Click="Cancel_Click"/>
     </StackPanel>
 </Window>

@@ -1,0 +1,22 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:search"
+        x:Class="search.HelpWindow"
+        Title="{local:Loc Key=Help}" Width="820" Height="700"
+        MinWidth="500" MinHeight="400" WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="12">
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+            <Button DockPanel.Dock="Right" Content="{local:Loc Key=Close}" IsCancel="True"
+                    MinWidth="90" HorizontalContentAlignment="Center" Click="Close_Click"/>
+            <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBox x:Name="findBox" Width="220" Watermark="🔍" KeyDown="FindBox_KeyDown"/>
+                <Button Content="▼" Click="FindNext_Click" ToolTip.Tip="F3"/>
+                <Button Content="A−" Click="ZoomOut_Click"/>
+                <Button Content="A+" Click="ZoomIn_Click"/>
+            </StackPanel>
+        </DockPanel>
+        <ScrollViewer x:Name="viewer" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="document" Margin="8"/>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

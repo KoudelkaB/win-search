@@ -146,4 +146,7 @@ Tamaño total: {1}
   <data name="Archive managers" xml:space="preserve"><value>Gestores de archivos comprimidos</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>Herramientas diff / merge</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>Aplicación no encontrada: {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>Sí</value></data>
+  <data name="No" xml:space="preserve"><value>No</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>No se encontró ningún emulador de terminal. Establezca la variable de entorno TERMINAL o instale uno (por ejemplo, gnome-terminal, konsole o xterm).</value></data>
 </root>

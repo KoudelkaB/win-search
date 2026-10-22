@@ -1,21 +1,31 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows-hosted runs also cover the WinSearchService (a Windows-only project) -->
+    <TargetFramework Condition="$([MSBuild]::IsOSPlatform('Windows'))">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net10.0</TargetFramework>
     <RootNamespace>search.Tests</RootNamespace>
-    <UseWPF>true</UseWPF>
     <IsPackable>false</IsPackable>
+    <!-- xunit v3 (required by Avalonia.Headless.XUnit 12) builds the tests as an executable -->
+    <OutputType>Exe</OutputType>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" PrivateAssets="all" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.4" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\search\search.csproj" />
-    <ProjectReference Include="..\search.service\search.service.csproj" />
+    <!-- The Windows service only builds for Windows; its tests are compiled there only -->
+    <ProjectReference Include="..\search.service\search.service.csproj" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
   </ItemGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <DefineConstants>$(DefineConstants);WINDOWS_HOST</DefineConstants>
+  </PropertyGroup>
 
 </Project>

@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:search"
+        x:Class="search.FileTransferDialog"
+        Title="{local:Loc Key=ChooseAction}"
+        SizeToContent="WidthAndHeight"
+        CanResize="False"
+        CanMinimize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="12" MinWidth="260" MaxWidth="560">
+        <TextBlock x:Name="Prompt" Margin="0,0,0,8" TextWrapping="Wrap"/>
+        <RadioButton x:Name="CopyAction" GroupName="action" Content="{local:Loc Key=Copy}" IsChecked="True" Margin="0,2"/>
+        <RadioButton x:Name="MoveAction" GroupName="action" Content="{local:Loc Key=Move}" Margin="0,2"/>
+        <RadioButton x:Name="SymbolicLinkAction" GroupName="action" Content="{local:Loc Key=SymbolicLink}" Margin="0,2"/>
+        <RadioButton x:Name="HardLinkAction" GroupName="action" Content="{local:Loc Key=HardLink}" Margin="0,2"/>
+        <TextBlock Text="{local:Loc Key=DestinationsSeparate}" Foreground="Gray" Margin="0,8" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+            <Button Content="{local:Loc Key=Cancel}" MinWidth="70" IsCancel="True" Click="Cancel_Click"/>
+            <Button x:Name="OkButton" Content="{local:Loc Key=OK}" MinWidth="70" IsDefault="True" Classes="accent" Click="Ok_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

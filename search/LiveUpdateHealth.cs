@@ -7,9 +7,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Data;
-using System.Windows.Media;
-using System.Windows.Threading;
+using Avalonia.Data.Converters;
+using Avalonia.Media;
+using Avalonia.Media.Immutable;
+using Avalonia.Threading;
 
 namespace search
 {
@@ -309,159 +310,34 @@ namespace search
         long OperationMs, string Name, string Priority, bool Active, int Pending, int MaxPending);
 
     /// <summary>
-    /// Low-allocation dispatcher flight recorder. It deliberately retains no completed
-    /// DispatcherOperation/delegate instances, which could otherwise keep arbitrary UI object
-    /// graphs alive and turn diagnostics into a source of memory pressure.
+    /// Dispatcher flight recorder. WPF exposed operation hooks; Avalonia's dispatcher does
+    /// not, so the longest UI operation is approximated from the input-priority heartbeat
+    /// alone: the monitor reports the heartbeat delay, and this probe contributes only a
+    /// count of jobs waiting at background priority or above. Retains nothing from the
+    /// queued work, so diagnostics can never keep UI objects alive.
     /// </summary>
     internal sealed class DispatcherActivityProbe : IDisposable
     {
-        readonly DispatcherHooks hooks;
-        readonly object sync = new();
-        static readonly FieldInfo operationMethod = FindOperationMethod();
-        DispatcherOperation activeOperation;
-        long activeStarted;
-        int activePriority = (int)DispatcherPriority.Inactive;
-        long longestCompleted;
-        int longestPriority = (int)DispatcherPriority.Inactive;
-        string longestName = "";
-        int pending;
+        readonly Dispatcher dispatcher;
         int maxPending;
 
-        static FieldInfo FindOperationMethod()
-        {
-            //WPF does not expose the callback identity publicly. Resolve its private
-            //Delegate field by type rather than a framework-version-specific field name;
-            //failure is harmless and simply leaves the diagnostic name empty.
-            try
-            {
-                foreach (var field in typeof(DispatcherOperation).GetFields(
-                    BindingFlags.Instance | BindingFlags.NonPublic))
-                    if (typeof(Delegate).IsAssignableFrom(field.FieldType)) return field;
-            }
-            catch { }
-            return null;
-        }
-
-        static string OperationName(DispatcherOperation operation)
-        {
-            if (operation == null || operationMethod == null) return "";
-            try
-            {
-                if (operationMethod.GetValue(operation) is not Delegate callback) return "";
-                var method = callback.Method;
-                var owner = method.DeclaringType?.FullName;
-                return string.IsNullOrEmpty(owner) ? method.Name : owner + "." + method.Name;
-            }
-            catch { return ""; }
-        }
-
         public DispatcherActivityProbe(Dispatcher dispatcher)
-        {
-            hooks = (dispatcher ?? throw new ArgumentNullException(nameof(dispatcher))).Hooks;
-            hooks.OperationPosted += OperationPosted;
-            hooks.OperationStarted += OperationStarted;
-            hooks.OperationCompleted += OperationCompleted;
-            hooks.OperationAborted += OperationAborted;
-        }
-
-        void OperationPosted(object sender, DispatcherHookEventArgs e)
-        {
-            var count = Interlocked.Increment(ref pending);
-            var observed = Volatile.Read(ref maxPending);
-            while (count > observed)
-            {
-                var prior = Interlocked.CompareExchange(ref maxPending, count, observed);
-                if (prior == observed) break;
-                observed = prior;
-            }
-        }
-
-        void OperationStarted(object sender, DispatcherHookEventArgs e)
-        {
-            Volatile.Write(ref activeOperation, e.Operation);
-            Volatile.Write(ref activePriority, (int)e.Operation.Priority);
-            Interlocked.Exchange(ref activeStarted, Environment.TickCount64);
-        }
-
-        void OperationCompleted(object sender, DispatcherHookEventArgs e)
-        {
-            Complete(e.Operation);
-            DecrementPending();
-        }
-
-        void OperationAborted(object sender, DispatcherHookEventArgs e)
-        {
-            //An operation normally aborts before it starts. Do not let an unrelated queued
-            //operation with the same priority clear the currently executing operation.
-            if (ReferenceEquals(Volatile.Read(ref activeOperation), e.Operation))
-            {
-                Interlocked.Exchange(ref activeOperation, null);
-                Interlocked.Exchange(ref activeStarted, 0);
-            }
-            DecrementPending();
-        }
-
-        void Complete(DispatcherOperation operation)
-        {
-            if (!ReferenceEquals(Interlocked.Exchange(ref activeOperation, null), operation))
-                return;
-            var started = Interlocked.Exchange(ref activeStarted, 0);
-            if (started == 0) return;
-            var duration = Math.Max(0, Environment.TickCount64 - started);
-            lock (sync)
-            {
-                if (duration <= longestCompleted) return;
-                longestCompleted = duration;
-                longestPriority = (int)operation.Priority;
-                longestName = OperationName(operation);
-            }
-        }
-
-        void DecrementPending()
-        {
-            if (Interlocked.Decrement(ref pending) >= 0) return;
-            //The probe can attach while startup operations are already queued, so their
-            //completion has no matching Posted notification in this probe's lifetime.
-            Interlocked.Exchange(ref pending, 0);
-        }
+            => this.dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
 
         public DispatcherActivitySnapshot Snapshot(long now)
         {
-            var activeAt = Interlocked.Read(ref activeStarted);
-            var activeMs = activeAt == 0 ? 0 : Math.Max(0, now - activeAt);
-            var priority = Volatile.Read(ref activePriority);
-            long completedMs;
-            int completedPriority;
-            string completedName;
-            lock (sync)
+            var pending = 0;
+            try
             {
-                completedMs = longestCompleted;
-                completedPriority = longestPriority;
-                completedName = longestName;
-                longestCompleted = 0;
-                longestPriority = (int)DispatcherPriority.Inactive;
-                longestName = "";
+                //Only a flag is available: whether any job at or above Background waits
+                if (dispatcher.HasJobsWithPriority(DispatcherPriority.Background)) pending = 1;
             }
-            var active = activeMs >= completedMs;
-            var operationMs = active ? activeMs : completedMs;
-            var operationPriority = active ? priority : completedPriority;
-            var operationName = active
-                ? OperationName(Volatile.Read(ref activeOperation)) : completedName;
-            var currentPending = Math.Max(0, Volatile.Read(ref pending));
-            var peakPending = Math.Max(currentPending,
-                Interlocked.Exchange(ref maxPending, currentPending));
-            return new DispatcherActivitySnapshot(operationMs, operationName,
-                ((DispatcherPriority)operationPriority).ToString(), activeAt != 0 && active,
-                currentPending, peakPending);
+            catch { }
+            var peak = Math.Max(pending, Interlocked.Exchange(ref maxPending, pending));
+            return new DispatcherActivitySnapshot(0, "", "", false, pending, peak);
         }
 
-        public void Dispose()
-        {
-            hooks.OperationPosted -= OperationPosted;
-            hooks.OperationStarted -= OperationStarted;
-            hooks.OperationCompleted -= OperationCompleted;
-            hooks.OperationAborted -= OperationAborted;
-        }
+        public void Dispose() { }
     }
 
     internal readonly record struct UiThreadActivitySnapshot(
@@ -636,8 +512,20 @@ namespace search
         int episodePostSamplesRemaining;
         int pipelineHealthySamples;
 
-        [DllImport("kernel32.dll")]
-        static extern uint GetCurrentThreadId();
+        [DllImport("kernel32.dll", EntryPoint = "GetCurrentThreadId")]
+        static extern uint WindowsThreadId();
+
+        [DllImport("libc", EntryPoint = "gettid")]
+        static extern int LinuxThreadId();
+
+        /// <summary>The OS id of the calling thread (what ProcessThread.Id reports), 0 when unknown</summary>
+        static int GetCurrentThreadId()
+        {
+            try { return OperatingSystem.IsWindows() ? unchecked((int)WindowsThreadId()) : LinuxThreadId(); }
+            catch { return 0; }
+        }
+
+        volatile bool shutdownStarted;
 
         public LiveUpdateHealthMonitor(Dispatcher dispatcher,
             Func<FsPipelineHealth> filesystem,
@@ -656,8 +544,9 @@ namespace search
             //SearchModel constructs this monitor on the WPF thread. Keep the fallback for
             //tests/future callers so the native id always belongs to the dispatcher owner.
             var uiThreadId = dispatcher.CheckAccess()
-                ? unchecked((int)GetCurrentThreadId())
-                : dispatcher.Invoke(() => unchecked((int)GetCurrentThreadId()));
+                ? GetCurrentThreadId()
+                : dispatcher.Invoke(() => GetCurrentThreadId());
+            dispatcher.ShutdownStarted += (_, _) => shutdownStarted = true;
             dispatcherActivity = new DispatcherActivityProbe(dispatcher);
             uiThreadActivity = new UiThreadActivityProbe(process, uiThreadId);
 
@@ -1021,13 +910,13 @@ namespace search
 
         void QueueHeartbeat(long now)
         {
-            if (dispatcher.HasShutdownStarted || Interlocked.CompareExchange(ref heartbeatPending, 1, 0) != 0)
+            if (shutdownStarted || Interlocked.CompareExchange(ref heartbeatPending, 1, 0) != 0)
                 return;
             Interlocked.Exchange(ref heartbeatQueued, now);
             var generation = Volatile.Read(ref heartbeatGeneration);
             try
             {
-                dispatcher.BeginInvoke(() =>
+                dispatcher.Post(() =>
                 {
                     if (generation != Volatile.Read(ref heartbeatGeneration)) return;
                     Interlocked.Exchange(ref lastHeartbeatDelay,
@@ -1048,11 +937,11 @@ namespace search
         void QueuePublish(LiveUpdateHealthSnapshot snapshot)
         {
             Volatile.Write(ref latestSnapshot, snapshot);
-            if (dispatcher.HasShutdownStarted || Interlocked.CompareExchange(ref publishPending, 1, 0) != 0)
+            if (shutdownStarted || Interlocked.CompareExchange(ref publishPending, 1, 0) != 0)
                 return;
             try
             {
-                dispatcher.BeginInvoke(() =>
+                dispatcher.Post(() =>
                 {
                     Interlocked.Exchange(ref publishPending, 0);
                     publish(Volatile.Read(ref latestSnapshot));
@@ -1116,13 +1005,13 @@ namespace search
     /// </summary>
     public sealed class LiveUpdateHealthBrushConverter : IMultiValueConverter
     {
-        readonly Dictionary<(LiveUpdateHealthState State, int LatencyBucket), SolidColorBrush> brushes = new();
+        readonly Dictionary<(LiveUpdateHealthState State, int LatencyBucket), IImmutableSolidColorBrush> brushes = new();
 
-        public object Convert(object[] values, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        public object Convert(IList<object> values, Type targetType, object parameter, System.Globalization.CultureInfo culture)
         {
-            var state = values.Length > 0 && values[0] is LiveUpdateHealthState s
+            var state = values.Count > 0 && values[0] is LiveUpdateHealthState s
                 ? s : LiveUpdateHealthState.Healthy;
-            var latency = values.Length > 1 && values[1] is IConvertible value
+            var latency = values.Count > 1 && values[1] is IConvertible value
                 ? value.ToDouble(System.Globalization.CultureInfo.InvariantCulture) : 0;
             //Twenty-five milliseconds still gives 81 visibly smooth levels while bounding
             //brush allocations over multi-day runs. Frozen brushes are safe to reuse.
@@ -1132,14 +1021,14 @@ namespace search
             lock (brushes)
             {
                 if (brushes.TryGetValue(key, out var existing)) return existing;
-                var brush = new SolidColorBrush(ColorFor(state, bucket * 25d));
-                brush.Freeze();
-                return brushes[key] = brush;
+                return brushes[key] = new ImmutableSolidColorBrush(ColorFor(state, bucket * 25d));
             }
         }
 
-        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, System.Globalization.CultureInfo culture)
-            => throw new NotSupportedException();
+        /// <summary>The brush for a state outside a binding (code-behind repaint)</summary>
+        public IBrush BrushFor(LiveUpdateHealthState state, long latencyMs)
+            => (IBrush)Convert(new object[] { state, latencyMs }, typeof(IBrush), null,
+                System.Globalization.CultureInfo.InvariantCulture);
 
         internal static Color ColorFor(LiveUpdateHealthState state, double latencyMs)
         {

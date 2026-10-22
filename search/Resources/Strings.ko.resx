@@ -146,4 +146,7 @@
   <data name="Archive managers" xml:space="preserve"><value>압축 파일 관리자</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>비교 / 병합 도구</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>앱을 찾을 수 없습니다: {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>예</value></data>
+  <data name="No" xml:space="preserve"><value>아니요</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>터미널 에뮬레이터를 찾을 수 없습니다. TERMINAL 환경 변수를 설정하거나 터미널(예: gnome-terminal, konsole, xterm)을 설치하세요.</value></data>
 </root>

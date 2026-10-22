@@ -146,4 +146,7 @@ Abrir mesmo assim?</value></data>
   <data name="Archive managers" xml:space="preserve"><value>Gerenciadores de arquivos compactados</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>Ferramentas diff / merge</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>Aplicativo não encontrado: {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>Sim</value></data>
+  <data name="No" xml:space="preserve"><value>Não</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>Nenhum emulador de terminal foi encontrado. Defina a variável de ambiente TERMINAL ou instale um (por exemplo, gnome-terminal, konsole ou xterm).</value></data>
 </root>

@@ -1,4 +1,5 @@
-using System.Windows;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
 
 namespace search
 {
@@ -12,10 +13,12 @@ namespace search
 
     public partial class FileCollisionDialog : Window
     {
-        public FileCollisionDialog(string destination)
+        public FileCollisionDialog() => InitializeComponent();
+
+        public FileCollisionDialog(string destination) : this()
         {
-            InitializeComponent();
             Destination.Text = destination;
+            Opened += (_, __) => RenameButton.Focus();
         }
 
         public FileCollisionAction Action { get; private set; } = FileCollisionAction.Cancel;
@@ -24,7 +27,7 @@ namespace search
         void Complete(FileCollisionAction action)
         {
             Action = action;
-            DialogResult = true;
+            Close(true);
         }
 
         void Overwrite_Click(object sender, RoutedEventArgs e) => Complete(FileCollisionAction.Overwrite);

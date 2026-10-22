@@ -89,3 +89,13 @@ $w.Flush()
 
 [System.IO.File]::WriteAllBytes($dest, $out.ToArray())
 Write-Host "Wrote $dest ($($out.Length) bytes, sizes: $($sizes -join ', '))"
+
+# The same images as freedesktop hicolor icons for the Linux packages and the Flatpak
+$appId = 'io.github.koudelkab.FileSearchManager'
+$iconRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'installer\linux\icons'
+for ($i = 0; $i -lt $sizes.Count; $i++) {
+    $dir = Join-Path $iconRoot "$($sizes[$i])x$($sizes[$i])"
+    $null = New-Item -ItemType Directory -Force -Path $dir
+    [System.IO.File]::WriteAllBytes((Join-Path $dir "$appId.png"), $images[$i])
+}
+Write-Host "Wrote hicolor PNGs under $iconRoot"

@@ -146,4 +146,7 @@
   <data name="Archive managers" xml:space="preserve"><value>圧縮ファイル管理</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>差分・マージツール</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>アプリケーションが見つかりません: {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>はい</value></data>
+  <data name="No" xml:space="preserve"><value>いいえ</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>ターミナル エミュレーターが見つかりません。環境変数 TERMINAL を設定するか、ターミナル（gnome-terminal、konsole、xterm など）をインストールしてください。</value></data>
 </root>

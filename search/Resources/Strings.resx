@@ -300,4 +300,7 @@ Open them anyway?</value></data>
   <data name="Archive managers" xml:space="preserve"><value>Archive managers</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>Diff / merge tools</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>Application not found: {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>Yes</value></data>
+  <data name="No" xml:space="preserve"><value>No</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>No terminal emulator was found. Set the TERMINAL environment variable or install one (for example gnome-terminal, konsole or xterm).</value></data>
 </root>

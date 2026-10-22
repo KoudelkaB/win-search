@@ -1,10 +1,13 @@
 using System;
+using System.Collections.ObjectModel;
 using System.IO;
-using System.Threading;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Media;
+using System.Linq;
+using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using Avalonia.Data;
+using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using search.Models;
 using Xunit;
 
@@ -14,9 +17,7 @@ namespace search.Tests
     /// A directory's aggregated size changes while its row keeps its position - the drive
     /// root is always the largest row of a size sort and therefore never moves. Nothing but
     /// the targeted row repaint can make that new value visible, and INode raises no change
-    /// notifications, so the repaint must really reach a GridView cell built from a
-    /// CellTemplate (which binds against the cell presenter's Content, not the row's
-    /// DataContext).
+    /// notifications, so the repaint must really reach a cell built from a template.
     /// </summary>
     public class GridRowRepaintTests
     {
@@ -31,82 +32,66 @@ namespace search.Tests
             public void Grow(ulong by) => Size += by;
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void RepaintingARowShowsTheNodesNewSize()
         {
-            RunSta(() =>
+            var node = new GrowingNode(100);
+            var (window, grid) = BuildSizeGrid(node);
+            try
             {
-                var node = new GrowingNode(100);
-                var view = BuildSizeGrid(node);
-                var row = (ListViewItem)view.ItemContainerGenerator.ContainerFromIndex(0);
+                var row = Row(grid);
                 Assert.Equal("100", SizeCellText(row));
 
                 node.Grow(23);
-                MainWindow.RefreshRow(row);
-                view.UpdateLayout();
+                Assert.Equal("100", SizeCellText(row)); //No notification - the cell is stale
+                MainWindow.RefreshCells(grid, row);
+                Dispatcher.UIThread.RunJobs();
 
                 Assert.Equal("123", SizeCellText(row));
-            });
+            }
+            finally { window.Close(); }
         }
 
-        [Fact]
-        public void ARowBeingRenamedInlineKeepsItsCellVisuals()
+        [AvaloniaFact]
+        public void RepaintKeepsTheCellVisuals()
         {
-            RunSta(() =>
+            var node = new GrowingNode(100);
+            var (window, grid) = BuildSizeGrid(node);
+            try
             {
-                var node = new GrowingNode(100);
-                var view = BuildSizeGrid(node);
-                var row = (ListViewItem)view.ItemContainerGenerator.ContainerFromIndex(0);
+                var row = Row(grid);
                 var cell = FindText(row);
 
                 node.Grow(23);
-                MainWindow.RefreshRow(row, renaming: node);
-                view.UpdateLayout();
+                MainWindow.RefreshCells(grid, row);
+                Dispatcher.UIThread.RunJobs();
 
-                //Same TextBlock instance => the inline editor next to it survived
+                //Same TextBlock instance => an inline editor next to it would survive
                 Assert.Same(cell, FindText(row));
-            });
-        }
-
-        /// <summary>One column, a CellTemplate binding to Size - the real grid's Size column</summary>
-        static ListView BuildSizeGrid(INode node)
-        {
-            var text = new FrameworkElementFactory(typeof(TextBlock));
-            text.SetBinding(TextBlock.TextProperty, new Binding(nameof(INode.Size)));
-            var template = new DataTemplate { VisualTree = text };
-            template.Seal();
-
-            var grid = new GridView();
-            grid.Columns.Add(new GridViewColumn { CellTemplate = template, Width = 100 });
-            var view = new ListView { View = grid, ItemsSource = new[] { node } };
-            view.Measure(new Size(400, 400));
-            view.Arrange(new Rect(0, 0, 400, 400));
-            view.UpdateLayout();
-            return view;
-        }
-
-        static string SizeCellText(DependencyObject row) => FindText(row)?.Text;
-
-        static TextBlock FindText(DependencyObject parent)
-        {
-            if (parent == null) return null;
-            for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
-            {
-                var child = VisualTreeHelper.GetChild(parent, i);
-                if (child is TextBlock found) return found;
-                if (FindText(child) is { } nested) return nested;
             }
-            return null;
+            finally { window.Close(); }
         }
 
-        static void RunSta(Action action)
+        /// <summary>One column, a template binding to Size - the real grid's Size column</summary>
+        static (Window, DataGrid) BuildSizeGrid(INode node)
         {
-            Exception failure = null;
-            var thread = new Thread(() => { try { action(); } catch (Exception ex) { failure = ex; } });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-            if (failure != null) throw failure;
+            var grid = new DataGrid { IsReadOnly = true, ItemsSource = new ObservableCollection<INode> { node } };
+            grid.Columns.Add(new DataGridTemplateColumn
+            {
+                Width = new DataGridLength(100),
+                CellTemplate = new FuncDataTemplate<INode>((_, _) =>
+                    new TextBlock { [!TextBlock.TextProperty] = new Binding(nameof(INode.Size)) })
+            });
+            var window = new Window { Content = grid, Width = 300, Height = 200 };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+            return (window, grid);
         }
+
+        static DataGridRow Row(DataGrid grid) => grid.GetVisualDescendants().OfType<DataGridRow>().First();
+
+        static TextBlock FindText(DataGridRow row) => row.GetVisualDescendants().OfType<TextBlock>().First();
+
+        static string SizeCellText(DataGridRow row) => FindText(row).Text;
     }
 }

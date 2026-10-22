@@ -1,42 +1,64 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
 using search.Models;
 
 namespace search
 {
+    /// <summary>
+    /// Runs keyboard sequences (all keys of a command held or typed, the command runs when
+    /// the last key is released) and shows the choices of the current level as text.
+    /// </summary>
     public class KeysCommander : TextBlock
     {
+        protected override Type StyleKeyOverride => typeof(TextBlock);
+
         public KeysCommander()
         {
-            IsVisibleChanged += (o, e) => { if (!(bool)e.NewValue) Cancel(); };
+            TextWrapping = Avalonia.Media.TextWrapping.NoWrap;
         }
+
+        protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+        {
+            base.OnPropertyChanged(change);
+            if (change.Property == IsVisibleProperty && !IsVisible) Cancel();
+        }
+
         public Func<IEnumerable<INode>> nodes = Enumerable.Empty<INode>;
 
         public IEnumerable<Key> KeysDown() => keysDown.AsEnumerable();
         public IEnumerable<Key> CommandKeys() => commandKeys.AsEnumerable();
 
-        public static readonly DependencyProperty IsReceivingCommandKeysProperty = DependencyProperty.Register(
-            nameof(IsReceivingCommandKeys), typeof(bool), typeof(KeysCommander), new PropertyMetadata(false));
+        public static readonly DirectProperty<KeysCommander, bool> IsReceivingCommandKeysProperty =
+            AvaloniaProperty.RegisterDirect<KeysCommander, bool>(nameof(IsReceivingCommandKeys), o => o.IsReceivingCommandKeys);
 
+        bool isReceivingCommandKeys;
         public bool IsReceivingCommandKeys
         {
-            get => (bool)GetValue(IsReceivingCommandKeysProperty);
-            private set => SetValue(IsReceivingCommandKeysProperty, value);
+            get => isReceivingCommandKeys;
+            private set
+            {
+                if (SetAndRaise(IsReceivingCommandKeysProperty, ref isReceivingCommandKeys, value))
+                    ReceivingChanged?.Invoke();
+            }
         }
 
+        /// <summary>Raised when a sequence starts or ends (the hints panel follows it)</summary>
+        public event Action ReceivingChanged;
+
         HashSet<Key> keysDown = new();
-        List<Key> commandKeys = new(); //All kayes pressed druring this command in time order
+        List<Key> commandKeys = new(); //All keys pressed during this command in time order
         bool commandCanceled;
 
-        public void KeyPressed(Key key)
+        /// <summary>
+        /// A key went down. keySymbol is the text the key types on the current layout
+        /// (KeyEventArgs.KeySymbol) - it tells which key carries "+".
+        /// </summary>
+        public void KeyPressed(Key key, string keySymbol = null)
         {
             if (keysDown.Contains(key)) return; // If you want to press the key again you need to release it first!
             keysDown.Add(key);
@@ -55,7 +77,7 @@ namespace search
                     else CancelPendingCommand();
                     break;
                 default: // Add key to the command
-                    commandKeys.Add(AsCommandKey(key));
+                    commandKeys.Add(AsCommandKey(key, keySymbol));
                     break;
             }
             OnChange();
@@ -71,7 +93,7 @@ namespace search
         /// key of the sequence, where it matches no command and would turn "C, +" into a plain
         /// C with a Shift argument - it only produced the character, so it is taken back out.
         /// </summary>
-        Key AsCommandKey(Key key)
+        Key AsCommandKey(Key key, string keySymbol)
         {
             if (key == Key.Add) return key;
             var level = Commands;
@@ -87,8 +109,7 @@ namespace search
             }
             if (level.Children.All(c => c.Key != Key.Add) || level.Children.Any(c => c.Key == key))
                 return key;
-            var shiftHeld = keysDown.Contains(Key.LeftShift) || keysDown.Contains(Key.RightShift);
-            if (!TypesPlus(key, shiftHeld)) return key;
+            if (!TypesPlus(key, keySymbol)) return key;
             if (typingShifts != null)
                 for (var i = typingShifts.Count - 1; i >= 0; i--) commandKeys.RemoveAt(typingShifts[i]);
             return Key.Add;
@@ -96,32 +117,10 @@ namespace search
 
         /// <summary>
         /// The key carries "+": by its name, or as the character it types on the current
-        /// keyboard layout - alone, or with Shift when that is held
+        /// keyboard layout (the key symbol of the event, Shift included when it is held)
         /// </summary>
-        internal static bool TypesPlus(Key key, bool shiftHeld = false)
-        {
-            if (key == Key.OemPlus) return true;
-            var virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
-            if (virtualKey == 0) return false;
-            if (!shiftHeld)
-                return (char)(MapVirtualKey(virtualKey, VirtualKeyToChar) & 0xFFFF) == '+';
-            var keyboard = new byte[256];
-            keyboard[VirtualKeyShift] = 0x80;
-            var typed = new char[4];
-            return ToUnicode(virtualKey, 0, keyboard, typed, typed.Length, KeepKeyboardState) == 1
-                && typed[0] == '+';
-        }
-
-        const uint VirtualKeyToChar = 2; // MAPVK_VK_TO_CHAR
-        const int VirtualKeyShift = 0x10; // VK_SHIFT
-        const uint KeepKeyboardState = 4; // ToUnicode: leave pending dead keys untouched
-
-        [DllImport("user32.dll")]
-        static extern uint MapVirtualKey(uint code, uint mapType);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        static extern int ToUnicode(uint virtualKey, uint scanCode, byte[] keyboardState,
-            [Out] char[] buffer, int bufferSize, uint flags);
+        internal static bool TypesPlus(Key key, string keySymbol = null)
+            => key == Key.OemPlus || keySymbol == "+";
 
         /// <summary>
         /// Fired before command execution
@@ -135,7 +134,6 @@ namespace search
             IsReceivingCommandKeys = keysDown.Count > 0;
             if (keysDown.Count == 0)
             {
-                //IsOpen = false;
                 // Run the command action
                 (CommandTree.Command cmd, IEnumerable<Key> arg) command = commandCanceled
                     ? (null, Enumerable.Empty<Key>())
@@ -146,7 +144,7 @@ namespace search
                     var c = Cursor;
                     try
                     {
-                        Cursor = Cursors.Wait;
+                        Cursor = new Cursor(StandardCursorType.Wait);
                         command.cmd(nodes().ToArray(), command.arg);
                     }
                     finally

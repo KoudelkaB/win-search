@@ -146,4 +146,7 @@ Les ouvrir quand même ?</value></data>
   <data name="Archive managers" xml:space="preserve"><value>Gestionnaires d’archives</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>Outils diff / fusion</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>Application introuvable : {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>Oui</value></data>
+  <data name="No" xml:space="preserve"><value>Non</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>Aucun émulateur de terminal n’a été trouvé. Définissez la variable d’environnement TERMINAL ou installez-en un (par exemple gnome-terminal, konsole ou xterm).</value></data>
 </root>

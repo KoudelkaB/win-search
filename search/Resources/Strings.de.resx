@@ -146,4 +146,7 @@ Trotzdem öffnen?</value></data>
   <data name="Archive managers" xml:space="preserve"><value>Archivprogramme</value></data>
   <data name="Diff / merge tools" xml:space="preserve"><value>Diff- / Merge-Werkzeuge</value></data>
   <data name="ApplicationNotFound" xml:space="preserve"><value>Anwendung nicht gefunden: {0}</value></data>
+  <data name="Yes" xml:space="preserve"><value>Ja</value></data>
+  <data name="No" xml:space="preserve"><value>Nein</value></data>
+  <data name="NoTerminal" xml:space="preserve"><value>Es wurde kein Terminalemulator gefunden. Setzen Sie die Umgebungsvariable TERMINAL oder installieren Sie einen (zum Beispiel gnome-terminal, konsole oder xterm).</value></data>
 </root>

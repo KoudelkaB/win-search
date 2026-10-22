@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>search.Core</RootNamespace>
+    <!-- Raw MFT/USN access is Windows-only and only reached on Windows -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

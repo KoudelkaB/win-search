@@ -1,10 +1,10 @@
 using System;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
-using System.Windows;
-using System.Windows.Threading;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
 
 namespace search
 {
@@ -26,9 +26,12 @@ namespace search
         bool finalizing;
         bool cancellationAvailable = true;
 
+        public TransferProgressWindow() : this("") { }
+
         public TransferProgressWindow(string operation)
         {
             InitializeComponent();
+            Closing += Window_Closing;
             Operation.Text = operation;
             CurrentItem.Text = L.Text("Preparing");
             Progress.IsIndeterminate = true;
@@ -40,10 +43,12 @@ namespace search
                     SampleObservation();
                     UpdateTiming();
                     TryShow();
-                },
-                Dispatcher);
+                });
             timer.Start();
         }
+
+        /// <summary>Window the progress belongs to; it is shown above it once the delay passed</summary>
+        public Window OwnerWindow { get; set; }
 
         public CancellationToken Token => cancellation.Token;
 
@@ -51,7 +56,7 @@ namespace search
         {
             cancellationAvailable = available;
             CancelButton.IsEnabled = available;
-            CancelButton.ToolTip = available ? null : unavailableReason;
+            ToolTip.SetTip(CancelButton, available ? null : unavailableReason);
         }
 
         public void ShowAfter(TimeSpan delay)
@@ -66,7 +71,8 @@ namespace search
                 && elapsed.Elapsed >= showDelay.Value)
             {
                 showDelay = null;
-                Show();
+                if (OwnerWindow?.IsVisible == true) Show(OwnerWindow);
+                else Show();
             }
         }
 
@@ -87,9 +93,9 @@ namespace search
 
         public void Report(long completedCount, string currentItem)
         {
-            if (!Dispatcher.CheckAccess())
+            if (!Dispatcher.UIThread.CheckAccess())
             {
-                _ = Dispatcher.BeginInvoke(
+                Dispatcher.UIThread.Post(
                     () => Report(completedCount, currentItem),
                     DispatcherPriority.Background);
                 return;
@@ -173,9 +179,9 @@ namespace search
 
         public void Complete()
         {
-            if (!Dispatcher.CheckAccess())
+            if (!Dispatcher.UIThread.CheckAccess())
             {
-                Dispatcher.Invoke(Complete);
+                Dispatcher.UIThread.Invoke(Complete);
                 return;
             }
             if (completed)
@@ -256,7 +262,7 @@ namespace search
             CancelButton.Content = L.Text("Cancelling");
         }
 
-        void Window_Closing(object sender, CancelEventArgs e)
+        void Window_Closing(object sender, WindowClosingEventArgs e)
         {
             if (completed)
                 return;

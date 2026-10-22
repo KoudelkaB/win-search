@@ -1,19 +1,21 @@
-<Window x:Class="search.FileCollisionDialog"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:search"
+        x:Class="search.FileCollisionDialog"
         Title="{local:Loc Key=DestinationExists}"
         SizeToContent="WidthAndHeight"
-        ResizeMode="NoResize"
+        CanResize="False"
+        CanMinimize="False"
+        ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
-    <StackPanel Margin="12" MinWidth="420">
+    <StackPanel Margin="12" MinWidth="420" MaxWidth="640">
         <TextBlock Text="{local:Loc Key=ItemExistsAt}"/>
-        <TextBlock x:Name="Destination" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,10"/>
+        <SelectableTextBlock x:Name="Destination" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,10"/>
         <CheckBox x:Name="ApplyToAll" Content="{local:Loc Key=ApplyAll}" Margin="0,0,0,10"/>
         <WrapPanel HorizontalAlignment="Right">
             <Button Content="{local:Loc Key=Overwrite}" MinWidth="80" Margin="3" Click="Overwrite_Click"/>
             <Button Content="{local:Loc Key=Skip}" MinWidth="70" Margin="3" Click="Skip_Click"/>
-            <Button Content="{local:Loc Key=Rename}" MinWidth="70" Margin="3" Click="Rename_Click"/>
+            <Button x:Name="RenameButton" Content="{local:Loc Key=Rename}" MinWidth="70" Margin="3" Click="Rename_Click"/>
             <Button Content="{local:Loc Key=Cancel}" MinWidth="70" Margin="3" IsCancel="True" Click="Cancel_Click"/>
         </WrapPanel>
     </StackPanel>

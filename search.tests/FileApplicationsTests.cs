@@ -2,7 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using System.Windows.Input;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using search.Models;
 using Xunit;
 
@@ -16,7 +17,7 @@ namespace search.Tests
         // Hints name a digit key by its digit, not "D7".
         static string Shown(Key key) => key is >= Key.D0 and <= Key.D9 ? (key - Key.D0).ToString() : key.ToString();
 
-        [Fact]
+        [AvaloniaFact]
         public void HintsHideMissingApplicationsAndEmptyCategoriesAndRefreshWhenInstalled()
         {
             RunSta(() =>
@@ -42,7 +43,7 @@ namespace search.Tests
             });
         }
 
-        [Theory]
+        [AvaloniaTheory]
         [InlineData(Key.J, "PhpStorm", "app.php", 1)]
         [InlineData(Key.N, "Notepad++", "app.txt", 1)]
         [InlineData(Key.Q, "Brave", "app.html", 1)]
@@ -104,7 +105,7 @@ namespace search.Tests
             });
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void CategoryCollapseUpdatesWhenSelectionChanges()
         {
             RunSta(() =>
@@ -125,7 +126,7 @@ namespace search.Tests
                 Assert.DoesNotContain("<N>", commander.Text);
             });
         }
-        [Fact]
+        [AvaloniaFact]
         public void DiffHintRequiresAnInstalledToolThatSupportsTheEntireSelection()
         {
             RunSta(() =>
@@ -160,7 +161,7 @@ namespace search.Tests
             });
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void NestedKeyboardSequenceResolvesTheChosenApplication()
         {
             var root = new CommandTree();
@@ -176,7 +177,7 @@ namespace search.Tests
                 FileApplications.All.Select(app => string.Join(',', app.Keys)).Distinct().Count());
         }
 
-        [Theory]
+        [AvaloniaTheory]
         [InlineData("app.PHP", "PhpStorm")]
         [InlineData("app.cpp", "CLion")]
         [InlineData("app.cs", "Rider")]
@@ -191,7 +192,7 @@ namespace search.Tests
             Assert.True(app.Supports(new[] { FileAt(@"Q:\src\" + file) }));
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void OpenWithFiltersMixedSelectionsAndAllowsProjectDirectories()
         {
             var sumatra = FileApplications.All.First(a => a.Name == "SumatraPDF");
@@ -203,7 +204,7 @@ namespace search.Tests
             Assert.True(FileApplications.Find(new[] { Key.Z, Key.R }).Supports(new[] { FileAt(@"Q:\archive.rar") }));
         }
 
-        [Fact]
+        [AvaloniaFact]
         public void DetectionUsesOnlyIndexPathsCachesUntilIndexPublicationAndRefreshesAfterIt()
         {
             var name = Guid.NewGuid().ToString("N") + ".exe";
@@ -226,7 +227,7 @@ namespace search.Tests
             Apps.RefreshInstalledApplications();
             Assert.Null(Apps.GetPath(Find, name));
         }
-        [Fact]
+        [AvaloniaFact]
         public void ComparisonKeepsOneFilePerWorkbook()
         {
             var folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "win-search-tests-" + Guid.NewGuid().ToString("N"));
@@ -261,14 +262,7 @@ namespace search.Tests
             finally { System.IO.Directory.Delete(folder, true); }
         }
 
-        static void RunSta(Action action)
-        {
-            Exception failure = null;
-            var thread = new Thread(() => { try { action(); } catch (Exception ex) { failure = ex; } });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-            if (failure != null) throw failure;
-        }
+        //[AvaloniaFact] already runs the test on the Avalonia UI thread
+        static void RunSta(Action action) => action();
     }
 }

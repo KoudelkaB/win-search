@@ -1,6 +1,6 @@
 using System;
 using System.Linq;
-using System.Windows.Media;
+using Avalonia.Media;
 using Xunit;
 
 namespace search.Tests

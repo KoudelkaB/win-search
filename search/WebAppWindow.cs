@@ -3,27 +3,32 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Interop;
-using System.Windows.Media;
-using System.Windows.Threading;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform;
+using Avalonia.Threading;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
 
 namespace search
 {
     /// <summary>
     /// Top-level window hosting one of the single-file HTML apps copied to WebApps next to the
-    /// exe (from the external/singleHtmlApps submodule, https://github.com/KoudelkaB/singleHtmlApps) in WebView2.
-    /// Pages are served from a virtual https host mapped to the local folder, so they need no
-    /// network and keep their localStorage (Log explorer profiles) between runs. The selected
-    /// files reach the page as FileSystemFileHandles and are handed to the page's own file input,
-    /// drop handler or embedding API - the HTML files stay unmodified copies of the upstream apps.
+    /// exe (from the external/singleHtmlApps submodule, https://github.com/KoudelkaB/singleHtmlApps).
+    /// The HTML files stay unmodified copies of the upstream apps; the selected files are
+    /// handed to the page's own file input, drop handler or embedding API.
+    ///
+    /// Windows: Avalonia's NativeWebView runs WebView2, driven through its CoreWebView2 - the
+    /// pages come from a virtual https host mapped to the local folder and the files arrive
+    /// as FileSystemFileHandles. The origin and the WebView2 profile folder are the ones of the
+    /// WPF version, so the pages keep their localStorage (Log explorer profiles) after an update.
+    ///
+    /// Linux: <see cref="WebAppServer"/> serves pages and files on loopback, shown by WebKitGTK
+    /// inside this window, in a native web dialog, or - without WebKitGTK - in the default browser.
     /// </summary>
     internal sealed class WebAppWindow : Window
     {
@@ -44,10 +49,30 @@ namespace search
 
         static readonly Lazy<string> runtimeVersion = new(() =>
         {
+            if (!OperatingSystem.IsWindows()) return null;
             try { return CoreWebView2Environment.GetAvailableBrowserVersionString(); }
             catch { return null; } // Runtime not installed or WebView2Loader.dll missing
         });
         static readonly Lazy<bool> runtimeSupported = new(() => SupportsFileHandoff(runtimeVersion.Value));
+
+        /// <summary>How Linux shows the pages: inside this window, a native dialog, or a browser</summary>
+        enum LinuxHost { Embedded, Dialog, Browser }
+
+        static readonly Lazy<LinuxHost> linuxHost = new(() =>
+        {
+            try
+            {
+                var info = Avalonia.Platform.WebViewAdapterInfo.GetAdapterInfo(WebViewAdapterType.WebKitGtk);
+                if (info.IsSupported && info.IsInstalled)
+                {
+                    if (info.SupportedScenarios.HasFlag(WebViewEmbeddingScenario.NativeControlHost)) return LinuxHost.Embedded;
+                    if (info.SupportedScenarios.HasFlag(WebViewEmbeddingScenario.NativeDialog)) return LinuxHost.Dialog;
+                }
+                else $"WebKitGTK unavailable: {info.UnavailableReason}".Debug();
+            }
+            catch (Exception e) { $"WebKitGTK probe failed: {e.Message}".Debug(); }
+            return LinuxHost.Browser;
+        });
 
         /// <summary>
         /// Set when the handoff failed on a runtime that passed the version check - keeps the
@@ -62,68 +87,18 @@ namespace search
         /// </summary>
         internal const double DefaultZoom = 0.8;
 
-        /// <summary>
-        /// One browser environment (and user data folder) shared by all windows. The default
-        /// data folder sits next to the exe, which is not writable under Program Files.
-        /// </summary>
-        static Task<CoreWebView2Environment> environment;
+        static bool shuttingDown;
+        static readonly List<WebAppWindow> openWindows = new();
 
-        /// <summary>
-        /// A hidden WebView kept for the whole session. Starting the WebView2 browser process
-        /// took seconds, and it ended again with the last window - so the first window of every
-        /// batch opened blank. While this one lives the process stays up and windows open at once.
-        /// </summary>
-        static CoreWebView2Controller warmController;
-        static bool shuttingDown, prewarming;
-
-        /// <summary>
-        /// Start the browser process in the background (see warmController). Does nothing without
-        /// a usable runtime; a failure only leaves the first window slower.
-        /// </summary>
-        internal static async void Prewarm(Window host)
-        {
-            if (shuttingDown || prewarming || warmController != null || !IsBrowserAvailable) return;
-            prewarming = true;
-            CoreWebView2Controller controller = null;
-            try
-            {
-                environment ??= CoreWebView2Environment.CreateAsync(null, UserDataPaths.For("WebView2"));
-                var browser = await environment;
-                if (shuttingDown || !host.IsLoaded) return;
-                controller = await browser.CreateCoreWebView2ControllerAsync(new WindowInteropHelper(host).EnsureHandle());
-                if (shuttingDown || !host.IsLoaded) { controller.Close(); return; }
-                controller.IsVisible = false;
-                warmController = controller;
-            }
-            catch (Exception e)
-            {
-                controller?.Close();
-                if (environment?.IsFaulted == true) environment = null;
-                $"WebView2 prewarm failed: {e.Message}".Debug();
-            }
-            finally { prewarming = false; }
-        }
-
-        /// <summary>Release the hidden controller as well as the visible windows closed by WPF.</summary>
-        internal static void Shutdown()
-        {
-            shuttingDown = true;
-            warmController?.Close();
-            warmController = null;
-            environment = null;
-        }
-
-        /// <summary>
-        /// Runs in every page before its own scripts. Waits for the host message and feeds the
-        /// readable files to the page the way a user would; unreadable ones are reported back
-        /// as {failed:[{index,error}]} and do not block the rest.
-        /// "inputs" - one file per &lt;input type=file&gt;; "after" delays a step until that
-        ///            element is shown (Hex editor resets the comparison pane while loading
-        ///            the first file, so the second one must wait for it);
-        /// "drop"   - all files in one drop event on the document (Log explorer multi-file input);
-        /// "logExplorer" - options for window.logExplorer.open(files, options) of the page (full
-        ///            paths, combine mode and a starting filter), the drop is the fallback without it.
-        /// </summary>
+        // Runs in every page before its own scripts (Windows, see the class comment). Waits for
+        // the host message and feeds the readable files to the page the way a user would;
+        // unreadable ones are reported back as {failed:[{index,error}]} and do not block the rest.
+        // "inputs" - one file per <input type=file>; "after" delays a step until that element
+        //            is shown (Hex editor resets the comparison pane while loading the first file,
+        //            so the second one must wait for it);
+        // "drop"   - all files in one drop event on the document (Log explorer multi-file input);
+        // "logExplorer" - options for window.logExplorer.open(files, options) of the page (full
+        //            paths, combine mode and a starting filter), the drop is the fallback without it.
         const string FileHandoffScript = """
             (() => {
                 if (!window.chrome || !chrome.webview) return;
@@ -200,7 +175,7 @@ namespace search
             })();
             """;
 
-        readonly WebView2 view = new();
+        readonly NativeWebView view = new();
         readonly TextBlock notice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8, 4, 8, 4) };
         readonly Border noticeBar;
         readonly string page;
@@ -208,15 +183,20 @@ namespace search
         readonly LogExplorerLoad load;
         readonly DispatcherTimer saveLayout;
         Size? calculatorContentSize;
-        bool closed;
+        bool closed, started, opened;
+        string serverToken;
+        double zoom;
+        IntPtr controller; //ICoreWebView2Controller (Windows), not owned
 
         /// <summary>
         /// The installed runtime can host the apps with the selected files loaded
         /// </summary>
-        public static bool IsAvailable => !handoffUnsupported && runtimeSupported.Value;
+        public static bool IsAvailable => OperatingSystem.IsWindows()
+            ? !handoffUnsupported && runtimeSupported.Value
+            : true; //Linux: WebKitGTK or the default browser, both through the loopback server
 
         /// <summary>Pages without file input only need an installed browser runtime.</summary>
-        public static bool IsBrowserAvailable => !string.IsNullOrWhiteSpace(runtimeVersion.Value);
+        public static bool IsBrowserAvailable => !OperatingSystem.IsWindows() || !string.IsNullOrWhiteSpace(runtimeVersion.Value);
 
         internal static bool SupportsFileHandoff(string runtimeVersion)
             => !string.IsNullOrWhiteSpace(runtimeVersion) &&
@@ -229,88 +209,199 @@ namespace search
         /// appended source with the filter when load is given, otherwise it asks how to combine them.
         /// </summary>
         public static void Open(string page, string[] files = null, LogExplorerLoad load = null)
-            => new WebAppWindow(page, files ?? Array.Empty<string>(), load).Show();
+        {
+            files ??= Array.Empty<string>();
+            if (!OperatingSystem.IsWindows() && linuxHost.Value != LinuxHost.Embedded)
+            {
+                OpenOutside(page, files, load);
+                return;
+            }
+            new WebAppWindow(page, files, load).Show();
+        }
+
+        /// <summary>
+        /// The web apps no longer start a browser process ahead of time: Avalonia's WebView
+        /// creates its own environment per window. Kept as the hook the main window calls.
+        /// </summary>
+        internal static void Prewarm(Window host) { }
+
+        /// <summary>Close every web app window and stop the loopback server</summary>
+        internal static void Shutdown()
+        {
+            shuttingDown = true;
+            foreach (var window in openWindows.ToArray())
+                try { window.Close(); } catch { }
+            WebAppServer.Shutdown();
+        }
+
+        /// <summary>
+        /// Linux without an embeddable WebKitGTK: a native web dialog, or the default browser
+        /// </summary>
+        static void OpenOutside(string page, string[] files, LogExplorerLoad load)
+        {
+            var layout = WebAppLayoutStore.Load(page);
+            string token = null;
+            NativeWebDialog dialog = null;
+            var url = WebAppServer.Register(page, files, MessageFor(page, files, load), layout.Zoom, message =>
+            {
+                try
+                {
+                    using var json = JsonDocument.Parse(message);
+                    if (json.RootElement.TryGetProperty("zoom", out var z) && z.TryGetDouble(out var value))
+                        WebAppLayoutStore.Update(page, l => l.Zoom = Math.Round(value, 2));
+                    else if (json.RootElement.TryGetProperty("calculatorSize", out var size) && dialog != null
+                        && size.TryGetProperty("width", out var w) && size.TryGetProperty("height", out var h))
+                        Dispatcher.UIThread.Post(() => dialog.Resize(
+                            (int)Math.Ceiling(w.GetDouble() * layout.Zoom) + 16, (int)Math.Ceiling(h.GetDouble() * layout.Zoom) + 16));
+                }
+                catch { }
+            }, out token);
+            if (linuxHost.Value == LinuxHost.Dialog)
+            {
+                try
+                {
+                    dialog = new NativeWebDialog { Title = TitleFor(page, files, null) };
+                    dialog.EnvironmentRequested += ConfigureEnvironment;
+                    dialog.Closing += (_, __) => WebAppServer.Unregister(token);
+                    dialog.NavigationCompleted += async (_, __) =>
+                    {
+                        try
+                        {
+                            var title = await dialog.InvokeScript("document.title");
+                            dialog.Title = TitleFor(page, files, title?.Trim('"'));
+                        }
+                        catch { }
+                    };
+                    var w = page == Apps.Calculator ? 760 : layout.Width is > 200 ? (int)layout.Width : 1280;
+                    var h = page == Apps.Calculator ? 860 : layout.Height is > 150 ? (int)layout.Height : 860;
+                    dialog.Resize(w, h);
+                    dialog.Show(App.MainWindowOrNull);
+                    dialog.Navigate(new Uri(url));
+                    return;
+                }
+                catch (Exception e) { $"native web dialog failed, using the browser: {e.Message}".Debug(); }
+            }
+            try { Shell.OpenDefault(url); }
+            catch (Exception e) { $"opening {url} in the browser failed: {e.Message}".Debug(); }
+        }
+
+        static void ConfigureEnvironment(object sender, WebViewEnvironmentRequestedEventArgs e)
+        {
+            switch (e)
+            {
+                case WindowsWebView2EnvironmentRequestedEventArgs webView2:
+                    //The WPF version's profile: localStorage of the pages survives the update
+                    webView2.UserDataFolder = UserDataPaths.For("WebView2");
+                    break;
+                case GtkWebViewEnvironmentRequestedEventArgs gtk:
+                    gtk.BaseDataDirectory = UserDataPaths.For("WebKit");
+                    gtk.BaseCacheDirectory = Path.Combine(UserDataPaths.For("WebKit"), "cache");
+                    break;
+            }
+        }
 
         /// <summary>
         /// Problem shown above the page, null while there is none
         /// </summary>
-        internal string NoticeText => noticeBar.Visibility == Visibility.Visible ? notice.Text : null;
+        internal string NoticeText => noticeBar.IsVisible ? notice.Text : null;
 
         WebAppWindow(string page, string[] files, LogExplorerLoad load)
         {
             this.page = page;
             this.files = files;
             this.load = load;
-            Title = TitleFor(null);
-            Icon = Application.Current?.MainWindow?.Icon;
+            Title = TitleFor(page, files, null);
+            Icon = App.MainWindowOrNull?.Icon;
             var layout = WebAppLayoutStore.Load(page);
-            var workArea = SystemParameters.WorkArea;
+            zoom = layout.Zoom;
             // Calculator fits its content after navigation; ignore sizes saved by the old
             // generic 1280px window. Scale the initial width so a saved zoom starts in the
             // desktop layout as well, before the page can report its actual dimensions.
-            Width = Math.Min(page == Apps.Calculator ? 760 * layout.Zoom / DefaultZoom : layout.Width is > 200 ? layout.Width : 1280, workArea.Width);
-            Height = Math.Min(page == Apps.Calculator ? 860 : layout.Height is > 150 ? layout.Height : 860, workArea.Height);
+            Width = page == Apps.Calculator ? 760 * layout.Zoom / DefaultZoom : layout.Width is > 200 ? layout.Width : 1280;
+            Height = page == Apps.Calculator ? 860 : layout.Height is > 150 ? layout.Height : 860;
             if (layout.Maximized) WindowState = WindowState.Maximized;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             // Kept on every resize, not only on close - the main window can end the process first
             saveLayout = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background,
-                (_, __) => SaveLayout(), Dispatcher) { IsEnabled = false };
-            SizeChanged += (_, __) => LayoutChanged();
-            StateChanged += (_, __) =>
+                (_, __) => SaveLayout()) { IsEnabled = false };
+            Resized += (_, __) => LayoutChanged();
+            PropertyChanged += (_, e) =>
             {
+                if (e.Property != WindowStateProperty) return;
                 LayoutChanged();
-                Dispatcher.BeginInvoke(() => FitCalculator(), DispatcherPriority.Loaded);
+                Dispatcher.UIThread.Post(FitCalculator, DispatcherPriority.Loaded);
             };
-            DpiChanged += (_, __) => Dispatcher.BeginInvoke(() => FitCalculator(), DispatcherPriority.Loaded);
-            Closing += (_, __) => { if (saveLayout.IsEnabled) SaveLayout(); };
-            notice.SetResourceReference(TextBlock.ForegroundProperty, SystemColors.InfoTextBrushKey);
-            noticeBar = new Border { Child = notice, Visibility = Visibility.Collapsed };
-            noticeBar.SetResourceReference(Border.BackgroundProperty, SystemColors.InfoBrushKey);
+            ScalingChanged += (_, __) => Dispatcher.UIThread.Post(FitCalculator, DispatcherPriority.Loaded);
+            Closing += (_, __) => { if (saveLayout.IsEnabled || opened) SaveLayout(); };
+            notice.Foreground = Brushes.Black;
+            noticeBar = new Border { Child = notice, IsVisible = false, Background = new SolidColorBrush(Color.FromRgb(255, 255, 225)) };
             var root = new DockPanel();
             DockPanel.SetDock(noticeBar, Dock.Top);
             root.Children.Add(noticeBar);
             root.Children.Add(view);
             Content = root;
-            Loaded += async (_, __) => await Start();
+            view.EnvironmentRequested += ConfigureEnvironment;
+            view.AdapterCreated += async (_, e) => await Start(e);
+            view.NavigationCompleted += async (_, e) =>
+            {
+                //The Windows path names the window from CoreWebView2.DocumentTitleChanged
+                if (OperatingSystem.IsWindows() || closed) return;
+                try { Title = TitleFor(page, files, (await view.InvokeScript("document.title"))?.Trim('"')); }
+                catch { }
+            };
+            Opened += (_, __) =>
+            {
+                opened = true;
+                openWindows.Add(this);
+            };
             Closed += (_, __) =>
             {
                 closed = true;
+                openWindows.Remove(this);
                 saveLayout.Stop();
-                view.Dispose();
+                WebAppServer.Unregister(serverToken);
             };
         }
 
         void LayoutChanged()
         {
             saveLayout.Stop();
-            if (IsLoaded) saveLayout.Start(); // Not for the size set while opening
+            if (opened) saveLayout.Start(); // Not for the size set while opening
         }
 
         void SaveLayout()
         {
             saveLayout.Stop();
             if (WindowState == WindowState.Minimized) return; // Would forget that it was maximized
-            var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
-            if (bounds.IsEmpty) return;
+            var maximized = WindowState == WindowState.Maximized;
+            var size = ClientSize;
+            var currentZoom = CurrentZoom();
             WebAppLayoutStore.Update(page, layout =>
             {
-                layout.Width = Math.Round(bounds.Width);
-                layout.Height = Math.Round(bounds.Height);
-                layout.Maximized = WindowState == WindowState.Maximized;
+                if (!maximized && size.Width > 0 && size.Height > 0)
+                {
+                    layout.Width = Math.Round(size.Width);
+                    layout.Height = Math.Round(size.Height);
+                }
+                layout.Maximized = maximized;
+                layout.Zoom = Math.Round(currentZoom, 2);
             });
         }
 
         void FitCalculator()
         {
-            if (calculatorContentSize is not Size content || !IsLoaded || WindowState != WindowState.Normal ||
-                view.ActualWidth <= 0 || view.ActualHeight <= 0) return;
-            var frame = new Size(Math.Max(0, ActualWidth - view.ActualWidth), Math.Max(0, ActualHeight - view.ActualHeight));
-            var bounds = CalculatorBoundsFor(content, view.ZoomFactor, frame,
-                new Rect(Left, Top, ActualWidth, ActualHeight), CurrentWorkArea());
-            if (Math.Abs(Width - bounds.Width) > 1) Width = bounds.Width;
-            if (Math.Abs(Height - bounds.Height) > 1) Height = bounds.Height;
-            Left = bounds.Left;
-            Top = bounds.Top;
+            if (calculatorContentSize is not Size content || !opened || WindowState != WindowState.Normal ||
+                view.Bounds.Width <= 0 || view.Bounds.Height <= 0) return;
+            var frameSize = FrameSize ?? ClientSize;
+            var frame = new Size(Math.Max(0, frameSize.Width - view.Bounds.Width), Math.Max(0, frameSize.Height - view.Bounds.Height));
+            var scaling = RenderScaling;
+            var current = new Rect(Position.X / scaling, Position.Y / scaling, frameSize.Width, frameSize.Height);
+            var bounds = CalculatorBoundsFor(content, CurrentZoom(), frame, current, CurrentWorkArea());
+            var clientWidth = bounds.Width - (frameSize.Width - ClientSize.Width);
+            var clientHeight = bounds.Height - (frameSize.Height - ClientSize.Height);
+            if (Math.Abs(Width - clientWidth) > 1) Width = clientWidth;
+            if (Math.Abs(Height - clientHeight) > 1) Height = clientHeight;
+            Position = new PixelPoint((int)Math.Round(bounds.X * scaling), (int)Math.Round(bounds.Y * scaling));
         }
 
         internal static Rect CalculatorBoundsFor(Size content, double zoom, Size frame, Rect current, Rect workArea)
@@ -323,26 +414,12 @@ namespace search
 
         Rect CurrentWorkArea()
         {
-            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-            if (!GetMonitorInfo(MonitorFromWindow(new WindowInteropHelper(this).Handle, 2), ref info))
-                return SystemParameters.WorkArea;
-            var scale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
-            return new Rect(scale.Transform(new Point(info.Work.Left, info.Work.Top)),
-                scale.Transform(new Point(info.Work.Right, info.Work.Bottom)));
+            var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+            if (screen == null) return new Rect(0, 0, 1920, 1080);
+            var scaling = screen.Scaling;
+            var area = screen.WorkingArea;
+            return new Rect(area.X / scaling, area.Y / scaling, area.Width / scaling, area.Height / scaling);
         }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct MonitorRect { public int Left, Top, Right, Bottom; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct MonitorInfo { public int Size; public MonitorRect Monitor, Work; public uint Flags; }
-
-        [DllImport("user32.dll")]
-        static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
 
         void ReceiveCalculatorSize(string json)
         {
@@ -362,7 +439,7 @@ namespace search
         /// <summary>
         /// The file names (the first few when there are many) and the page title
         /// </summary>
-        string TitleFor(string documentTitle)
+        static string TitleFor(string page, string[] files, string documentTitle)
         {
             var names = files.Select(Path.GetFileName);
             if (files.Length > 4) names = names.Take(3).Append($"+{files.Length - 3}");
@@ -399,25 +476,29 @@ namespace search
         void ShowNotice(string text)
         {
             notice.Text = text;
-            noticeBar.Visibility = Visibility.Visible;
+            noticeBar.IsVisible = true;
         }
 
-        async Task Start()
+        async Task Start(WebViewAdapterEventArgs adapter)
         {
-            if (closed || shuttingDown) return;
+            if (closed || shuttingDown || started) return;
+            started = true;
+            if (!OperatingSystem.IsWindows())
+            {
+                var url = WebAppServer.Register(page, files, Message, zoom, ReceiveServerMessage, out serverToken);
+                view.Navigate(new Uri(url));
+                return;
+            }
+
             CoreWebView2 core;
             try
             {
-                environment ??= CoreWebView2Environment.CreateAsync(null, UserDataPaths.For("WebView2"));
-                await view.EnsureCoreWebView2Async(await environment);
-                if (closed || shuttingDown) return;
-                core = view.CoreWebView2;
-                view.ZoomFactor = WebAppLayoutStore.Load(page).Zoom;
-                view.ZoomFactorChanged += (_, __) =>
-                {
-                    WebAppLayoutStore.Update(page, layout => layout.Zoom = Math.Round(view.ZoomFactor, 2));
-                    FitCalculator();
-                };
+                if ((adapter.TryGetPlatformHandle() ?? view.TryGetPlatformHandle()) is not IWindowsWebView2PlatformHandle handle
+                    || handle.CoreWebView2 == IntPtr.Zero)
+                    throw new InvalidOperationException("The WebView2 control is not available.");
+                core = CoreWebView2.CreateFromComICoreWebView2(handle.CoreWebView2);
+                controller = handle.CoreWebView2Controller;
+                SetZoom(zoom);
                 core.SetVirtualHostNameToFolderMapping(HostName,
                     Path.Combine(AppContext.BaseDirectory, "WebApps"), CoreWebView2HostResourceAccessKind.Deny);
                 if (files.Length > 0) await core.AddScriptToExecuteOnDocumentCreatedAsync(FileHandoffScript);
@@ -427,13 +508,12 @@ namespace search
             catch (Exception e)
             {
                 if (closed || shuttingDown) return;
-                if (environment?.IsFaulted == true) environment = null; // Let a later open retry
-                MessageBox.Show(this, e.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+                await MessageDialog.Show(this, e.Message, Title, MessageDialogButtons.Ok, MessageDialogIcon.Error);
                 Close();
                 return;
             }
 
-            core.DocumentTitleChanged += (_, __) => Title = TitleFor(core.DocumentTitle);
+            core.DocumentTitleChanged += (_, __) => Title = TitleFor(page, files, core.DocumentTitle);
             core.WebMessageReceived += (_, e) =>
             {
                 if (e.Source.StartsWith(Origin, StringComparison.OrdinalIgnoreCase))
@@ -476,6 +556,55 @@ namespace search
             core.Navigate(UrlFor(page));
         }
 
+        /// <summary>A message the page posted to the loopback server (Linux)</summary>
+        void ReceiveServerMessage(string json) => Dispatcher.UIThread.Post(() =>
+        {
+            if (closed) return;
+            try
+            {
+                using var message = JsonDocument.Parse(json);
+                if (message.RootElement.TryGetProperty("zoom", out var z) && z.TryGetDouble(out var value))
+                {
+                    zoom = value;
+                    LayoutChanged();
+                    FitCalculator();
+                }
+                else if (message.RootElement.TryGetProperty("calculatorSize", out _)) ReceiveCalculatorSize(json);
+                else ReportUnreadable(json);
+            }
+            catch (JsonException) { }
+        });
+
+        /// <summary>
+        /// ICoreWebView2Controller get_ZoomFactor/put_ZoomFactor (vtable slots 7 and 8 after
+        /// IUnknown, IsVisible and Bounds) - the WebView2 SDK cannot wrap an existing controller
+        /// </summary>
+        unsafe double CurrentZoom()
+        {
+            if (!OperatingSystem.IsWindows() || controller == IntPtr.Zero) return zoom;
+            try
+            {
+                var vtable = *(IntPtr**)controller;
+                double value;
+                var hr = ((delegate* unmanaged[Stdcall]<IntPtr, double*, int>)vtable[7])(controller, &value);
+                if (hr >= 0 && double.IsFinite(value) && value > 0) zoom = value;
+            }
+            catch { }
+            return zoom;
+        }
+
+        unsafe void SetZoom(double value)
+        {
+            zoom = value;
+            if (controller == IntPtr.Zero) return;
+            try
+            {
+                var vtable = *(IntPtr**)controller;
+                ((delegate* unmanaged[Stdcall]<IntPtr, double, int>)vtable[8])(controller, value);
+            }
+            catch { }
+        }
+
         /// <summary>
         /// The runtime passed the version check but lacks the file handle APIs
         /// </summary>
@@ -485,7 +614,7 @@ namespace search
             if (page == Apps.LogExplorer)
             {
                 //Keep the text viewer working - the same fallback as without the runtime
-                foreach (var file in files) "notepad".Open($"\"{file}\"");
+                foreach (var file in files) Apps.Notepad.Open($"\"{file}\"");
                 Close();
                 return;
             }

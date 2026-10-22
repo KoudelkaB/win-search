@@ -1,0 +1,314 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:search"
+        x:Class="search.MainWindow"
+        x:Name="Root"
+        Title="File Search Manager"
+        Icon="/Assets/app.ico"
+        Width="800" Height="450">
+    <Window.Resources>
+        <local:LiveUpdateHealthBrushConverter x:Key="LiveUpdateHealthBrushConverter" />
+        <local:ActiveFilterBrushConverter x:Key="ActiveFilterBrushConverter" />
+    </Window.Resources>
+    <Window.Styles>
+        <Style Selector="Border.dropZone">
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="3" />
+        </Style>
+        <Style Selector="TextBlock.hint">
+            <Setter Property="FontFamily" Value="Consolas, DejaVu Sans Mono, Liberation Mono, monospace" />
+            <Setter Property="FontSize" Value="11.5" />
+        </Style>
+        <Style Selector="local|KeysCommander">
+            <Setter Property="FontFamily" Value="Consolas, DejaVu Sans Mono, Liberation Mono, monospace" />
+            <Setter Property="FontSize" Value="11.5" />
+        </Style>
+        <Style Selector="HyperlinkButton.status">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.status">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel LastChildFill="True">
+        <!-- Targets (basket) and the status bar -->
+        <StackPanel DockPanel.Dock="Bottom">
+            <Border x:Name="TargetBar" BorderBrush="LightGray" BorderThickness="0,1,0,1" Padding="5,4"
+                    Background="#FFF8F8F8" DragDrop.AllowDrop="True">
+                <Border.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="{local:Loc Key=ClearTargets}" Click="ClearTargets_Click"/>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <StackPanel>
+                    <Grid x:Name="BasketDropOverlay" IsVisible="False" Margin="0,0,0,4" ColumnDefinitions="*,*">
+                        <Border Grid.Column="0" x:Name="BasketAddZone" Classes="dropZone" DragDrop.AllowDrop="True"
+                                Background="#FFE8F2FF" BorderBrush="#FF6A9BCB" Margin="0,0,2,0">
+                            <TextBlock Text="{local:Loc Key=AddTarget}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <Border Grid.Column="1" x:Name="BasketUseZone" Classes="dropZone" DragDrop.AllowDrop="True"
+                                Background="#FFEAF7EA" BorderBrush="#FF5B9B5B" Margin="2,0,0,0">
+                            <TextBlock x:Name="BasketUseText" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                    <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Left" Text="{local:Loc Key=Targets}" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="{local:Loc Key=AddName}"
+                                    ToolTip.Tip="{local:Loc Key='add selected as targets', Capitalize=True, Gesture='Alt+N'}"
+                                    Click="AddNameTargets_Click" Margin="6,0,0,0"/>
+                            <Button Content="{local:Loc Key=AddFolder}"
+                                    ToolTip.Tip="{local:Loc Key='add parent Folders as targets', Capitalize=True, Gesture='Alt+F'}"
+                                    Click="AddFolderTargets_Click" Margin="3,0,0,0"/>
+                            <Button x:Name="pasteToBasketButton" Click="PasteToBasket_Click" Margin="9,0,0,0"
+                                    ToolTip.Tip="{local:Loc Key='send clipboard to all targets', Capitalize=True, Gesture='Alt+V'}"
+                                    ToolTip.ShowOnDisabled="True">
+                                <TextBlock x:Name="pasteToBasketText"/>
+                            </Button>
+                        </StackPanel>
+                        <Border MinHeight="28" Padding="3,1" BorderBrush="#FF9A9A9A" BorderThickness="1" CornerRadius="3">
+                            <Border x:Name="BasketItemsZone" DragDrop.AllowDrop="True" Background="Transparent"
+                                    ToolTip.Tip="{local:Loc Key=AddTarget}">
+                                <ItemsControl x:Name="basketItems" VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Tag="{Binding}" DragDrop.AllowDrop="True" Margin="0,0,4,0" Padding="5,2"
+                                                    ToolTip.Tip="{Binding Path}" Classes="basketTarget">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="{local:Loc Key=FilterTarget}" Click="TargetFilter_Click"/>
+                                                        <MenuItem Header="{local:Loc Key=OpenTarget}" Click="TargetOpen_Click"/>
+                                                        <Separator/>
+                                                        <MenuItem Header="{local:Loc Key=RemoveTarget}" Click="TargetRemove_Click"/>
+                                                        <MenuItem Header="{local:Loc Key=ClearAllTargets}" Click="ClearTargets_Click"/>
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                                <TextBlock>
+                                                    <Run Text="{Binding Icon, Mode=OneWay}"/>
+                                                    <Run Text=" "/>
+                                                    <Run Text="{Binding Name, Mode=OneWay}"/>
+                                                </TextBlock>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </Border>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+            <DockPanel LastChildFill="True" Margin="0,2,0,0">
+                <Button DockPanel.Dock="Right" x:Name="calculatorButton" Content="{local:Loc Key=Calculator}"
+                        Click="Calculator_Click" Margin="5,0,5,0" IsVisible="False"
+                        ToolTip.Tip="{local:Loc Key=Calculator, Gesture=Alt+K}"/>
+                <StackPanel Orientation="Horizontal" ClipToBounds="True" Spacing="0">
+                    <Ellipse Classes="indicator" Classes.busy="{Binding Loading}" Margin="5,0,0,0"/>
+                    <TextBlock Classes="status" Text="{Binding CountsInfo}" Margin="5,0,5,0"/>
+                    <HyperlinkButton Classes="status" Click="SelectedItems_Click" Margin="0,0,8,0"
+                                     ToolTip.Tip="{local:Loc Key=ShowSelectedTooltip}">
+                        <TextBlock>
+                            <Run Text="{local:Loc Key=Selected}"/>
+                            <Run Text=": "/>
+                            <Run x:Name="selectedCountRun" Text="0"/>
+                            <Run x:Name="selectedCycleRun" Text=""/>
+                        </TextBlock>
+                    </HyperlinkButton>
+                    <TextBlock Classes="status" Text="{Binding LoadStatus}" ToolTip.Tip="{Binding LoadStatusTooltip}" Margin="0,0,5,0"/>
+                    <Button Content="{local:Loc Key=Drives}" Click="Drives_Click" Margin="0,0,5,0" Padding="6,0"
+                            ToolTip.Tip="{local:Loc Key=IndexedDrives}"/>
+                    <TextBlock Classes="status" Text="{Binding LiveUpdateHealthText}"
+                               IsVisible="{Binding LiveUpdateHealthMessageVisible}"
+                               Margin="0,0,8,0" FontWeight="SemiBold">
+                        <TextBlock.Foreground>
+                            <MultiBinding Converter="{StaticResource LiveUpdateHealthBrushConverter}">
+                                <Binding Path="LiveHealthState"/>
+                                <Binding Path="LiveUpdateLatencyMs"/>
+                            </MultiBinding>
+                        </TextBlock.Foreground>
+                    </TextBlock>
+                    <TextBlock Classes="status" Text="{Binding Status}"/>
+                </StackPanel>
+            </DockPanel>
+            <TextBlock Text="{Binding LiveUpdateHealthDetails}" FontSize="11" Foreground="#FF666666"
+                       Margin="5,0,5,1" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <!-- Keyboard hints -->
+        <StackPanel x:Name="help" DockPanel.Dock="Right" Orientation="Vertical" Margin="5" MaxWidth="360">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Content="🌐" Click="Language_Click" Padding="2,0" MinWidth="24"
+                        Foreground="DodgerBlue" Background="Transparent" BorderThickness="0"
+                        ToolTip.Tip="{local:Loc Key=Language}" AutomationProperties.Name="{local:Loc Key=Language}"/>
+                <ToggleButton DockPanel.Dock="Right" x:Name="elevateAtStart" Content="🛡" Click="ElevateAtStart_Click"
+                              Padding="2,0" MinWidth="24" Background="Transparent" BorderThickness="0"
+                              ToolTip.Tip="{local:Loc Key=ElevateAtStart}" AutomationProperties.Name="{local:Loc Key=ElevateAtStart}"/>
+                <TextBlock FontWeight="SemiBold" Text="{local:Loc Key=Hints}" VerticalAlignment="Center"/>
+            </DockPanel>
+            <TextBlock x:Name="filterTextBoxCmd" Classes="hint" IsVisible="False" TextWrapping="Wrap"/>
+            <TextBlock x:Name="findCmd" Classes="hint" IsVisible="False" TextWrapping="Wrap"/>
+            <local:KeysCommander x:Name="filesViewCmd" IsVisible="False"/>
+            <local:KeysCommander x:Name="globalCmd" Margin="0,8,0,0"/>
+        </StackPanel>
+
+        <!-- Filter, pinned filters and content search -->
+        <Grid DockPanel.Dock="Top" Margin="5,5,5,2" RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,*,Auto,Auto">
+            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,1" Spacing="5">
+                <Ellipse Classes="indicator" Classes.busy="{Binding Filtering}"/>
+                <TextBlock Text="{local:Loc Key=Filter}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <local:AutoCompleteTextBox Grid.Row="0" Grid.Column="1" x:Name="filterTextBox" Margin="0,0,0,1"/>
+            <Button Grid.Row="0" Grid.Column="2" Content="{local:Loc Key=Pin}" Click="PinFilter_Click"
+                    Margin="3,0,0,1" ToolTip.Tip="{local:Loc Key='Pin current filter', Gesture='Alt+P'}"/>
+            <StackPanel Grid.Row="0" Grid.Column="3" Orientation="Horizontal">
+                <Button Content="{local:Loc Key=Import}" Click="ImportWorkspace_Click" Margin="3,0,0,1"
+                        ToolTip.Tip="{local:Loc Key='Import pinned filters and targets', Gesture='Alt+I'}"/>
+                <Button Content="{local:Loc Key=Export}" Click="ExportWorkspace_Click" Margin="3,0,0,1"
+                        ToolTip.Tip="{local:Loc Key='Export pinned filters and targets', Gesture='Alt+E'}"/>
+            </StackPanel>
+
+            <ItemsControl Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" x:Name="pinnedItems" Margin="0,1,0,2">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Panel Margin="0,0,4,0">
+                            <Button Content="{Binding Name}" Tag="{Binding}" Click="PinnedFilter_Click"
+                                    ToolTip.Tip="{Binding Filter}" Padding="7,1" IsVisible="{Binding !IsEditing}">
+                                <Button.Background>
+                                    <MultiBinding Converter="{StaticResource ActiveFilterBrushConverter}">
+                                        <Binding Path="Filter"/>
+                                        <Binding Path="FilterText" ElementName="Root"/>
+                                    </MultiBinding>
+                                </Button.Background>
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="{local:Loc Key=UpdateFilter}" Click="PinnedFilterUpdate_Click"/>
+                                        <MenuItem Header="{local:Loc Key=Rename}" Click="PinnedFilterRename_Click"/>
+                                        <Separator/>
+                                        <MenuItem Header="{local:Loc Key=Unpin}" Click="PinnedFilterRemove_Click"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                            <TextBox Text="{Binding Name, Mode=TwoWay}" MinWidth="120" Padding="5,1"
+                                     Classes="pinnedName" IsVisible="{Binding IsEditing}"/>
+                        </Panel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,0" Spacing="5">
+                <Ellipse Classes="indicator" Classes.busy="{Binding Searching}"/>
+                <TextBlock Text="{local:Loc Key=Search}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <local:AutoCompleteTextBox Grid.Row="2" Grid.Column="1" x:Name="findTextBox" Margin="0"/>
+            <ComboBox Grid.Row="2" Grid.Column="2" x:Name="encodingComboBox" SelectedIndex="0"
+                      VerticalAlignment="Stretch" Margin="3,0,0,0" MinWidth="70">
+                <ComboBoxItem Content="UTF-8"/>
+                <ComboBoxItem Content="UTF-16"/>
+                <ComboBoxItem Content="HEX"/>
+            </ComboBox>
+            <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal">
+                <CheckBox x:Name="caseInsensitive" Content="{local:Loc Key=CaseInsensitive}"
+                          VerticalAlignment="Center" Margin="6,0,0,0"/>
+                <Button x:Name="showInFilesButton" Content="{local:Loc Key='Show in files'}" Click="ShowInFiles_Click"
+                        IsEnabled="{Binding HasFound}" Margin="6,0,0,0"
+                        ToolTip.Tip="{local:Loc Key=ShowInFilesTip}"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- New folder name entry -->
+        <Border x:Name="inlineActionBar" DockPanel.Dock="Top" IsVisible="False"
+                Background="#FFFFF7D6" BorderBrush="#FFD8B24A" BorderThickness="0,1" Padding="7,4">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Content="{local:Loc Key=Cancel}" Click="InlineActionCancel_Click" Margin="4,0,0,0"/>
+                <Button DockPanel.Dock="Right" Content="{local:Loc Key=Create}" Click="InlineActionAccept_Click" Margin="4,0,0,0"/>
+                <TextBlock x:Name="inlineActionLabel" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                <TextBox x:Name="inlineActionTextBox"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Results -->
+        <Border x:Name="liveUpdateBorder" BorderThickness="2">
+            <Border.BorderBrush>
+                <MultiBinding Converter="{StaticResource LiveUpdateHealthBrushConverter}">
+                    <Binding Path="LiveHealthState"/>
+                    <Binding Path="LiveUpdateLatencyMs"/>
+                </MultiBinding>
+            </Border.BorderBrush>
+            <DataGrid x:Name="filesView" ItemsSource="{Binding Items}"
+                      IsReadOnly="True" SelectionMode="Extended"
+                      CanUserReorderColumns="True" CanUserResizeColumns="True" CanUserSortColumns="True"
+                      HeadersVisibility="Column" DragDrop.AllowDrop="True"
+                      ClipboardCopyMode="None">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="C" Width="20" Tag="C" CanUserResize="False">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Background="{Binding $parent[DataGridRow].Foreground}" Margin="2,1"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="{local:Loc Key=Name}" Width="260" Tag="Name">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Tag="Name" Background="Transparent">
+                                    <Panel>
+                                        <TextBlock x:Name="NameDisplay" Classes="cell" Text="{Binding Name}"
+                                                   Foreground="{Binding $parent[DataGridRow].Foreground}"/>
+                                        <TextBox x:Name="InlineNameEditor" IsVisible="False" Tag="{Binding}"
+                                                 MinHeight="18" Padding="3,0" Margin="1,0"/>
+                                    </Panel>
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="{local:Loc Key=Size}" Width="100" Tag="Size">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <!-- ##0 so a real zero-byte file shows "0" - the all-# format rendered it
+                                     as an empty cell, indistinguishable from a missing value -->
+                                <TextBlock Classes="cell" Text="{Binding Size, StringFormat='{}{0:### ### ### ##0}'}"
+                                           TextAlignment="Right" Foreground="{Binding $parent[DataGridRow].Foreground}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="{local:Loc Key=Count}" Width="80" Tag="Count">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Classes="cell" Text="{Binding Count, StringFormat='{}{0:### ### ### ##0}'}"
+                                           TextAlignment="Right" Foreground="{Binding $parent[DataGridRow].Foreground}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="{local:Loc Key=Changed}" Width="140" Tag="LastChangeTime">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Classes="cell" Text="{Binding LastChangeTime, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss}'}"
+                                           Foreground="{Binding $parent[DataGridRow].Foreground}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="{local:Loc Key=Folder}" Width="*" MinWidth="80" Tag="Folder">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Tag="Folder" Background="Transparent">
+                                    <TextBlock Classes="cell" Text="{Binding Folder}"
+                                               Foreground="{Binding $parent[DataGridRow].Foreground}"/>
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </DockPanel>
+</Window>

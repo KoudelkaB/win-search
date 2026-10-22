@@ -2,11 +2,11 @@
 ; Build with tools\Build-Installer.ps1. It refreshes both publish directories and checks
 ; that the app and service versions match before invoking ISCC. Calling ISCC directly can
 ; accidentally package stale binaries left by an older build.
-; Without /DMyAppVersion the version is read from the published File Search Manager.exe
+; Without /DMyAppVersion the version is read from the published FileSearchManager.exe
 ; (which MinVer stamped from the git tag - the single source of truth).
 
 #ifndef MyAppVersion
-  #define MyAppVersion GetVersionNumbersString("..\publish\app\File Search Manager.exe")
+  #define MyAppVersion GetVersionNumbersString("..\publish\app\FileSearchManager.exe")
 #endif
 #define MyAppName "File Search Manager"
 #define MyPublisher "Bohdan Koudelka"
@@ -46,7 +46,7 @@ CloseApplications=force
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
-UninstallDisplayIcon={app}\File Search Manager.exe
+UninstallDisplayIcon={app}\FileSearchManager.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -170,9 +170,18 @@ Source: "..\LICENSE"; DestDir: "{app}"; Check: NotModifying
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Check: NotModifying
 Source: "..\README.md"; DestDir: "{app}"; Check: NotModifying
 Source: "..\docs\HELP*.md"; DestDir: "{app}\Docs"; Check: NotModifying
+; The executable was "File Search Manager.exe" before the Avalonia port. A copy of the new
+; launcher under the old name keeps taskbar pins and scripts of earlier installs working
+; (the launcher finds FileSearchManager.dll by its embedded name).
+Source: "..\publish\app\FileSearchManager.exe"; DestDir: "{app}"; DestName: "File Search Manager.exe"; Flags: ignoreversion; Check: NotModifying
 
 [InstallDelete]
 ; Remove main-binary names left by releases before the File Search Manager rename.
+; The WPF build ran from "File Search Manager.dll"; the launcher of that name stays (see [Files])
+Type: files; Name: "{app}\File Search Manager.dll"
+Type: files; Name: "{app}\File Search Manager.deps.json"
+Type: files; Name: "{app}\File Search Manager.runtimeconfig.json"
+Type: files; Name: "{app}\File Search Manager.pdb"
 Type: files; Name: "{app}\search.exe"
 Type: files; Name: "{app}\search.dll"
 Type: files; Name: "{app}\search.deps.json"
@@ -196,8 +205,8 @@ Type: files; Name: "{autoprograms}\Win Search Help.lnk"
 Name: "installservice"; Description: "{cm:InstallService}"
 
 [Icons]
-Name: "{autoprograms}\File Search Manager"; Filename: "{app}\File Search Manager.exe"
-Name: "{autoprograms}\{cm:HelpShortcut}"; Filename: "{app}\File Search Manager.exe"; Parameters: "--help"
+Name: "{autoprograms}\File Search Manager"; Filename: "{app}\FileSearchManager.exe"
+Name: "{autoprograms}\{cm:HelpShortcut}"; Filename: "{app}\FileSearchManager.exe"; Parameters: "--help"
 
 [UninstallRun]
 ; net stop (unlike sc stop) waits until the service has exited, so its binaries are unlocked

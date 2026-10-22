@@ -42,7 +42,8 @@ namespace search.Models
         {
             if (!ZipExtensions.IsSafeArchivePath(p))
                 throw new InvalidDataException($"Unsafe archive entry path '{p}'.");
-            path = Path.Combine(ZIP.FullName, p.Replace("/", "\\"));
+            path = Path.Combine(ZIP.FullName, p.Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar));
         }
 
         public INode ZIP { get; protected set; }
@@ -172,7 +173,9 @@ namespace search.Models
 
         static void RecyclePath(string path, bool isDirectory)
         {
-            if (isDirectory)
+            if (!OperatingSystem.IsWindows())
+                LinuxTrash.Move(path);
+            else if (isDirectory)
                 Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
                     path,
                     Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,

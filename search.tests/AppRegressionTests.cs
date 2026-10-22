@@ -9,7 +9,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
-using System.Windows.Input;
+using Avalonia.Input;
 using search.Models;
 using Xunit;
 
@@ -820,7 +820,7 @@ namespace search.Tests
         [InlineData(DriveType.Fixed, "ReFS", false)]
         public void OnlyNonNetworkNtfsDrivesAreSelectedByDefault(
             DriveType type, string format, bool expected)
-            => Assert.Equal(expected, DriveSelectionStore.DefaultEnabled(type, format));
+            => Assert.Equal(expected, DriveSelectionStore.DefaultEnabled(@"C:\", type, format));
 
         [Fact]
         public void DriveDialogRefreshesOnlyRootsWhoseSelectionChanged()
@@ -1267,17 +1267,17 @@ namespace search.Tests
             var sources = new[] { @"C:\source\file.txt" };
 
             Assert.Equal(FileTransferAction.Move,
-                MainWindow.SuggestedTransferAction(ModifierKeys.None, sources, new[] { @"C:\target" }));
+                MainWindow.SuggestedTransferAction(KeyModifiers.None, sources, new[] { @"C:\target" }));
             Assert.Equal(FileTransferAction.Copy,
-                MainWindow.SuggestedTransferAction(ModifierKeys.None, sources,
+                MainWindow.SuggestedTransferAction(KeyModifiers.None, sources,
                     new[] { @"C:\target", @"C:\backup" }));
         }
 
         [Theory]
-        [InlineData(ModifierKeys.Control, FileTransferAction.Copy)]
-        [InlineData(ModifierKeys.Shift, FileTransferAction.Move)]
-        [InlineData(ModifierKeys.Alt, FileTransferAction.SymbolicLink)]
-        public void DropModifiersSelectTheTransferAction(ModifierKeys modifiers, FileTransferAction expected)
+        [InlineData(KeyModifiers.Control, FileTransferAction.Copy)]
+        [InlineData(KeyModifiers.Shift, FileTransferAction.Move)]
+        [InlineData(KeyModifiers.Alt, FileTransferAction.SymbolicLink)]
+        public void DropModifiersSelectTheTransferAction(KeyModifiers modifiers, FileTransferAction expected)
         {
             Assert.Equal(expected, MainWindow.SuggestedTransferAction(modifiers,
                 new[] { @"C:\source\file.txt" }, new[] { @"D:\target" }));
