@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // F5 starts the first configuration (or the one picked in the Run and Debug view)
+      "name": "File Search Manager",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/search/bin/Debug/net10.0/FileSearchManager.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/search",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "justMyCode": true
+    },
+    {
+      // Dev mode, same as the "search UI" profile in launchSettings.json
+      "name": "File Search Manager (UI dev mode)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/search/bin/Debug/net10.0/FileSearchManager.dll",
+      "args": ["UI"],
+      "cwd": "${workspaceFolder}/search",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "justMyCode": true
+    }
+  ]
+}
