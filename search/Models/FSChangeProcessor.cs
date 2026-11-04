@@ -28,14 +28,23 @@ namespace search.Models
         UsnFallback,
         WatcherOverflow,
         MalformedRootRename,
-        MalformedRootDelete
+        MalformedRootDelete,
+        /// <summary>
+        /// A drive without live change tracking (Linux) was scanned longer ago than the
+        /// refresh age when the user came back to the window
+        /// </summary>
+        UnwatchedRefresh
     }
 
     /// <summary>
     /// Watches every drive for file-system changes and feeds them, serialized per drive,
     /// into the model's change handler. NTFS drives are watched through the USN change
-    /// journal (kernel-persisted, never drops a change); everything else falls back to
-    /// FileSystemWatcher. The app's own operations report themselves through
+    /// journal (kernel-persisted, never drops a change); everything else on Windows falls
+    /// back to FileSystemWatcher. Linux roots are not watched at all: inotify needs one
+    /// watch per directory - hundreds of thousands of them, kernel memory and a full walk
+    /// to set them up, out of a per-user limit shared with every other program. Their
+    /// index is refreshed by a rescan instead (SearchModel.RefreshUnwatchedDrives).
+    /// The app's own operations report themselves through
     /// <see cref="Echo"/> - a priority lane, so the user sees their own action instantly
     /// even while a change storm is queued.
     /// </summary>
@@ -554,16 +563,15 @@ namespace search.Models
                 //watch); anything else (FAT, exFAT, ReFS, network mappings) => FileSystemWatcher.
                 //A journal that later proves unreadable on this system swaps itself for a
                 //watcher too - USN is an upgrade where available, never a requirement.
-                //Linux has no journal; inotify (with a watch budget) replaces FileSystemWatcher.
-                var source = (OperatingSystem.IsWindows()
+                //Linux: not watched (see the class summary) - FileSystemWatcher is inotify
+                //there too, one watch per directory without any budget.
+                var source = OperatingSystem.IsWindows()
                     ? UsnDriveWatcher.TryStart(path,
                         e => queue.Enqueue(e),
                         rescanReason => { try { Started(path, rescanReason); } catch { } },
                         w => FallBackToWatcher(path, w, queue))
-                    : (IDisposable)InotifyWatcher.TryStart(path,
-                        e => queue.Enqueue(e),
-                        rescanReason => { try { Started(path, rescanReason); } catch { } }))
-                    ?? CreateWatcher(path, queue);
+                        ?? CreateWatcher(path, queue)
+                    : new Unwatched();
                 if (source == null) return;
 
                 while (!sources.TryAdd(path, source)) path.DisposeSource(); // Remove the old in case of race condition
@@ -639,5 +647,21 @@ namespace search.Models
                 watcher.Dispose();
             }
         }
+
+        /// <summary>
+        /// Stands in the sources for an indexed root that nothing watches - keeps the root
+        /// known (F12 still prunes it once it vanishes) and marks it for the rescan refresh
+        /// </summary>
+        sealed class Unwatched : IDisposable
+        {
+            public void Dispose() { }
+        }
+
+        /// <summary>
+        /// Indexed, but no change source watches the root - its index is only as fresh as its
+        /// last scan (every Linux root)
+        /// </summary>
+        internal static bool IsUnwatched(string root)
+            => root != null && sources.TryGetValue(root, out var source) && source is Unwatched;
     }
 }

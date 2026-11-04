@@ -11,6 +11,8 @@ A lista de resultados foi pensada para uso com o teclado. Quando ela está em fo
 
 Ao iniciar, o File Search Manager carrega as unidades prontas e monitora as alterações do sistema de arquivos. Cada unidade é carregada de forma independente, portanto uma unidade de rede lenta nunca atrasa as demais.
 
+No Linux, as alterações não são monitoradas em tempo real. O índice é tão atual quanto a última varredura: a barra de status mostra quando ela ocorreu, as unidades são varridas de novo em segundo plano quando você volta à janela e o índice tem mais de dois minutos, e `F12` as varre na hora. Alterações feitas pelo próprio File Search Manager sempre aparecem imediatamente.
+
 Por padrão, apenas unidades NTFS são indexadas — outros sistemas de arquivos (montagens de rede, pendrives FAT) não conseguem usar a leitura rápida da MFT, e percorrê-los arquivo a arquivo pode dominar todo o carregamento. Use o botão **💽 Unidades…** na barra de status para escolher exatamente quais unidades são indexadas; unidades desmarcadas não são verificadas nem monitoradas.
 
 Em unidades NTFS, o caminho mais rápido é ler a Master File Table do NTFS. O File Search Manager pode fazer isso de uma destas formas:
@@ -192,7 +194,7 @@ Comandos comuns:
 - `U`: descompactar os arquivos selecionados. Acrescente `NumPad7` para chamar o `7z.exe` em vez do tratamento interno.
 - `Z`: compactar os itens selecionados. Acrescente `NumPad7` para chamar o `7z.exe`.
 - `F1`: abrir este arquivo de ajuda. Funciona em qualquer parte da janela.
-- `F12`: atualizar a partir do NTFS. Funciona em qualquer parte da janela e não exige seleção; cada unidade é atualizada de forma independente, portanto uma unidade de rede lenta nunca atrasa as demais. `F1` e `F12` continuam visíveis em **Dicas** quando a grade de resultados está em foco.
+- `F12`: atualizar a partir do NTFS (no Linux: varrer as unidades novamente). Funciona em qualquer parte da janela e não exige seleção; cada unidade é atualizada de forma independente, portanto uma unidade de rede lenta nunca atrasa as demais. `F1` e `F12` continuam visíveis em **Dicas** quando a grade de resultados está em foco.
 - `Right Shift`: devolver o foco ao campo de filtro.
 
 Comandos sob `Ctrl`:

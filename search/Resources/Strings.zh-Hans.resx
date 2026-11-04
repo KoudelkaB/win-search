@@ -149,4 +149,7 @@
   <data name="Yes" xml:space="preserve"><value>是</value></data>
   <data name="No" xml:space="preserve"><value>否</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>未找到终端模拟器。请设置 TERMINAL 环境变量或安装一个终端（例如 gnome-terminal、konsole 或 xterm）。</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>未跟踪更改 · 索引时间：{0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>这些驱动器上的更改不会实时跟踪：{0}。返回窗口时，如果索引已超过 {1} 分钟，将自动刷新。按 F12 可立即刷新。</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>重新扫描驱动器</value></data>
 </root>

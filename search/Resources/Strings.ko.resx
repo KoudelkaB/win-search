@@ -149,4 +149,7 @@
   <data name="Yes" xml:space="preserve"><value>예</value></data>
   <data name="No" xml:space="preserve"><value>아니요</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>터미널 에뮬레이터를 찾을 수 없습니다. TERMINAL 환경 변수를 설정하거나 터미널(예: gnome-terminal, konsole, xterm)을 설치하세요.</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>변경 내용 감시 안 함 · 인덱스: {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>이 드라이브의 변경 내용은 실시간으로 감시되지 않습니다: {0}. 창으로 돌아왔을 때 인덱스가 {1}분보다 오래되었으면 새로 고칩니다. F12를 누르면 바로 새로 고칩니다.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>드라이브 다시 검사</value></data>
 </root>

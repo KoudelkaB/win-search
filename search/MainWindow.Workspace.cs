@@ -654,6 +654,8 @@ namespace search
             {
                 try { await Task.Run(() => ZipExtensions.AddToArchive(archive.Path, sources)); }
                 catch (Exception ex) { errors.Add($"{archive.Path}: {ex.Message}"); }
+                //A failed update may have rewritten the archive too
+                Models.Extensions.EchoChanged(archive.Path);
             }
             foreach (var executable in executables)
             {

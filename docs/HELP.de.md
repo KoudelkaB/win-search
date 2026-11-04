@@ -11,6 +11,8 @@ Die Ergebnisliste ist für die Tastaturbedienung ausgelegt. Hat die Liste den Fo
 
 Beim Start lädt File Search Manager die bereiten Laufwerke und überwacht Dateisystemänderungen. Jedes Laufwerk wird unabhängig geladen, sodass ein langsames Netzlaufwerk die anderen nie aufhält.
 
+Unter Linux werden Änderungen nicht live überwacht. Der Index ist so aktuell wie sein letzter Scan: Die Statusleiste zeigt, wann er lief, die Laufwerke werden im Hintergrund neu eingelesen, wenn Sie zum Fenster zurückkehren und der Index älter als zwei Minuten ist, und `F12` liest sie sofort neu ein. Änderungen über File Search Manager selbst erscheinen immer sofort.
+
 Standardmäßig werden nur NTFS-Laufwerke indiziert – andere Dateisysteme (Netzwerkeinbindungen, FAT-Sticks) können das schnelle MFT-Lesen nicht nutzen, und sie Datei für Datei zu durchlaufen kann den gesamten Ladevorgang dominieren. Über die Schaltfläche **💽 Laufwerke…** in der Statusleiste wählen Sie genau aus, welche Laufwerke indiziert werden; nicht markierte Laufwerke werden weder durchsucht noch überwacht.
 
 Bei NTFS-Laufwerken ist das Lesen der NTFS-Master File Table der schnellste Weg. File Search Manager kann das auf eine dieser Arten tun:
@@ -192,7 +194,7 @@ Häufige Befehle:
 - `U`: ausgewählte Archive entpacken. Mit `NumPad7` wird `7z.exe` statt der integrierten Verarbeitung aufgerufen.
 - `Z`: ausgewählte Elemente packen. Mit `NumPad7` wird `7z.exe` aufgerufen.
 - `F1`: diese Hilfedatei öffnen. Funktioniert überall im Fenster.
-- `F12`: aus NTFS aktualisieren. Funktioniert überall im Fenster und braucht keine Auswahl; jedes Laufwerk wird unabhängig aktualisiert, sodass ein langsames Netzlaufwerk die anderen nie aufhält. `F1` und `F12` bleiben in **Hinweise** sichtbar, wenn das Ergebnisraster den Fokus hat.
+- `F12`: aus NTFS aktualisieren (unter Linux: Laufwerke neu einlesen). Funktioniert überall im Fenster und braucht keine Auswahl; jedes Laufwerk wird unabhängig aktualisiert, sodass ein langsames Netzlaufwerk die anderen nie aufhält. `F1` und `F12` bleiben in **Hinweise** sichtbar, wenn das Ergebnisraster den Fokus hat.
 - `Right Shift`: Fokus zurück in das Filterfeld setzen.
 
 Befehle unter `Ctrl`:

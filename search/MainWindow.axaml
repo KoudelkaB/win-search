@@ -127,6 +127,8 @@
                         </TextBlock>
                     </HyperlinkButton>
                     <TextBlock Classes="status" Text="{Binding LoadStatus}" ToolTip.Tip="{Binding LoadStatusTooltip}" Margin="0,0,5,0"/>
+                    <TextBlock Classes="status" Text="{Binding UnwatchedStatus}" ToolTip.Tip="{Binding UnwatchedStatusTooltip}"
+                               IsVisible="{Binding UnwatchedStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" Margin="0,0,5,0"/>
                     <Button Content="{local:Loc Key=Drives}" Click="Drives_Click" Margin="0,0,5,0" Padding="6,0"
                             ToolTip.Tip="{local:Loc Key=IndexedDrives}"/>
                     <TextBlock Classes="status" Text="{Binding LiveUpdateHealthText}"

@@ -75,9 +75,10 @@ namespace search.Models
         public static List<string> Hardlink(this string file, string dest, bool overwrite = false)
         {
             var errors = new List<string>();
+            var replaced = false;
             try
             {
-                if (overwrite) dest.DeletePathIfExistsKeeping(file);
+                if (overwrite) replaced = dest.DeletePathIfExistsKeeping(file);
                 if (!OperatingSystem.IsWindows())
                 {
                     // Directories cannot be hard linked on Unix - the closest equivalent of a
@@ -110,6 +111,7 @@ namespace search.Models
             {
                 errors.Add(e.Message);
             }
+            EchoCreated(dest, replaced);
             return errors;
         }
 
@@ -122,9 +124,10 @@ namespace search.Models
         public static List<string> Softlink(this string file, string dest, bool overwrite = false)
         {
             var errors = new List<string>();
+            var replaced = false;
             try
             {
-                if (overwrite) dest.DeletePathIfExistsKeeping(file);
+                if (overwrite) replaced = dest.DeletePathIfExistsKeeping(file);
                 if (System.IO.Directory.Exists(file))
                 {
                     // Create symbolic link for directory
@@ -140,6 +143,7 @@ namespace search.Models
             {
                 errors.Add(e.Message);
             }
+            EchoCreated(dest, replaced);
             return errors;
         }
 
@@ -552,6 +556,60 @@ namespace search.Models
                     : FSChangeProcessor.Echo(change);
         }
 
+        /// <summary>
+        /// Report an item the app itself just created - a new folder, a link, an extracted
+        /// archive - see <see cref="EchoDeleted"/>. Linux watches nothing, so without it the
+        /// item stays unindexed until the next scan.
+        /// </summary>
+        /// <param name="replaced">
+        /// An item stood at the path and was deleted to make room (overwrite) - reported
+        /// deleted first, since a create of an indexed path keeps the indexed node
+        /// </param>
+        internal static void EchoCreated(string path, bool replaced = false)
+        {
+            if (replaced) _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Deleted, path));
+            if (!File.Exists(path) && !System.IO.Directory.Exists(path)) return; //Not created
+            _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Created, path));
+        }
+
+        /// <summary>
+        /// Report everything the app just created below a directory (an extracted archive)
+        /// through the batched lane - see <see cref="EchoCreated"/>
+        /// </summary>
+        internal static void EchoContent(string directory)
+        {
+            foreach (var entry in CreatedContent(directory))
+                _ = FSChangeProcessor.PostBatched(new FsEvent(WatcherChangeTypes.Created, entry));
+        }
+
+        /// <summary>
+        /// Everything below the directory, parents before their children - a child indexed
+        /// first would add its size to no folder. Walked like a drive: neither into links
+        /// (the recursive managed enumeration follows them, into cycles) nor into another
+        /// mounted file system.
+        /// </summary>
+        internal static string[] CreatedContent(string directory)
+        {
+            if (!System.IO.Directory.Exists(directory)) return Array.Empty<string>();
+            var root = new DirectoryInfo(directory);
+            var content = DirectoryWalker.Walk(root, TimeSpan.FromSeconds(15), CancellationToken.None,
+                    LinuxDirectoryReader.IsSupported)
+                .Select(n => n.FullName)
+                .Where(path => !string.Equals(PathText.TrimEndSeparators(path),
+                    PathText.TrimEndSeparators(root.FullName), PathText.Comparison))
+                .ToArray();
+            //A parent is a prefix of its children, so it sorts before them
+            Array.Sort(content, StringComparer.Ordinal);
+            return content;
+        }
+
+        /// <summary>
+        /// Report the app's own metadata change (a set timestamp) - the row shows the new
+        /// value at once instead of after the next scan on Linux
+        /// </summary>
+        internal static void EchoChanged(string path)
+            => _ = FSChangeProcessor.Echo(new FsEvent(WatcherChangeTypes.Changed, path));
+
         const int ErrorNotSameDevice = unchecked((int)0x80070011); // ERROR_NOT_SAME_DEVICE
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -691,11 +749,12 @@ namespace search.Models
         /// itself or a folder containing it (a link pasted next to its own target, a nested folder
         /// flattened into its parent). Deleting it would destroy the very data being transferred.
         /// </summary>
-        internal static void DeletePathIfExistsKeeping(this string dest, string source)
+        /// <returns>Something was deleted</returns>
+        internal static bool DeletePathIfExistsKeeping(this string dest, string source)
         {
             if (PathsReferToSameLocation(source, dest) || IsInside(source, dest))
                 throw new IOException($"'{dest}' cannot be replaced: it is or contains the source '{source}'.");
-            dest.DeletePathIfExists();
+            return dest.DeletePathIfExists();
         }
 
         static bool IsInside(string path, string folder)
@@ -747,14 +806,19 @@ namespace search.Models
             cancellationToken.ThrowIfCancellationRequested();
             if (!target.Exists)
                 target.Create();
+            //Each folder is reported before its content (the files report themselves through
+            //UniversalCopyOrMove) - Linux has no watcher to notice the folders, and a file
+            //indexed before its folder adds its size to no folder
+            EchoTransferred(source.FullName, target.FullName, move: false, batched: true);
             foreach (DirectoryInfo dir in source.GetDirectories())
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                    errors.AddRange(CopyDirectoryLink(
-                        dir,
-                        Path.Combine(target.FullName, dir.Name),
-                        overwrite));
+                {
+                    var link = Path.Combine(target.FullName, dir.Name);
+                    errors.AddRange(CopyDirectoryLink(dir, link, overwrite));
+                    EchoTransferred(dir.FullName, link, move: false, batched: true);
+                }
                 else
                     errors.AddRange(CopyFolder(
                         dir,

@@ -315,7 +315,7 @@ namespace search
                 //F1/F12 execute in Window_KeyDown before the grid sees them. Keeping them
                 //in this tree makes the working window-wide shortcuts visible in grid hints.
                 (Key.F1, "HintF1"),
-                (Key.F12, "HintF12"),
+                (Key.F12, F12Hint),
                 FileApplications.DiffCommand(async (n,a) => await OpenDiff(n)),
                 (Key.H, "Hex editor / compare", n => (n.IsCount(1) || n.IsCount(2)) && n.All(x => !x.IsDirectory) && WebAppWindow.IsAvailable,
                     async (n,a) => await Open(Apps.HexEditor, n.ToArray())),
@@ -395,7 +395,7 @@ namespace search
             //F12/Escape execute in Window_KeyDown - listed here so the hints show them
             globalCmd.Commands.Add(new CommandTree[] {
                 (Key.F1, "HintF1"),
-                (Key.F12, "HintF12"),
+                (Key.F12, F12Hint),
                 (Key.Escape, "HintEscape"),
                 (Key.LeftAlt, "ALT", altCommands)
             });
@@ -416,7 +416,15 @@ namespace search
                 filesViewCmd.Cancel();
                 globalCmd.Cancel();
             };
+            // Drives nobody watches (Linux) catch up on what changed while the user was away
+            Activated += (o, e) => Model.RefreshUnwatchedDrives();
         }
+
+        /// <summary>
+        /// F12 reloads every drive - from the NTFS master file table on Windows, by walking
+        /// the folders on Linux, where "Refresh from NTFS" would only confuse
+        /// </summary>
+        static string F12Hint => OperatingSystem.IsWindows() ? "HintF12" : "HintF12Rescan";
 
         IEnumerable<INode> SelectedNodes()
             => filesView.SelectedItems?.OfType<INode>().ToArray() ?? Enumerable.Empty<INode>();

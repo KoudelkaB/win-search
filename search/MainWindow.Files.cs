@@ -924,6 +924,7 @@ namespace search
                     which == Key.W ? time : null,
                     which == Key.A ? time : null);
             }
+            Models.Extensions.EchoChanged(path);
         }
 
         #region Inline rename
@@ -1142,8 +1143,9 @@ namespace search
                 try
                 {
                     var dir = IOPath.Combine(x.IsDirectory ? x.FullName : x.FullName.Directory(), name);
-                    if (overwrite) dir.DeletePathIfExists();
+                    var replaced = overwrite && dir.DeletePathIfExists();
                     Directory.CreateDirectory(dir);
+                    Models.Extensions.EchoCreated(dir, replaced);
                 }
                 catch (Exception ex) { errors.Add($"{x.FullName}: {ex.Message}"); }
             Model.Status = errors.Count == 0

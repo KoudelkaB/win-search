@@ -188,10 +188,13 @@ namespace search
         /// <summary>
         /// Delete Directory or file with given path - if it exists
         /// </summary>
-        public static void DeletePathIfExists(this string path)
+        /// <returns>Something was deleted</returns>
+        public static bool DeletePathIfExists(this string path)
         {
             if (File.Exists(path)) File.Delete(path);
             else if (Directory.Exists(path)) Directory.Delete(path, true);
+            else return false;
+            return true;
         }
 
         /// <summary>

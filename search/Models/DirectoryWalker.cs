@@ -23,11 +23,21 @@ namespace search.Models
         // in an uninterruptible syscall) stalls and is abandoned so it can never wedge the load.
         static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(15);
 
+        // A background rescan (nobody waits for it) keeps to a few threads: on a warm cache 8
+        // of them walk / almost as fast as 32 (0.56 vs 0.43 s) for half the CPU (2.7 vs 5.2 s)
+        const int BackgroundThreads = 8;
+
         public static IEnumerable<INode> Walk(DriveInfo drive)
             => Walk(drive, StallTimeout, CancellationToken.None);
 
         public static IEnumerable<INode> Walk(DriveInfo drive, CancellationToken cancellationToken)
             => Walk(drive, StallTimeout, cancellationToken);
+
+        /// <param name="background">A rescan nobody waits for - walk with fewer threads</param>
+        public static IEnumerable<INode> Walk(DriveInfo drive, CancellationToken cancellationToken, bool background)
+            => Walk(drive.RootDirectory, StallTimeout, cancellationToken,
+                LinuxDirectoryReader.IsSupported ? () => new LinuxDirectoryReader() : null,
+                background ? BackgroundThreads : int.MaxValue);
 
         public static IEnumerable<INode> Walk(DriveInfo drive, TimeSpan stallTimeout)
             => Walk(drive, stallTimeout, CancellationToken.None);
@@ -47,8 +57,10 @@ namespace search.Models
                 nativeListing ? () => new LinuxDirectoryReader() : null);
 
         /// <param name="newReader">One reader per worker for the native listing; null = managed enumeration</param>
+        /// <param name="maxThreads">Upper bound for the workers (one per CPU by default)</param>
         internal static IEnumerable<INode> Walk(DirectoryInfo rootDirectory, TimeSpan stallTimeout,
-            CancellationToken cancellationToken, Func<LinuxDirectoryReader> newReader)
+            CancellationToken cancellationToken, Func<LinuxDirectoryReader> newReader,
+            int maxThreads = int.MaxValue)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var options = new EnumerationOptions
@@ -75,7 +87,7 @@ namespace search.Models
             // with that thread.
             var cts = new CancellationTokenSource();
             var token = cts.Token;
-            var threadCount = Math.Max(2, Environment.ProcessorCount);
+            var threadCount = Math.Max(2, Math.Min(maxThreads, Environment.ProcessorCount));
             var running = threadCount;
             var finished = new ManualResetEvent(false);
 

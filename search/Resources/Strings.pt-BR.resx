@@ -149,4 +149,7 @@ Abrir mesmo assim?</value></data>
   <data name="Yes" xml:space="preserve"><value>Sim</value></data>
   <data name="No" xml:space="preserve"><value>Não</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>Nenhum emulador de terminal foi encontrado. Defina a variável de ambiente TERMINAL ou instale um (por exemplo, gnome-terminal, konsole ou xterm).</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>Alterações não monitoradas · índice: {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>As alterações nestas unidades não são monitoradas em tempo real: {0}. O índice é atualizado quando você volta à janela e ele tem mais de {1} min. F12 o atualiza na hora.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>Varrer as unidades novamente</value></data>
 </root>

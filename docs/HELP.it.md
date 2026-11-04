@@ -11,6 +11,8 @@ L’elenco dei risultati è pensato per l’uso da tastiera. Quando ha lo stato 
 
 All’avvio File Search Manager carica i dischi pronti e osserva le modifiche del file system. Ogni disco viene caricato in modo indipendente, quindi un disco di rete lento non rallenta mai gli altri.
 
+Su Linux le modifiche non sono monitorate in tempo reale. L’indice è aggiornato quanto la sua ultima scansione: la barra di stato mostra quando è avvenuta, i dischi vengono riscansionati in background quando torni alla finestra e l’indice ha più di due minuti, e `F12` li riscansiona subito. Le modifiche fatte da File Search Manager stesso compaiono sempre immediatamente.
+
 Per impostazione predefinita vengono indicizzati solo i dischi NTFS: gli altri file system (condivisioni di rete, chiavette FAT) non possono usare la lettura rapida della MFT e percorrerli file per file può dominare l’intero caricamento. Con il pulsante **💽 Dischi…** nella barra di stato scegli esattamente quali dischi indicizzare; i dischi non selezionati non vengono né analizzati né osservati.
 
 Per i dischi NTFS la via più rapida è leggere la Master File Table di NTFS. File Search Manager può farlo in uno di questi modi:
@@ -192,7 +194,7 @@ Comandi comuni:
 - `U`: estrai gli archivi selezionati. Aggiungi `NumPad7` per chiamare `7z.exe` invece della gestione integrata.
 - `Z`: comprimi gli elementi selezionati. Aggiungi `NumPad7` per chiamare `7z.exe`.
 - `F1`: apri questo file della guida. Funziona ovunque nella finestra.
-- `F12`: aggiorna da NTFS. Funziona ovunque nella finestra e non richiede una selezione; ogni disco si aggiorna in modo indipendente, quindi un disco di rete lento non rallenta mai gli altri. `F1` e `F12` restano visibili in **Suggerimenti** quando la griglia dei risultati ha lo stato attivo.
+- `F12`: aggiorna da NTFS (su Linux: ripeti la scansione dei dischi). Funziona ovunque nella finestra e non richiede una selezione; ogni disco si aggiorna in modo indipendente, quindi un disco di rete lento non rallenta mai gli altri. `F1` e `F12` restano visibili in **Suggerimenti** quando la griglia dei risultati ha lo stato attivo.
 - `Right Shift`: riporta lo stato attivo al campo del filtro.
 
 Comandi sotto `Ctrl`:

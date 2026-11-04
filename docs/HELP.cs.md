@@ -11,6 +11,8 @@ Seznam výsledků je navržen pro ovládání klávesnicí. Když má seznam fok
 
 Při spuštění File Search Manager načte připravené disky a sleduje změny v systému souborů. Každý disk se načítá nezávisle, takže pomalý síťový disk nikdy nezdržuje ostatní.
 
+Na Linuxu se změny živě nesledují. Index je tak čerstvý jako jeho poslední načtení: stavový řádek ukazuje, kdy proběhlo, disky se na pozadí načtou znovu, když se vrátíte do okna a index je starší než dvě minuty, a `F12` je načte hned. Změny provedené přímo ve File Search Manageru se projeví vždy okamžitě.
+
 Ve výchozím stavu se indexují jen disky NTFS – ostatní systémy souborů (síťová připojení, FAT flash disky) nemohou využít rychlé čtení MFT a jejich procházení soubor po souboru může ovládnout celé načítání. Tlačítkem **💽 Disky…** ve stavovém řádku zvolíte přesně to, které disky se indexují; neoznačené disky se ani neprocházejí, ani nesledují.
 
 U disků NTFS je nejrychlejší cestou čtení hlavní tabulky souborů (MFT). File Search Manager to zvládne jedním z těchto způsobů:
@@ -192,7 +194,7 @@ Běžné příkazy:
 - `U`: rozbalit vybrané archivy. Přidáním `NumPad7` použijete `7z.exe` místo vestavěné obsluhy.
 - `Z`: zabalit vybrané položky. Přidáním `NumPad7` použijete `7z.exe`.
 - `F1`: otevřít tento soubor nápovědy. Funguje kdekoli v okně.
-- `F12`: obnovit z NTFS. Funguje kdekoli v okně a nevyžaduje výběr; každý disk se obnovuje nezávisle, takže pomalý síťový disk nikdy nezdržuje ostatní. `F1` i `F12` zůstávají viditelné v panelu **Nápověda**, když má fokus mřížka výsledků.
+- `F12`: obnovit z NTFS (na Linuxu: znovu načíst disky). Funguje kdekoli v okně a nevyžaduje výběr; každý disk se obnovuje nezávisle, takže pomalý síťový disk nikdy nezdržuje ostatní. `F1` i `F12` zůstávají viditelné v panelu **Nápověda**, když má fokus mřížka výsledků.
 - `Right Shift`: vrátit fokus zpět do pole filtru.
 
 Příkazy pod `Ctrl`:

@@ -303,4 +303,7 @@ Open them anyway?</value></data>
   <data name="Yes" xml:space="preserve"><value>Yes</value></data>
   <data name="No" xml:space="preserve"><value>No</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>No terminal emulator was found. Set the TERMINAL environment variable or install one (for example gnome-terminal, konsole or xterm).</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>Changes not tracked · indexed {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Changes on these drives are not tracked live: {0}. The index is refreshed when you come back to the window and it is more than {1} min old. F12 refreshes it right away.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>Rescan drives</value></data>
 </root>

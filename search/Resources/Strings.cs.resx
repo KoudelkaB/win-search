@@ -162,4 +162,7 @@ Přesto je otevřít?</value></data>
   <data name="Yes" xml:space="preserve"><value>Ano</value></data>
   <data name="No" xml:space="preserve"><value>Ne</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>Nebyl nalezen žádný emulátor terminálu. Nastavte proměnnou prostředí TERMINAL nebo nějaký nainstalujte (například gnome-terminal, konsole nebo xterm).</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>Změny se nesledují · index z {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Změny na těchto discích se živě nesledují: {0}. Index se obnoví, když se vrátíte do okna a je starší než {1} min. F12 ho obnoví hned.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>Znovu načíst disky</value></data>
 </root>

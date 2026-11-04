@@ -149,4 +149,7 @@ Tamaño total: {1}
   <data name="Yes" xml:space="preserve"><value>Sí</value></data>
   <data name="No" xml:space="preserve"><value>No</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>No se encontró ningún emulador de terminal. Establezca la variable de entorno TERMINAL o instale uno (por ejemplo, gnome-terminal, konsole o xterm).</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>Cambios no supervisados · índice: {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Los cambios en estas unidades no se supervisan en tiempo real: {0}. El índice se actualiza al volver a la ventana si tiene más de {1} min. F12 lo actualiza al instante.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>Volver a analizar las unidades</value></data>
 </root>

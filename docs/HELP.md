@@ -11,6 +11,8 @@ The result list is designed for keyboard use. When the list has focus, the **Hin
 
 On startup, File Search Manager loads ready drives and watches for file-system changes. Each drive loads independently, so a slow network drive never delays the others.
 
+On Linux, changes are not tracked live. The index is as fresh as its last scan: the status bar shows when that was, the drives are scanned again in the background when you come back to the window and the index is more than two minutes old, and `F12` rescans them right away. Changes made through File Search Manager itself always show at once.
+
 By default only NTFS drives are indexed - other file systems (network mounts, FAT sticks) cannot use the fast MFT read, and walking them file by file can dominate the whole load. Use the **💽 Drives…** button in the status bar to choose exactly which drives are indexed; unchecked drives are neither scanned nor watched.
 
 For NTFS drives, the fastest path is reading the NTFS Master File Table. File Search Manager can do that in one of these ways:
@@ -192,7 +194,7 @@ Common commands:
 - `U`: unzip selected archives. Add `NumPad7` to call `7z.exe` instead of the built-in handler.
 - `Z`: zip selected items. Add `NumPad7` to call `7z.exe`.
 - `F1`: open this help file. Works anywhere in the window.
-- `F12`: refresh from NTFS. Works anywhere in the window, no selection needed; each drive refreshes independently, so a slow network drive never delays the others. Both `F1` and `F12` remain visible in **Hints** when the result grid has focus.
+- `F12`: refresh from NTFS (on Linux: rescan the drives). Works anywhere in the window, no selection needed; each drive refreshes independently, so a slow network drive never delays the others. Both `F1` and `F12` remain visible in **Hints** when the result grid has focus.
 - `Right Shift`: move focus back to the filter field.
 
 Commands held under `Ctrl`:

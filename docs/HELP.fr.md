@@ -11,6 +11,8 @@ La liste de résultats est conçue pour le clavier. Lorsqu’elle a le focus, le
 
 Au démarrage, File Search Manager charge les lecteurs prêts et surveille les modifications du système de fichiers. Chaque lecteur se charge indépendamment, de sorte qu’un lecteur réseau lent ne retarde jamais les autres.
 
+Sous Linux, les modifications ne sont pas suivies en direct. L’index est aussi récent que sa dernière analyse : la barre d’état indique quand elle a eu lieu, les lecteurs sont réanalysés en arrière-plan quand vous revenez à la fenêtre et que l’index date de plus de deux minutes, et `F12` les réanalyse immédiatement. Les modifications faites dans File Search Manager lui-même apparaissent toujours aussitôt.
+
 Par défaut, seuls les lecteurs NTFS sont indexés : les autres systèmes de fichiers (montages réseau, clés FAT) ne peuvent pas utiliser la lecture rapide de la MFT, et les parcourir fichier par fichier peut dominer tout le chargement. Le bouton **💽 Lecteurs…** de la barre d’état permet de choisir précisément les lecteurs indexés ; les lecteurs décochés ne sont ni analysés ni surveillés.
 
 Pour les lecteurs NTFS, la voie la plus rapide est la lecture de la Master File Table NTFS. File Search Manager peut le faire de l’une de ces manières :
@@ -192,7 +194,7 @@ Commandes courantes :
 - `U` : extraire les archives sélectionnées. Ajoutez `NumPad7` pour appeler `7z.exe` au lieu du traitement intégré.
 - `Z` : compresser les éléments sélectionnés. Ajoutez `NumPad7` pour appeler `7z.exe`.
 - `F1` : ouvrir ce fichier d’aide. Fonctionne partout dans la fenêtre.
-- `F12` : actualiser depuis NTFS. Fonctionne partout dans la fenêtre, sans sélection ; chaque lecteur s’actualise indépendamment, de sorte qu’un lecteur réseau lent ne retarde jamais les autres. `F1` et `F12` restent visibles dans **Raccourcis** lorsque la grille de résultats a le focus.
+- `F12` : actualiser depuis NTFS (sous Linux : réanalyser les lecteurs). Fonctionne partout dans la fenêtre, sans sélection ; chaque lecteur s’actualise indépendamment, de sorte qu’un lecteur réseau lent ne retarde jamais les autres. `F1` et `F12` restent visibles dans **Raccourcis** lorsque la grille de résultats a le focus.
 - `Right Shift` : ramener le focus dans le champ de filtre.
 
 Commandes sous `Ctrl` :

@@ -149,4 +149,7 @@
   <data name="Yes" xml:space="preserve"><value>はい</value></data>
   <data name="No" xml:space="preserve"><value>いいえ</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>ターミナル エミュレーターが見つかりません。環境変数 TERMINAL を設定するか、ターミナル（gnome-terminal、konsole、xterm など）をインストールしてください。</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>変更は監視されていません · インデックス: {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>これらのドライブの変更はリアルタイムで監視されていません: {0}。ウィンドウに戻ったときにインデックスが {1} 分より古ければ更新されます。F12 ですぐに更新できます。</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>ドライブを再スキャン</value></data>
 </root>

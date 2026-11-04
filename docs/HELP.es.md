@@ -11,6 +11,8 @@ La lista de resultados está pensada para el teclado. Cuando tiene el foco, el p
 
 Al iniciarse, File Search Manager carga las unidades listas y vigila los cambios del sistema de archivos. Cada unidad se carga de forma independiente, por lo que una unidad de red lenta nunca retrasa a las demás.
 
+En Linux, los cambios no se supervisan en tiempo real. El índice está tan actualizado como su último análisis: la barra de estado muestra cuándo fue, las unidades se vuelven a analizar en segundo plano al volver a la ventana si el índice tiene más de dos minutos, y `F12` las analiza de inmediato. Los cambios hechos con el propio File Search Manager aparecen siempre al instante.
+
 De forma predeterminada solo se indexan las unidades NTFS: otros sistemas de archivos (montajes de red, memorias FAT) no pueden usar la lectura rápida de la MFT, y recorrerlos archivo por archivo puede dominar toda la carga. Use el botón **💽 Unidades…** de la barra de estado para elegir exactamente qué unidades se indexan; las unidades sin marcar no se analizan ni se vigilan.
 
 En las unidades NTFS, la vía más rápida es leer la Master File Table de NTFS. File Search Manager puede hacerlo de una de estas maneras:
@@ -192,7 +194,7 @@ Comandos habituales:
 - `U`: descomprimir los archivos seleccionados. Añada `NumPad7` para llamar a `7z.exe` en lugar del tratamiento integrado.
 - `Z`: comprimir los elementos seleccionados. Añada `NumPad7` para llamar a `7z.exe`.
 - `F1`: abrir este archivo de ayuda. Funciona en cualquier parte de la ventana.
-- `F12`: actualizar desde NTFS. Funciona en cualquier parte de la ventana y no necesita selección; cada unidad se actualiza de forma independiente, por lo que una unidad de red lenta nunca retrasa a las demás. `F1` y `F12` siguen visibles en **Pistas** cuando la cuadrícula de resultados tiene el foco.
+- `F12`: actualizar desde NTFS (en Linux: volver a analizar las unidades). Funciona en cualquier parte de la ventana y no necesita selección; cada unidad se actualiza de forma independiente, por lo que una unidad de red lenta nunca retrasa a las demás. `F1` y `F12` siguen visibles en **Pistas** cuando la cuadrícula de resultados tiene el foco.
 - `Right Shift`: devolver el foco al campo de filtro.
 
 Comandos bajo `Ctrl`:

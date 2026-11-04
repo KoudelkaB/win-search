@@ -149,4 +149,7 @@ Trotzdem öffnen?</value></data>
   <data name="Yes" xml:space="preserve"><value>Ja</value></data>
   <data name="No" xml:space="preserve"><value>Nein</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>Es wurde kein Terminalemulator gefunden. Setzen Sie die Umgebungsvariable TERMINAL oder installieren Sie einen (zum Beispiel gnome-terminal, konsole oder xterm).</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>Änderungen nicht überwacht · Index vom {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Änderungen auf diesen Laufwerken werden nicht live überwacht: {0}. Der Index wird aktualisiert, wenn Sie zum Fenster zurückkehren und er älter als {1} Min. ist. F12 aktualisiert ihn sofort.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>Laufwerke neu einlesen</value></data>
 </root>

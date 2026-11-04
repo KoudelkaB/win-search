@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -2497,6 +2498,9 @@ namespace search.Models
                 RemoveCreationWaiter(path, t);
                 t.TrySetResult(node);
             }
+            // Indexed above, but only a change event puts the row on the grid - and Linux has
+            // no watcher to raise one
+            if (created) Extensions.EchoCreated(path);
             return t.Task;
         }
 
@@ -3161,6 +3165,92 @@ namespace search.Models
         Stopwatch loadWatch;                     //Duration of the load burst (first drive in => last drive out)
         CancellationTokenSource loadProgress;
         Task loadProgressTask;
+        bool compactAfterBurst;                  //A scan of this burst was not a background refresh
+        // When each indexed drive's last completed scan started (UTC) - the age of its index
+        readonly NonBlocking.ConcurrentDictionary<string, DateTime> scannedAt = new(StringComparer.OrdinalIgnoreCase);
+        // When the scan running on a drive started (UTC) - the age its index will have
+        readonly NonBlocking.ConcurrentDictionary<string, DateTime> scanStartedAt = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// A drive nobody watches (Linux) is rescanned once its index is this old and the user
+        /// comes back to the window. A warm background rescan of 4.5 million entries on four
+        /// drives takes about 4 s and does not stall the window.
+        /// </summary>
+        internal static readonly TimeSpan UnwatchedRefreshAge = TimeSpan.FromMinutes(2);
+
+        /// <summary>
+        /// "Changes not tracked · indexed at 14:32" while an indexed drive has no live change
+        /// source; null hides it
+        /// </summary>
+        public string UnwatchedStatus { get; private set; }
+
+        /// <summary>Which drives are not tracked and how they get refreshed</summary>
+        public string UnwatchedStatusTooltip { get; private set; }
+
+        /// <summary>
+        /// The user is back in the window: rescan each drive without live change tracking
+        /// whose index is older than UnwatchedRefreshAge. A background rescan - fewer walk
+        /// threads and no blocking memory compaction afterwards (a second-long freeze of the
+        /// window the user has just switched to). A drive still in a scan that started too
+        /// long ago gets its request too: the scan coalesces it into one rerun after it ends,
+        /// since its walk may have passed a folder before the folder changed.
+        /// </summary>
+        public void RefreshUnwatchedDrives()
+        {
+            if (Volatile.Read(ref modelDisposed) != 0) return;
+            foreach (var root in DrivesToRefresh(scannedAt, scanStartedAt, DateTime.UtcNow,
+                UnwatchedRefreshAge, FSChangeProcessor.IsUnwatched,
+                root => unavailableDrives.ContainsKey(FsRoots.KeyOf(root))))
+            {
+                $"drive {root} index older than {UnwatchedRefreshAge.TotalMinutes:0.#} min and not watched => background rescan".Debug();
+                _ = InitFromNTFS(root, DriveScanReason.UnwatchedRefresh);
+            }
+        }
+
+        /// <param name="scannedAt">Start of each drive's last completed scan</param>
+        /// <param name="running">
+        /// Start of each running scan - the index it publishes is as fresh as that. A drive
+        /// still in its first scan is only here: a long one (a cold disk) gets its rerun too.
+        /// </param>
+        /// <param name="waitingForRetry">The drive is unavailable and retries on its own</param>
+        internal static string[] DrivesToRefresh(IEnumerable<KeyValuePair<string, DateTime>> scannedAt,
+            IEnumerable<KeyValuePair<string, DateTime>> running, DateTime utcNow, TimeSpan age,
+            Func<string, bool> unwatched, Func<string, bool> waitingForRetry)
+        {
+            var newest = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (root, at) in scannedAt.Concat(running))
+                if (!newest.TryGetValue(root, out var known) || at > known) newest[root] = at;
+            return newest
+                .Where(pair => unwatched(pair.Key) && !waitingForRetry(pair.Key)
+                    //A clock set back would otherwise hold the refresh off until it catches up
+                    && (utcNow - pair.Value >= age || utcNow < pair.Value))
+                .Select(pair => pair.Key)
+                .ToArray();
+        }
+
+        void UpdateUnwatchedStatus()
+        {
+            //Drives finish their scans concurrently - the last one to set the texts has to
+            //be the one that read the newest times
+            lock (scannedAt)
+            {
+                var unwatched = scannedAt.Where(pair => FSChangeProcessor.IsUnwatched(pair.Key)).ToArray();
+                (UnwatchedStatus, UnwatchedStatusTooltip) = UnwatchedStatusTexts(unwatched, DateTime.Now);
+            }
+        }
+
+        /// <param name="unwatched">Unwatched drives and the UTC start of their last scan</param>
+        /// <param name="now">Local now - the time alone for today, else date and time</param>
+        internal static (string Status, string Tooltip) UnwatchedStatusTexts(
+            IReadOnlyCollection<KeyValuePair<string, DateTime>> unwatched, DateTime now)
+        {
+            if (unwatched.Count == 0) return (null, null);
+            var oldest = unwatched.Min(pair => pair.Value).ToLocalTime();
+            var at = oldest.ToString(oldest.Date == now.Date ? "t" : "g", CultureInfo.CurrentCulture);
+            var roots = string.Join(", ", unwatched.Select(pair => pair.Key).OrderBy(root => root, StringComparer.Ordinal));
+            return (search.L.Format("StatusUnwatched", at),
+                search.L.Format("StatusUnwatchedTooltip", roots, (int)UnwatchedRefreshAge.TotalMinutes));
+        }
 
         /// <summary>
         /// Refresh the files of one drive (root form "C:\"). Concurrent requests for the same
@@ -3186,6 +3276,11 @@ namespace search.Models
                         await Task.Delay(500); //Batch the burst of watcher (re)starts
                         var requested = pending.Snapshot();
                         var requestSummary = requested.Summary;
+                        var background = requested.Reasons.Keys.All(r => r == DriveScanReason.UnwatchedRefresh);
+                        if (!background) lock (loadStatusLock) compactAfterBurst = true;
+                        //A request arriving from now on is not covered by this scan
+                        var startedAt = DateTime.UtcNow;
+                        scanStartedAt[root] = startedAt;
                         $"drive {root} scan started (covering {requested.Total} requests: {requestSummary})".Debug();
                         await Log($"Drive {root} scan started: requests={requested.Total}; reasons={requestSummary}");
                         var key = FsRoots.KeyOf(root);
@@ -3247,9 +3342,24 @@ namespace search.Models
                                 liveMutationWatermark = files.BeginSnapshot(root);
                                 frnMutationWatermark =
                                     FSChangeProcessor.CaptureFrnMutationVersion(root);
-                                var sourceTask = Task.Run(() => DriveEntries(drive, scanToken));
+                                //A canceled walk (drive deselected, app closing) ends inside the
+                                //app's own code: thrown out of the Task.Run delegate, it stopped the
+                                //debugger as "not handled in user code" on every canceled scan. The
+                                //check after the wait turns it back into the cancellation.
+                                var sourceTask = Task.Run(() =>
+                                {
+                                    try { return DriveEntries(drive, scanToken, background); }
+                                    catch (OperationCanceledException) when (scanToken.IsCancellationRequested)
+                                    {
+                                        return default;
+                                    }
+                                });
                                 DriveEntryResult source;
-                                try { source = await sourceTask.WaitAsync(scanToken); }
+                                try
+                                {
+                                    source = await sourceTask.WaitAsync(scanToken);
+                                    scanToken.ThrowIfCancellationRequested(); //Never publish a canceled walk
+                                }
                                 catch (OperationCanceledException)
                                 {
                                     ObserveAbandoned(sourceTask);
@@ -3281,6 +3391,8 @@ namespace search.Models
                                 publishMs = phase.ElapsedMilliseconds;
                                 timingNodes = prepared.Count;
                                 ReportDriveState(root, $"loaded {prepared.Count} entries via {origin}");
+                                scannedAt[root] = startedAt;
+                                UpdateUnwatchedStatus();
                                 streamed = 0; //Deducted from the loading counter at the publish
                             }
                             else
@@ -3293,6 +3405,7 @@ namespace search.Models
                                     origins.TryRemove(key, out _);
                                     drivePublished = PublishDrive(root, prepared); //Explicitly disabled => prune stale entries
                                     ReportDriveState(root, skip);
+                                    if (scannedAt.TryRemove(root, out _)) UpdateUnwatchedStatus();
                                 }
                             }
                         }
@@ -3317,6 +3430,7 @@ namespace search.Models
                         {
                             Interlocked.Add(ref loadingNodes, -streamed); //Not published => not counted by files
                             files.EndSnapshot(root); //No-op after a publication; releases a skipped/failed scan
+                            scanStartedAt.TryRemove(root, out _);
                         }
 
                         //Update filtered files
@@ -3592,6 +3706,7 @@ namespace search.Models
         {
             Task ticker;
             Stopwatch watch;
+            bool compact;
             lock (loadStatusLock)
             {
                 if (--scanningDrives != 0) return;
@@ -3599,6 +3714,8 @@ namespace search.Models
                 ticker = loadProgressTask;
                 watch = loadWatch;
                 Loading = false;
+                compact = compactAfterBurst;
+                compactAfterBurst = false;
             }
             await ticker;
             //The scan's last Update may have been covered by an already queued refresh =>
@@ -3607,8 +3724,13 @@ namespace search.Models
             LoadStatus = search.L.Format("StatusLoadedDrives", files.Count, watch.Elapsed.TotalSeconds);
             LoadStatusTooltip = OriginsInfo(origins).Trim();
             LoadStatus.Debug();
-            // Clean freed memory
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            // Clean freed memory. The compacting collection stops the whole process for about a
+            // second with a few million entries - a background refresh (the user has just
+            // switched to the window) frees the replaced index with a background collection
+            // instead; left to the GC's own pace, each refresh added about 1.5 GB until the
+            // process held 4.7 GB instead of 1.8 GB.
+            if (compact) GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            else GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false, compacting: false);
             if (health?.SuspendAutomaticGridUpdates == true) refreshPending = true;
             //dataRefreshPublished already emitted the collection Reset (or proved the
             //published identities unchanged). A second full Items.Refresh here only repeats
@@ -3631,7 +3753,8 @@ namespace search.Models
         /// <returns></returns>
         readonly record struct DriveEntryResult(IEnumerable<INode> Entries, MftOrigin Origin);
 
-        DriveEntryResult DriveEntries(DriveInfo drive, CancellationToken cancellationToken)
+        /// <param name="background">A rescan nobody waits for - a walk uses fewer threads</param>
+        DriveEntryResult DriveEntries(DriveInfo drive, CancellationToken cancellationToken, bool background = false)
         {
             var origin = MftOrigin.Walk;
             cancellationToken.ThrowIfCancellationRequested();
@@ -3648,7 +3771,7 @@ namespace search.Models
             }
 
             origin = MftOrigin.Walk;
-            return new DriveEntryResult(DirectoryWalker.Walk(drive, cancellationToken), origin);
+            return new DriveEntryResult(DirectoryWalker.Walk(drive, cancellationToken, background), origin);
         }
 
         internal static bool CanUseMftSource(DriveType driveType, string format)
@@ -3775,10 +3898,14 @@ namespace search.Models
         public async IAsyncEnumerable<INode> UnZip(bool call7zip, params INode[] nodes)
         {
             // Start all unzips on the thread pool (Unzip runs synchronously inside WaitForFileCreationIf)
-            var tasks = nodes.Select(z => Task.Run(() =>
+            var tasks = nodes.Select(z => Task.Run(async () =>
              {
                  var dir = (z.FullName + "_").NewOutDir();
-                return WaitForFileCreationIf(dir, () => z.Unzip(dir, call7zip));
+                 var created = await WaitForFileCreationIf(dir, () => z.Unzip(dir, call7zip));
+                 //The output folder alone is indexed by now - the extracted files are left to
+                 //the change source, and Linux has none
+                 Extensions.EchoContent(dir);
+                 return created;
              })).ToArray();
             foreach (var t in tasks)
             {

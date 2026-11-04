@@ -149,4 +149,7 @@ Les ouvrir quand même ?</value></data>
   <data name="Yes" xml:space="preserve"><value>Oui</value></data>
   <data name="No" xml:space="preserve"><value>Non</value></data>
   <data name="NoTerminal" xml:space="preserve"><value>Aucun émulateur de terminal n’a été trouvé. Définissez la variable d’environnement TERMINAL ou installez-en un (par exemple gnome-terminal, konsole ou xterm).</value></data>
+  <data name="StatusUnwatched" xml:space="preserve"><value>Modifications non suivies · index : {0}</value></data>
+  <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Les modifications sur ces lecteurs ne sont pas suivies en direct : {0}. L'index est actualisé quand vous revenez à la fenêtre s'il date de plus de {1} min. F12 l'actualise immédiatement.</value></data>
+  <data name="HintF12Rescan" xml:space="preserve"><value>Réanalyser les lecteurs</value></data>
 </root>

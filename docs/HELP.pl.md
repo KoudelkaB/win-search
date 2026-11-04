@@ -11,6 +11,8 @@ Lista wyników jest przystosowana do obsługi klawiaturą. Gdy ma fokus, panel *
 
 Przy uruchomieniu File Search Manager wczytuje gotowe dyski i śledzi zmiany w systemie plików. Każdy dysk wczytuje się niezależnie, więc wolny dysk sieciowy nigdy nie opóźnia pozostałych.
 
+W Linuksie zmiany nie są śledzone na bieżąco. Indeks jest tak aktualny jak jego ostatnie skanowanie: pasek stanu pokazuje, kiedy się odbyło, dyski są ponownie skanowane w tle po powrocie do okna, jeśli indeks jest starszy niż dwie minuty, a `F12` skanuje je od razu. Zmiany wprowadzone w samym File Search Manager pojawiają się zawsze natychmiast.
+
 Domyślnie indeksowane są tylko dyski NTFS — inne systemy plików (zasoby sieciowe, pamięci FAT) nie mogą korzystać z szybkiego odczytu MFT, a przechodzenie po nich plik po pliku potrafi zdominować całe wczytywanie. Przyciskiem **💽 Dyski…** na pasku stanu wybierzesz dokładnie te dyski, które mają być indeksowane; niezaznaczone dyski nie są ani skanowane, ani śledzone.
 
 W przypadku dysków NTFS najszybsza jest lektura tablicy MFT systemu NTFS. File Search Manager może to zrobić na jeden z tych sposobów:
@@ -192,7 +194,7 @@ Typowe polecenia:
 - `U`: rozpakuj zaznaczone archiwa. Dodanie `NumPad7` wywoła `7z.exe` zamiast wbudowanej obsługi.
 - `Z`: spakuj zaznaczone elementy. Dodanie `NumPad7` wywoła `7z.exe`.
 - `F1`: otwórz ten plik pomocy. Działa w całym oknie.
-- `F12`: odśwież z NTFS. Działa w całym oknie i nie wymaga zaznaczenia; każdy dysk odświeża się niezależnie, więc wolny dysk sieciowy nigdy nie opóźnia pozostałych. `F1` i `F12` pozostają widoczne w panelu **Skróty**, gdy siatka wyników ma fokus.
+- `F12`: odśwież z NTFS (w Linuksie: przeskanuj dyski ponownie). Działa w całym oknie i nie wymaga zaznaczenia; każdy dysk odświeża się niezależnie, więc wolny dysk sieciowy nigdy nie opóźnia pozostałych. `F1` i `F12` pozostają widoczne w panelu **Skróty**, gdy siatka wyników ma fokus.
 - `Right Shift`: przenieś fokus z powrotem do pola filtru.
 
 Polecenia pod `Ctrl`:
