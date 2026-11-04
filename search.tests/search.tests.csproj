@@ -9,6 +9,8 @@
     <!-- xunit v3 (required by Avalonia.Headless.XUnit 12) builds the tests as an executable -->
     <OutputType>Exe</OutputType>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- DirectoryWalkerTests override LinuxDirectoryReader's pointer-based syscall seams -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
