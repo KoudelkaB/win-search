@@ -67,16 +67,29 @@ namespace search.Models
         [DllImport("libc", SetLastError = true)] static extern int getgroups(int size, uint* list);
 
         static readonly Lazy<TimedCheck> support = new(() => new TimedCheck(Probe, TimeSpan.FromSeconds(2), "getdents64 + statx probe"));
-        static uint euid, egid;
-        static uint[] groups = Array.Empty<uint>();
+        /// <summary>This process's user and groups - whose ReadOnly attribute the nodes carry</summary>
+        internal static UserIdentity ProcessIdentity { get; private set; } = new(0, 0, Array.Empty<uint>());
         static int openFlags, NoFollowFlag;
 
+        readonly UserIdentity identity;
+        readonly bool utcTimes;
         readonly byte[] buffer = new byte[BufferSize];
         byte[] names = new byte[16 * 1024];
         int namesLength;
         Entry[] entries = new Entry[256];
         int count;
         char[] chars = new char[256];
+
+        /// <param name="identity">
+        /// The user the ReadOnly attribute is computed for - the file system service lists
+        /// for its client; null = this process
+        /// </param>
+        /// <param name="utcTimes">LastChangeTime in UTC (the service) instead of local time</param>
+        public LinuxDirectoryReader(UserIdentity identity = null, bool utcTimes = false)
+        {
+            this.identity = identity;
+            this.utcTimes = utcTimes;
+        }
 
         /// <summary>
         /// True on Linux when the C library exports getdents64 and statx (glibc 2.30+) and the
@@ -133,15 +146,15 @@ namespace search.Models
                     return Unsupported("O_NOFOLLOW has no effect");
                 }
 
-                euid = geteuid();
-                egid = getegid();
+                var groups = Array.Empty<uint>();
                 var n = getgroups(0, null);
                 if (n > 0)
                 {
                     var list = new uint[n];
                     fixed (uint* p = list) n = getgroups(n, p);
-                    groups = n > 0 ? list.AsSpan(0, n).ToArray() : Array.Empty<uint>();
+                    if (n > 0) groups = list.AsSpan(0, n).ToArray();
                 }
+                ProcessIdentity = new UserIdentity(geteuid(), getegid(), groups);
                 return true;
             }
             catch (Exception e) //EntryPointNotFoundException (glibc before 2.30, musl), DllNotFoundException...
@@ -243,33 +256,75 @@ namespace search.Models
                 return null;
             }
 
-            var type = sx.Mode & S_IFMT;
-            var isLink = type == S_IFLNK;
-            var isDirectory = type == S_IFDIR;
             //.NET reports a link by its own size, time and owner, but with the target's
             //directory flag and permissions (FileStatus.RefreshCaches)
-            var mode = sx.Mode;
-            if (isLink)
+            var targetMode = -1;
+            if ((sx.Mode & S_IFMT) == S_IFLNK)
             {
                 Statx target;
                 if (StatRetrying(fd, name, AT_NO_AUTOMOUNT, STATX_TYPE | STATX_MODE, &target) == 0)
-                {
-                    isDirectory = (target.Mode & S_IFMT) == S_IFDIR;
-                    mode = (ushort)(S_IFLNK | (target.Mode & 0xFFF));
-                }
+                    targetMode = target.Mode;
             }
 
             var hidden = entry.NameLength > 0 && names[entry.NameOffset] == (byte)'.';
-            var attributes = Attributes(mode, sx.Uid, sx.Gid, isLink, isDirectory, hidden);
             return FileNode.Create(Combine(prefix, entry),
-                new NodeMetadataSnapshot(attributes, isDirectory ? 0 : sx.Size, LocalTime(sx.MTimeSec, sx.MTimeNsec)));
+                Describe(in sx, targetMode, hidden).ToSnapshot(identity ?? ProcessIdentity, utcTimes));
+        }
+
+        /// <summary>A stat-ed entry as .NET sees it on Unix - before it is described for a user</summary>
+        /// <param name="targetMode">A link's target mode; -1 for no link or a broken one</param>
+        static RawStat Describe(in Statx sx, int targetMode, bool hidden)
+        {
+            var isLink = (sx.Mode & S_IFMT) == S_IFLNK;
+            var isDirectory = (sx.Mode & S_IFMT) == S_IFDIR;
+            int mode = sx.Mode;
+            if (isLink && targetMode >= 0)
+            {
+                isDirectory = (targetMode & S_IFMT) == S_IFDIR;
+                mode = S_IFLNK | (targetMode & 0xFFF);
+            }
+            return new RawStat(mode, sx.Uid, sx.Gid, isLink, isDirectory, hidden, sx.Size, sx.MTimeSec, sx.MTimeNsec);
+        }
+
+        /// <summary>
+        /// One path stat-ed like a listed entry (lstat, the link target's type): null when it
+        /// cannot be - exists then tells a vanished path (or folder) from an unreadable one.
+        /// The file system service reports each change with it.
+        /// </summary>
+        internal static RawStat? StatPath(string path, out bool exists)
+        {
+            exists = false;
+            var bytes = Encoding.UTF8.GetBytes(path + "\0");
+            Statx sx;
+            fixed (byte* p = bytes)
+            {
+                int result;
+                while ((result = statx(AT_FDCWD, p, AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT, StatMask, &sx)) != 0
+                    && Marshal.GetLastPInvokeError() == EINTR) { }
+                if (result != 0)
+                {
+                    exists = Marshal.GetLastPInvokeError() is not (ENOENT or ENOTDIR);
+                    return null;
+                }
+                exists = true;
+                var targetMode = -1;
+                if ((sx.Mode & S_IFMT) == S_IFLNK)
+                {
+                    Statx target;
+                    if (statx(AT_FDCWD, p, AT_NO_AUTOMOUNT, STATX_TYPE | STATX_MODE, &target) == 0)
+                        targetMode = target.Mode;
+                }
+                var name = Path.GetFileName(path.TrimEnd('/'));
+                return Describe(in sx, targetMode, name.StartsWith('.'));
+            }
         }
 
         /// <summary>FileStatus.GetAttributes of .NET on Unix</summary>
-        internal static FileAttributes Attributes(int mode, uint uid, uint gid, bool isLink, bool isDirectory, bool hidden)
+        internal static FileAttributes Attributes(int mode, uint uid, uint gid, bool isLink, bool isDirectory, bool hidden,
+            UserIdentity user = null)
         {
             FileAttributes attributes = default;
-            if (IsReadOnly(mode, uid, gid)) attributes |= FileAttributes.ReadOnly;
+            if (IsReadOnly(mode, uid, gid, user)) attributes |= FileAttributes.ReadOnly;
             if (isLink) attributes |= FileAttributes.ReparsePoint;
             if (isDirectory) attributes |= FileAttributes.Directory;
             if (hidden) attributes |= FileAttributes.Hidden;
@@ -278,28 +333,33 @@ namespace search.Models
 
         /// <summary>
         /// FileStatus.IsModeReadOnlyCore of .NET on Unix: readable but not writable by the
-        /// class (owner, group, other) the effective user falls in
+        /// class (owner, group, other) the user falls in
         /// </summary>
-        internal static bool IsReadOnly(int mode, uint uid, uint gid)
+        /// <param name="user">null = this process</param>
+        internal static bool IsReadOnly(int mode, uint uid, uint gid, UserIdentity user = null)
         {
-            var user = (mode & 0x100) != 0 && (mode & 0x80) == 0;
+            user ??= ProcessIdentity;
+            var owner = (mode & 0x100) != 0 && (mode & 0x80) == 0;
             var group = (mode & 0x20) != 0 && (mode & 0x10) == 0;
             var other = (mode & 0x4) != 0 && (mode & 0x2) == 0;
-            if (user == group && group == other) return user;
-            if (uid == euid) return user;
-            if (group == user) return group;
-            return IsMemberOfGroup(gid) ? group : other;
+            if (owner == group && group == other) return owner;
+            if (uid == user.Uid) return owner;
+            if (group == owner) return group;
+            return user.IsMember(gid) ? group : other;
         }
-
-        static bool IsMemberOfGroup(uint gid) => gid == egid || Array.IndexOf(groups, gid) >= 0;
 
         /// <summary>FileSystemInfo.LastWriteTime: the Unix time converted to local time</summary>
         internal static DateTime LocalTime(long seconds, uint nanoseconds)
-        {
-            //Outside DateTimeOffset's range FromUnixTimeSeconds throws and FileNode keeps the default
-            if (seconds < -62_135_596_800L || seconds > 253_402_300_799L) return default;
-            return DateTimeOffset.FromUnixTimeSeconds(seconds).AddTicks(nanoseconds / 100).UtcDateTime.ToLocalTime();
-        }
+            => InRange(seconds) ? UtcTime(seconds, nanoseconds).ToLocalTime() : default;
+
+        /// <summary>The Unix time as UTC; default outside DateTime's range</summary>
+        internal static DateTime UtcTime(long seconds, uint nanoseconds)
+            => InRange(seconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(seconds).AddTicks(nanoseconds / 100).UtcDateTime
+                : default;
+
+        //Outside DateTimeOffset's range FromUnixTimeSeconds throws and FileNode keeps the default
+        static bool InRange(long seconds) => seconds >= -62_135_596_800L && seconds <= 253_402_300_799L;
 
         /// <summary>prefix + the entry's name, decoded from UTF-8 like the managed enumeration does</summary>
         string Combine(string prefix, in Entry entry)
@@ -358,6 +418,26 @@ namespace search.Models
                     Encoding.UTF8.GetString(names, entries[i].NameOffset, entries[i].NameLength));
             return result;
         }
+    }
+
+    /// <summary>A Unix user as the file system sees it: user, primary group, supplementary groups</summary>
+    internal sealed record UserIdentity(uint Uid, uint Gid, uint[] Groups)
+    {
+        public bool IsMember(uint gid) => gid == Gid || Array.IndexOf(Groups, gid) >= 0;
+    }
+
+    /// <summary>
+    /// A stat-ed entry before it becomes node metadata: a link already carries its target's
+    /// permission bits and directory flag, as .NET reports links
+    /// </summary>
+    internal readonly record struct RawStat(int Mode, uint Uid, uint Gid, bool IsLink, bool IsDirectory,
+        bool Hidden, ulong Size, long Seconds, uint Nanoseconds)
+    {
+        /// <summary>The metadata as this user's own process would read it (ReadOnly is per user)</summary>
+        public NodeMetadataSnapshot ToSnapshot(UserIdentity user, bool utc)
+            => new(LinuxDirectoryReader.Attributes(Mode, Uid, Gid, IsLink, IsDirectory, Hidden, user),
+                IsDirectory ? 0 : Size,
+                utc ? LinuxDirectoryReader.UtcTime(Seconds, Nanoseconds) : LinuxDirectoryReader.LocalTime(Seconds, Nanoseconds));
     }
 
     /// <summary>

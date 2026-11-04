@@ -120,21 +120,33 @@ namespace search.Models
             return "/";
         }
 
-        static Snapshot Parse(string mountInfo)
+        /// <summary>One line of /proc/self/mountinfo</summary>
+        /// <param name="Device">major:minor - per subvolume on btrfs</param>
+        /// <param name="FsRoot">The folder of the file system this mount shows ("/" or a btrfs subvolume's path)</param>
+        /// <param name="Source">The device ("/dev/nvme0n1p3") or share</param>
+        internal sealed record MountEntry(string MountPoint, string Device, string FsRoot, string Format, string Source);
+
+        internal static List<MountEntry> ParseMountEntries(string mountInfo)
         {
-            var result = new Snapshot();
-            var roots = new List<FsRoot>();
-            var seenFileSystems = new HashSet<string>(StringComparer.Ordinal);
-            var entries = new List<(string MountPoint, string Device, string FsRoot, string Format, string Source)>();
+            var entries = new List<MountEntry>();
             foreach (var line in mountInfo.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 var fields = line.Split(' ');
                 var dash = Array.IndexOf(fields, "-");
                 if (fields.Length < 7 || dash < 6 || dash + 2 >= fields.Length) continue;
-                var mountPoint = Unescape(fields[4]);
-                entries.Add((mountPoint, fields[2], Unescape(fields[3]), fields[dash + 1], Unescape(fields[dash + 2])));
-                result.MountPoints.Add(mountPoint);
+                entries.Add(new MountEntry(Unescape(fields[4]), fields[2], Unescape(fields[3]), fields[dash + 1],
+                    Unescape(fields[dash + 2])));
             }
+            return entries;
+        }
+
+        static Snapshot Parse(string mountInfo)
+        {
+            var result = new Snapshot();
+            var roots = new List<FsRoot>();
+            var seenFileSystems = new HashSet<string>(StringComparer.Ordinal);
+            var entries = ParseMountEntries(mountInfo);
+            foreach (var e in entries) result.MountPoints.Add(e.MountPoint);
             //Shorter mount points first: of two mounts showing the same file system the
             //outer one stays a root and the inner duplicate (a bind mount) is skipped
             foreach (var e in entries.OrderBy(e => e.MountPoint.Length).ThenBy(e => e.MountPoint, StringComparer.Ordinal))

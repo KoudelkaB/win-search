@@ -152,4 +152,10 @@ Otworzyć je mimo to?</value></data>
   <data name="StatusUnwatched" xml:space="preserve"><value>Zmiany nie są śledzone · indeks z {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Zmiany na tych dyskach nie są śledzone na bieżąco: {0}. Indeks odświeża się po powrocie do okna, jeśli jest starszy niż {1} min. F12 odświeża go od razu.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Przeskanuj dyski ponownie</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Pokazuj też pliki, do których nie mam dostępu</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>Usługa systemu plików działa: zmiany są śledzone na bieżąco i widoczne są wszystkie pliki.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>Usługa systemu plików działa: zmiany są śledzone na bieżąco, widoczne są pliki, do których masz dostęp.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Wszystkie pliki widzą tylko administratorzy (grupa wheel lub sudo).</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>Usługa systemu plików nie jest zainstalowana: zmiany nie są śledzone na bieżąco i widoczne są tylko pliki, do których masz dostęp. Zainstaluj ją skryptem installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>Usługa systemu plików jest zainstalowana, ale nie działa (systemctl status file-search-manager).</value></data>
 </root>

@@ -152,4 +152,10 @@ Les ouvrir quand même ?</value></data>
   <data name="StatusUnwatched" xml:space="preserve"><value>Modifications non suivies · index : {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Les modifications sur ces lecteurs ne sont pas suivies en direct : {0}. L'index est actualisé quand vous revenez à la fenêtre s'il date de plus de {1} min. F12 l'actualise immédiatement.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Réanalyser les lecteurs</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Afficher aussi les fichiers auxquels je n'ai pas accès</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>Le service du système de fichiers est actif : les modifications sont suivies en direct et tous les fichiers sont affichés.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>Le service du système de fichiers est actif : les modifications sont suivies en direct ; les fichiers auxquels vous avez accès sont affichés.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Seuls les administrateurs (groupe wheel ou sudo) peuvent voir tous les fichiers.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>Le service du système de fichiers n'est pas installé : les modifications ne sont pas suivies en direct et seuls les fichiers auxquels vous avez accès sont affichés. Installez-le avec installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>Le service du système de fichiers est installé mais ne fonctionne pas (systemctl status file-search-manager).</value></data>
 </root>

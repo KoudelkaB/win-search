@@ -11,7 +11,7 @@ Seznam výsledků je navržen pro ovládání klávesnicí. Když má seznam fok
 
 Při spuštění File Search Manager načte připravené disky a sleduje změny v systému souborů. Každý disk se načítá nezávisle, takže pomalý síťový disk nikdy nezdržuje ostatní.
 
-Na Linuxu se změny živě nesledují. Index je tak čerstvý jako jeho poslední načtení: stavový řádek ukazuje, kdy proběhlo, disky se na pozadí načtou znovu, když se vrátíte do okna a index je starší než dvě minuty, a `F12` je načte hned. Změny provedené přímo ve File Search Manageru se projeví vždy okamžitě.
+Na Linuxu může File Search Manager využít volitelnou službu souborového systému (nainstaluje ji `sudo installer/linux/install-service.sh`, odebere `uninstall-service.sh`). S ní se změny sledují živě a správci (členové skupiny wheel nebo sudo) vidí i soubory, které sami otevřít nemohou – vypnout to jde v okně **💽 Disky…** a takový soubor otevře jako správce klávesa `A`. Bez služby se změny živě nesledují: stavový řádek ukazuje, z kdy je index, disky se na pozadí načtou znovu, když se vrátíte do okna a index je starší než dvě minuty, a `F12` je načte hned. Změny provedené přímo ve File Search Manageru se projeví vždy okamžitě.
 
 Ve výchozím stavu se indexují jen disky NTFS – ostatní systémy souborů (síťová připojení, FAT flash disky) nemohou využít rychlé čtení MFT a jejich procházení soubor po souboru může ovládnout celé načítání. Tlačítkem **💽 Disky…** ve stavovém řádku zvolíte přesně to, které disky se indexují; neoznačené disky se ani neprocházejí, ani nesledují.
 

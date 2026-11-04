@@ -1,0 +1,36 @@
+# File Search Manager file system service: live changes (fanotify) and the every-file view
+# for administrators on Linux. Installed by install-service.sh, which replaces @APPDIR@
+# with the root-owned copy of the app it runs.
+[Unit]
+Description=File Search Manager file system service
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=@APPDIR@/FileSearchManager --service
+Restart=on-failure
+RestartSec=5
+# Its own mount namespace: the btrfs top levels it mounts to watch subvolumes stay its own.
+# Nothing that hides part of the disk from it (PrivateTmp, ProtectSystem, ProtectHome,
+# ProtectKernelModules - /usr/lib/modules, InaccessiblePaths): it walks and stats what the
+# users see, so what it cannot see would be missing from their index.
+PrivateMounts=yes
+RuntimeDirectory=file-search-manager
+RuntimeDirectoryMode=0755
+# Only what it needs: fanotify marks and those mounts (SYS_ADMIN), reading every folder and
+# resolving the reported file handles (DAC_READ_SEARCH), access checks as the client user
+# (SETUID, SETGID). Without DAC_OVERRIDE it cannot write anything it does not own.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_EnableDiagnostics=0
+
+[Install]
+WantedBy=multi-user.target

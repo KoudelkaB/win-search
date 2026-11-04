@@ -48,6 +48,13 @@ namespace search
             else
             {
                 IsProcessElevated = Environment.UserName == "root";
+                if (args.Length == 1 && args[0] == "--service")
+                {
+                    // The optional root service behind live changes and the every-file view
+                    // (systemd unit from installer/linux/install-service.sh) - no UI at all
+                    Role = "Service";
+                    return Models.LinuxService.LinuxService.Run();
+                }
             }
 
             var devMode = args.Length == 1 && args[0].Equals("UI", StringComparison.OrdinalIgnoreCase);

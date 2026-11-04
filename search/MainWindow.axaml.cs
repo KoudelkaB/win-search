@@ -749,9 +749,17 @@ namespace search
             var dialog = new DrivesWindow();
             //Refresh only roots whose effective selection changed. Refreshing every drive
             //made a quick S: toggle start two unrelated 25-second C: MFT scans.
-            if (await dialog.ShowDialog<bool>(this))
-                foreach (var root in dialog.ChangedRoots)
-                    FSChangeProcessor.RefreshDrive(root, DriveScanReason.DriveSelection);
+            if (!await dialog.ShowDialog<bool>(this)) return;
+            if (dialog.ShowAllFilesChanged)
+            {
+                //Every file or only the user's own: a new service connection in the other
+                //mode, then every drive scanned and watched again
+                Models.LinuxService.LinuxServiceClient.Reset();
+                FSChangeProcessor.RefreshFromNFT();
+                return;
+            }
+            foreach (var root in dialog.ChangedRoots)
+                FSChangeProcessor.RefreshDrive(root, DriveScanReason.DriveSelection);
         }
     }
 }

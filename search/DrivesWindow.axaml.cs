@@ -44,13 +44,50 @@ namespace search
 
         readonly ObservableCollection<DriveChoice> choices = new();
         public IReadOnlyList<string> ChangedRoots { get; private set; } = Array.Empty<string>();
+        /// <summary>The every-file choice changed: every drive is scanned and watched anew</summary>
+        public bool ShowAllFilesChanged { get; private set; }
 
         public DrivesWindow()
         {
             InitializeComponent();
             drivesList.ItemsSource = choices;
             LoadDrives();
+            if (OperatingSystem.IsLinux()) LoadServiceState();
         }
+
+        /// <summary>
+        /// The file system service's state - asked on its own thread: connecting to a service
+        /// that hangs must not freeze the dialog
+        /// </summary>
+        void LoadServiceState()
+        {
+            servicePanel.IsVisible = true;
+            showAllFiles.IsChecked = LinuxServiceSettingsStore.ShowAllFiles;
+            showAllFiles.IsEnabled = false;
+            new Thread(() =>
+            {
+                var status = Models.LinuxService.LinuxServiceClient.Status;
+                var admin = status is Models.LinuxService.ServiceStatus.AllFiles or Models.LinuxService.ServiceStatus.OwnFiles
+                    && Models.LinuxService.LinuxServiceClient.IsAdmin;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    serviceState.Text = ServiceStateText(status, admin);
+                    //Not installed or not running: the choice waits for the service.
+                    //Running: only an administrator may see every file.
+                    showAllFiles.IsEnabled = admin || status is Models.LinuxService.ServiceStatus.NotInstalled
+                        or Models.LinuxService.ServiceStatus.NotRunning;
+                });
+            })
+            { IsBackground = true }.Start();
+        }
+
+        internal static string ServiceStateText(Models.LinuxService.ServiceStatus status, bool admin) => status switch
+        {
+            Models.LinuxService.ServiceStatus.NotInstalled => L.Text("ServiceNotInstalled"),
+            Models.LinuxService.ServiceStatus.NotRunning => L.Text("ServiceNotRunning"),
+            Models.LinuxService.ServiceStatus.AllFiles => L.Text("ServiceAllFiles"),
+            _ => L.Text("ServiceOwnFiles") + (admin ? "" : " " + L.Text("ServiceNotAdmin"))
+        };
 
         void LoadDrives()
         {
@@ -122,6 +159,12 @@ namespace search
                 choices.Where(c => c.Known || c.Probed || c.IsChecked)
                     .Select(c => (c.Key, c.Root, c.IsChecked)));
             DriveSelectionStore.Save(selection, ChangedRoots);
+            if (servicePanel.IsVisible && showAllFiles.IsChecked is { } showAll
+                && showAll != LinuxServiceSettingsStore.ShowAllFiles)
+            {
+                LinuxServiceSettingsStore.Save(showAll);
+                ShowAllFilesChanged = true;
+            }
             Close(true);
         }
 

@@ -152,4 +152,10 @@
   <data name="StatusUnwatched" xml:space="preserve"><value>変更は監視されていません · インデックス: {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>これらのドライブの変更はリアルタイムで監視されていません: {0}。ウィンドウに戻ったときにインデックスが {1} 分より古ければ更新されます。F12 ですぐに更新できます。</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>ドライブを再スキャン</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>アクセス権のないファイルも表示する</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>ファイルシステムサービスが実行中です。変更はリアルタイムで監視され、すべてのファイルが表示されます。</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>ファイルシステムサービスが実行中です。変更はリアルタイムで監視され、アクセスできるファイルが表示されます。</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>すべてのファイルを表示できるのは管理者 (wheel または sudo グループ) だけです。</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>ファイルシステムサービスがインストールされていません。変更はリアルタイムで監視されず、アクセスできるファイルだけが表示されます。installer/linux/install-service.sh でインストールできます。</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>ファイルシステムサービスはインストールされていますが、実行されていません (systemctl status file-search-manager)。</value></data>
 </root>

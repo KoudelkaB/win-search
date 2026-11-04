@@ -306,4 +306,10 @@ Open them anyway?</value></data>
   <data name="StatusUnwatched" xml:space="preserve"><value>Changes not tracked · indexed {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Changes on these drives are not tracked live: {0}. The index is refreshed when you come back to the window and it is more than {1} min old. F12 refreshes it right away.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Rescan drives</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Show files I cannot access too</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>The file system service is running: changes are tracked live and every file is shown.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>The file system service is running: changes are tracked live; the files you can access are shown.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Only administrators (the wheel or sudo group) can see every file.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>The file system service is not installed: changes are not tracked live and only the files you can access are shown. Install it with installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>The file system service is installed but not running (systemctl status file-search-manager).</value></data>
 </root>

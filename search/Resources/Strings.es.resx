@@ -152,4 +152,10 @@ Tamaño total: {1}
   <data name="StatusUnwatched" xml:space="preserve"><value>Cambios no supervisados · índice: {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Los cambios en estas unidades no se supervisan en tiempo real: {0}. El índice se actualiza al volver a la ventana si tiene más de {1} min. F12 lo actualiza al instante.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Volver a analizar las unidades</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Mostrar también los archivos a los que no tengo acceso</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>El servicio del sistema de archivos está en ejecución: los cambios se supervisan en tiempo real y se muestran todos los archivos.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>El servicio del sistema de archivos está en ejecución: los cambios se supervisan en tiempo real y se muestran los archivos a los que tiene acceso.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Solo los administradores (grupo wheel o sudo) pueden ver todos los archivos.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>El servicio del sistema de archivos no está instalado: los cambios no se supervisan en tiempo real y solo se muestran los archivos a los que tiene acceso. Instálelo con installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>El servicio del sistema de archivos está instalado, pero no se está ejecutando (systemctl status file-search-manager).</value></data>
 </root>

@@ -152,4 +152,10 @@ Abrir mesmo assim?</value></data>
   <data name="StatusUnwatched" xml:space="preserve"><value>Alterações não monitoradas · índice: {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>As alterações nestas unidades não são monitoradas em tempo real: {0}. O índice é atualizado quando você volta à janela e ele tem mais de {1} min. F12 o atualiza na hora.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Varrer as unidades novamente</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Mostrar também os arquivos aos quais não tenho acesso</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>O serviço do sistema de arquivos está em execução: as alterações são monitoradas em tempo real e todos os arquivos são exibidos.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>O serviço do sistema de arquivos está em execução: as alterações são monitoradas em tempo real; são exibidos os arquivos aos quais você tem acesso.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Somente administradores (grupo wheel ou sudo) podem ver todos os arquivos.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>O serviço do sistema de arquivos não está instalado: as alterações não são monitoradas em tempo real e só são exibidos os arquivos aos quais você tem acesso. Instale-o com installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>O serviço do sistema de arquivos está instalado, mas não está em execução (systemctl status file-search-manager).</value></data>
 </root>

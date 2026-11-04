@@ -6,6 +6,19 @@ namespace search.Models
     internal readonly record struct HardLinkParentDelta(
         string ParentPath, long SizeDelta, long CountDelta);
 
+    /// <summary>What the Linux file system service says about a folder's content</summary>
+    internal enum FolderContent : byte
+    {
+        /// <summary>Nothing</summary>
+        Unchanged,
+        /// <summary>Moved in from where no change reached the user: no event will name it</summary>
+        Arrived,
+        /// <summary>The user can list the folder now</summary>
+        Listable,
+        /// <summary>The user cannot list the folder any more</summary>
+        Unlistable
+    }
+
     /// <summary>
     /// One file-system change flowing through the processing pipeline. Carrier-agnostic:
     /// produced from FileSystemWatcher events, from USN journal records and from the app's
@@ -39,6 +52,10 @@ namespace search.Models
         internal virtual IReadOnlyList<HardLinkParentDelta> HardLinkParentDeltas => null;
         internal virtual IReadOnlyList<string> OldLinkPaths => null;
         internal virtual IReadOnlyList<string> CurrentLinkPaths => null;
+        /// <summary>The Linux file system service's state of an existing item - applied as is</summary>
+        internal virtual bool IsServiceState => false;
+        /// <summary>What the service says about a folder's content, applied with its state</summary>
+        internal virtual FolderContent Content => FolderContent.Unchanged;
         internal bool IsMetadataResult => MetadataSnapshot.HasValue;
         internal bool IsHardLinkUpdate => HardLinkParentDeltas != null;
 
@@ -61,6 +78,15 @@ namespace search.Models
             NodeMetadataSnapshot snapshot, IReadOnlyList<HardLinkParentDelta> parentDeltas,
             IReadOnlyList<string> oldPaths = null, IReadOnlyList<string> currentPaths = null)
             => new HardLinkFsEvent(path, frn, expectedNode, snapshot, parentDeltas, oldPaths, currentPaths);
+
+        /// <summary>
+        /// An item's state from the Linux file system service: it exists with this metadata -
+        /// indexed when new, updated when known, without reading the disk (the user may not be
+        /// able to)
+        /// </summary>
+        internal static FsEvent ServiceState(string path, NodeMetadataSnapshot snapshot,
+            FolderContent content = FolderContent.Unchanged)
+            => new ServiceStateFsEvent(path, snapshot, content);
 
         public static FsEvent From(FileSystemEventArgs e) => e is RenamedEventArgs r
             ? new FsEvent(e.ChangeType, e.FullPath, r.OldFullPath)
@@ -92,6 +118,23 @@ namespace search.Models
             internal override NodeMetadataSnapshot? MetadataSnapshot => snapshot;
             internal override INode MetadataNode => node;
             internal override long MetadataReadMs => readMs;
+        }
+
+        sealed class ServiceStateFsEvent : FsEvent
+        {
+            readonly NodeMetadataSnapshot snapshot;
+            readonly FolderContent content;
+
+            public ServiceStateFsEvent(string path, NodeMetadataSnapshot snapshot, FolderContent content)
+                : base(WatcherChangeTypes.Changed, path)
+            {
+                this.snapshot = snapshot;
+                this.content = content;
+            }
+
+            internal override NodeMetadataSnapshot? MetadataSnapshot => snapshot;
+            internal override bool IsServiceState => true;
+            internal override FolderContent Content => content;
         }
 
         /// <summary>

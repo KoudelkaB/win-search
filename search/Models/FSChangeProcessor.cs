@@ -33,17 +33,23 @@ namespace search.Models
         /// A drive without live change tracking (Linux) was scanned longer ago than the
         /// refresh age when the user came back to the window
         /// </summary>
-        UnwatchedRefresh
+        UnwatchedRefresh,
+        /// <summary>The Linux file system service went away - the drive is no longer watched</summary>
+        ServiceLost,
+        /// <summary>The Linux file system service is back (or newly installed) - watch the drive again</summary>
+        ServiceAvailable
     }
 
     /// <summary>
     /// Watches every drive for file-system changes and feeds them, serialized per drive,
     /// into the model's change handler. NTFS drives are watched through the USN change
     /// journal (kernel-persisted, never drops a change); everything else on Windows falls
-    /// back to FileSystemWatcher. Linux roots are not watched at all: inotify needs one
-    /// watch per directory - hundreds of thousands of them, kernel memory and a full walk
-    /// to set them up, out of a per-user limit shared with every other program. Their
-    /// index is refreshed by a rescan instead (SearchModel.RefreshUnwatchedDrives).
+    /// back to FileSystemWatcher. Linux roots are watched by the optional file system service
+    /// (fanotify, one mark per file system - LinuxService) when it runs, and not at all
+    /// otherwise: inotify needs one watch per directory - hundreds of thousands of them,
+    /// kernel memory and a full walk to set them up, out of a per-user limit shared with
+    /// every other program. Unwatched roots are refreshed by a rescan instead
+    /// (SearchModel.RefreshUnwatchedDrives).
     /// The app's own operations report themselves through
     /// <see cref="Echo"/> - a priority lane, so the user sees their own action instantly
     /// even while a change storm is queued.
@@ -258,6 +264,14 @@ namespace search.Models
                     //Keeping both would propagate the canonical size change twice.
                     if (pending.Remove(e.FullPath))
                         order.RemoveAll(path => string.Equals(path, e.FullPath, PathText.Comparison));
+                    Flush();
+                    result.Add(e);
+                    continue;
+                }
+                if (e?.IsServiceState == true && e.Content != FolderContent.Unchanged)
+                {
+                    //What the Linux service says about a folder's content holds for its own
+                    //moment: a later state of the path must not replace it, nor it an earlier
                     Flush();
                     result.Add(e);
                     continue;
@@ -563,15 +577,20 @@ namespace search.Models
                 //watch); anything else (FAT, exFAT, ReFS, network mappings) => FileSystemWatcher.
                 //A journal that later proves unreadable on this system swaps itself for a
                 //watcher too - USN is an upgrade where available, never a requirement.
-                //Linux: not watched (see the class summary) - FileSystemWatcher is inotify
-                //there too, one watch per directory without any budget.
+                //Linux: the optional file system service (fanotify) when it runs, else not
+                //watched at all (see the class summary) - FileSystemWatcher is inotify there
+                //too, one watch per directory without any budget.
                 var source = OperatingSystem.IsWindows()
                     ? UsnDriveWatcher.TryStart(path,
                         e => queue.Enqueue(e),
                         rescanReason => { try { Started(path, rescanReason); } catch { } },
                         w => FallBackToWatcher(path, w, queue))
                         ?? CreateWatcher(path, queue)
-                    : new Unwatched();
+                    : LinuxService.LinuxServiceClient.TryWatch(path,
+                        e => queue.Enqueue(e),
+                        rescanReason => { try { Started(path, rescanReason); } catch { } },
+                        () => RefreshDrive(path, DriveScanReason.ServiceLost))
+                        ?? new Unwatched();
                 if (source == null) return;
 
                 while (!sources.TryAdd(path, source)) path.DisposeSource(); // Remove the old in case of race condition
@@ -663,5 +682,9 @@ namespace search.Models
         /// </summary>
         internal static bool IsUnwatched(string root)
             => root != null && sources.TryGetValue(root, out var source) && source is Unwatched;
+
+        /// <summary>Every indexed root nothing watches</summary>
+        internal static string[] UnwatchedRoots()
+            => sources.Where(pair => pair.Value is Unwatched).Select(pair => pair.Key).ToArray();
     }
 }

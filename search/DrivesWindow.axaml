@@ -25,6 +25,14 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
+        <!-- Linux: the optional file system service (live changes, every file for administrators) -->
+        <StackPanel x:Name="servicePanel" IsVisible="False" Margin="0,12,0,0" MaxWidth="460">
+            <CheckBox x:Name="showAllFiles" VerticalContentAlignment="Center">
+                <TextBlock TextWrapping="Wrap" Text="{local:Loc Key=ShowAllFiles}"/>
+            </CheckBox>
+            <TextBlock x:Name="serviceState" TextWrapping="Wrap" FontSize="11" Opacity="0.75" Margin="0,4,0,0"
+                       Text="{local:Loc Key=Checking}"/>
+        </StackPanel>
         <WrapPanel HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="{local:Loc Key=OK}" MinWidth="80" Margin="3" IsDefault="True" Classes="accent" Click="Ok_Click"/>
             <Button Content="{local:Loc Key=Cancel}" MinWidth="70" Margin="3" IsCancel="True" Click="Cancel_Click"/>

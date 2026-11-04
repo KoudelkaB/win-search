@@ -152,4 +152,10 @@ Trotzdem öffnen?</value></data>
   <data name="StatusUnwatched" xml:space="preserve"><value>Änderungen nicht überwacht · Index vom {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Änderungen auf diesen Laufwerken werden nicht live überwacht: {0}. Der Index wird aktualisiert, wenn Sie zum Fenster zurückkehren und er älter als {1} Min. ist. F12 aktualisiert ihn sofort.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Laufwerke neu einlesen</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Auch Dateien anzeigen, auf die ich keinen Zugriff habe</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>Der Dateisystemdienst läuft: Änderungen werden live überwacht und alle Dateien angezeigt.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>Der Dateisystemdienst läuft: Änderungen werden live überwacht, angezeigt werden die Dateien, auf die Sie Zugriff haben.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Alle Dateien sehen nur Administratoren (Gruppe wheel oder sudo).</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>Der Dateisystemdienst ist nicht installiert: Änderungen werden nicht live überwacht und nur Dateien angezeigt, auf die Sie Zugriff haben. Installieren Sie ihn mit installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>Der Dateisystemdienst ist installiert, läuft aber nicht (systemctl status file-search-manager).</value></data>
 </root>

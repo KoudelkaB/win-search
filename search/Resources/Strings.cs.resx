@@ -165,4 +165,10 @@ Přesto je otevřít?</value></data>
   <data name="StatusUnwatched" xml:space="preserve"><value>Změny se nesledují · index z {0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>Změny na těchto discích se živě nesledují: {0}. Index se obnoví, když se vrátíte do okna a je starší než {1} min. F12 ho obnoví hned.</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>Znovu načíst disky</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>Zobrazovat i soubory, ke kterým nemám přístup</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>Služba souborového systému běží: změny se sledují živě a zobrazují se všechny soubory.</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>Služba souborového systému běží: změny se sledují živě, zobrazují se soubory, ke kterým máte přístup.</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>Všechny soubory mohou vidět jen správci (skupina wheel nebo sudo).</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>Služba souborového systému není nainstalovaná: změny se živě nesledují a zobrazují se jen soubory, ke kterým máte přístup. Nainstalujete ji skriptem installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>Služba souborového systému je nainstalovaná, ale neběží (systemctl status file-search-manager).</value></data>
 </root>

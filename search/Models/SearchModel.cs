@@ -1620,6 +1620,24 @@ namespace search.Models
         }
 
         /// <summary>
+        /// What the Linux service's state of an item does to its indexed node. An item that
+        /// changed between file and folder is deleted first - its node cannot become the other
+        /// kind - and so is a folder the user can no longer list, which then comes back without
+        /// what was below it. A folder that arrived with its content, or that the user can list
+        /// now and that shows nothing, gets its content indexed.
+        /// </summary>
+        internal static (bool DeleteFirst, bool IndexContent) PlanServiceState(INode known,
+            NodeMetadataSnapshot state, FolderContent content)
+        {
+            var deleteFirst = known != null && (known.IsDirectory != state.IsDirectory
+                || content == FolderContent.Unlistable && known.IsDirectory && known.Count > 0);
+            var remaining = deleteFirst ? null : known;
+            var indexContent = state.IsDirectory && (content == FolderContent.Arrived
+                || content == FolderContent.Listable && (remaining == null || remaining.Count == 0));
+            return (deleteFirst, indexContent);
+        }
+
+        /// <summary>
         /// Remove node and subtract its size/item contribution from ancestor directories
         /// </summary>
         /// <param name="path"></param>
@@ -2680,6 +2698,42 @@ namespace search.Models
                             case WatcherChangeTypes.Changed:
                                 //Change attributes and size
                                 FlushConflictingDeletes(e.FullPath);
+                                if (e.IsServiceState)
+                                {
+                                    //The Linux service's state of an item: applied without a
+                                    //disk read - the user may not be able to make one - and
+                                    //against the index as it is now, after what came before
+                                    var state = e.MetadataSnapshot.Value;
+                                    var known = files.TryGetValue(e.FullPath, out var indexed) ? indexed : null;
+                                    var (deleteFirst, indexContent) = PlanServiceState(known, state, e.Content);
+                                    if (deleteFirst)
+                                    {
+                                        var gone = new FsEvent(WatcherChangeTypes.Deleted, e.FullPath);
+                                        pendingDeletes.Add(gone);
+                                        pendingDeleteEvent ??= gone;
+                                        FlushDeletes();
+                                        known = null;
+                                    }
+                                    if (known != null)
+                                    {
+                                        var before = known.IsDirectory ? 0L : (long)known.Size;
+                                        known.ApplyMetadata(state);
+                                        files.Touch(known, known);
+                                        PropagateSizeDelta(known, (known.IsDirectory ? 0L : (long)known.Size) - before);
+                                        RecordMetadata(known);
+                                    }
+                                    else
+                                        RecordStructuralNode(GetOrAddNew(e.FullPath, state));
+                                    //Moved in from where no change reached this user, or
+                                    //listable for the user now: the content arrives with no
+                                    //event of its own
+                                    if (indexContent)
+                                    {
+                                        var folder = e.FullPath;
+                                        _ = Task.Run(() => Extensions.EchoContent(folder));
+                                    }
+                                    break;
+                                }
                                 if (e.IsHardLinkUpdate)
                                 {
                                     var current = files.TryGetValue(e.FullPath,
@@ -3198,13 +3252,28 @@ namespace search.Models
         public void RefreshUnwatchedDrives()
         {
             if (Volatile.Read(ref modelDisposed) != 0) return;
-            foreach (var root in DrivesToRefresh(scannedAt, scanStartedAt, DateTime.UtcNow,
-                UnwatchedRefreshAge, FSChangeProcessor.IsUnwatched,
-                root => unavailableDrives.ContainsKey(FsRoots.KeyOf(root))))
+            //Off the UI thread: asking the file system service may take a moment
+            _ = Task.Run(() =>
             {
-                $"drive {root} index older than {UnwatchedRefreshAge.TotalMinutes:0.#} min and not watched => background rescan".Debug();
-                _ = InitFromNTFS(root, DriveScanReason.UnwatchedRefresh);
-            }
+                //The Linux service started (or was installed) meanwhile: watch through it -
+                //the rescan that comes with the new source covers what changed until now
+                var rewatched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (LinuxService.LinuxServiceClient.Installed)
+                    foreach (var root in FSChangeProcessor.UnwatchedRoots())
+                        if (LinuxService.LinuxServiceClient.WouldWatch(root))
+                        {
+                            $"drive {root}: the file system service is available => watching through it".Debug();
+                            rewatched.Add(root);
+                            FSChangeProcessor.RefreshDrive(root, DriveScanReason.ServiceAvailable);
+                        }
+                foreach (var root in DrivesToRefresh(scannedAt, scanStartedAt, DateTime.UtcNow,
+                    UnwatchedRefreshAge, root => FSChangeProcessor.IsUnwatched(root) && !rewatched.Contains(root),
+                    root => unavailableDrives.ContainsKey(FsRoots.KeyOf(root))))
+                {
+                    $"drive {root} index older than {UnwatchedRefreshAge.TotalMinutes:0.#} min and not watched => background rescan".Debug();
+                    _ = InitFromNTFS(root, DriveScanReason.UnwatchedRefresh);
+                }
+            });
         }
 
         /// <param name="scannedAt">Start of each drive's last completed scan</param>
@@ -3769,6 +3838,12 @@ namespace search.Models
                 if (nodes != null) return new DriveEntryResult(nodes, origin);
                 ntfsWalked = true;
             }
+
+            //Linux with the file system service and the every-file view: the service walks
+            //with its rights, so the user also finds what only an administrator can open
+            if (OperatingSystem.IsLinux()
+                && LinuxService.LinuxServiceClient.TryWalk(drive.RootDirectory.FullName, cancellationToken) is { } served)
+                return new DriveEntryResult(served, MftOrigin.Service);
 
             origin = MftOrigin.Walk;
             return new DriveEntryResult(DirectoryWalker.Walk(drive, cancellationToken, background), origin);

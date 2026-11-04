@@ -152,4 +152,10 @@
   <data name="StatusUnwatched" xml:space="preserve"><value>未跟踪更改 · 索引时间：{0}</value></data>
   <data name="StatusUnwatchedTooltip" xml:space="preserve"><value>这些驱动器上的更改不会实时跟踪：{0}。返回窗口时，如果索引已超过 {1} 分钟，将自动刷新。按 F12 可立即刷新。</value></data>
   <data name="HintF12Rescan" xml:space="preserve"><value>重新扫描驱动器</value></data>
+  <data name="ShowAllFiles" xml:space="preserve"><value>同时显示我无权访问的文件</value></data>
+  <data name="ServiceAllFiles" xml:space="preserve"><value>文件系统服务正在运行：实时跟踪更改，并显示所有文件。</value></data>
+  <data name="ServiceOwnFiles" xml:space="preserve"><value>文件系统服务正在运行：实时跟踪更改，显示您有权访问的文件。</value></data>
+  <data name="ServiceNotAdmin" xml:space="preserve"><value>只有管理员（wheel 或 sudo 组）才能看到所有文件。</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>未安装文件系统服务：不会实时跟踪更改，只显示您有权访问的文件。可使用 installer/linux/install-service.sh 安装。</value></data>
+  <data name="ServiceNotRunning" xml:space="preserve"><value>文件系统服务已安装，但未运行（systemctl status file-search-manager）。</value></data>
 </root>
