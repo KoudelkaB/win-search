@@ -26,7 +26,7 @@ namespace search
         public enum Outcome { Done, Cancelled, Failed }
 
         /// <summary>Where the packages install the app, and their unit; tests point them elsewhere</summary>
-        internal static string PackageFolder = "/usr/lib/file-search-manager";
+        internal static string PackageFolder = "/usr/libexec/file-search-manager";
         internal static string PackageUnit = "/usr/lib/systemd/system/file-search-manager.service";
         /// <summary>The copy of a portable app the service runs (install-service.sh); tests point it elsewhere</summary>
         internal static string InstallFolder = "/opt/file-search-manager";

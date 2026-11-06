@@ -115,7 +115,7 @@ namespace search.Tests
             //An administrator's own override of the unit, not install-service.sh's
             var unit = Path.Combine(Root, "etc", "systemd", "system", Unit);
             Directory.CreateDirectory(Path.GetDirectoryName(unit));
-            File.WriteAllText(unit, "[Service]\nExecStart=/usr/lib/file-search-manager/FileSearchManager --service\n");
+            File.WriteAllText(unit, "[Service]\nExecStart=/usr/libexec/file-search-manager/FileSearchManager --service\n");
 
             Assert.Equal(new[] { "daemon-reload", $"try-restart {Unit}" }, Run("postinstall.sh", true, "2"));
             Assert.True(File.Exists(unit));

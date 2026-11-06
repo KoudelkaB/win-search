@@ -9,12 +9,16 @@
 #   app/                          dotnet publish search -c Release -r linux-x64 --self-contained,
 #                                 without the portable app's service scripts
 #   file-search-manager.service   the unit (../file-search-manager.service) running
-#                                 /usr/lib/file-search-manager
+#                                 /usr/libexec/file-search-manager
 #   io.github.koudelkab.FileSearchManager.metainfo.xml   with the release added
 #
 # The app is installed root-owned, so the file system service runs these very files: a first
 # install turns it on (postinstall.sh), Settings turns it off and on, and a package update
 # restarts it on the new version. Nothing is copied, and nothing gets outdated.
+#
+# In /usr/libexec, not /usr/lib: SELinux (Fedora, RHEL) runs a service by the label of its
+# executable - bin_t there gives unconfined_service_t, while lib_t in /usr/lib leaves it in
+# init_t, which may not watch file systems (check-selinux.py; the workflow checks it).
 name: file-search-manager
 arch: amd64
 platform: linux
@@ -35,9 +39,9 @@ description: |-
 
 contents:
   - src: installer/linux/package/staging/app
-    dst: /usr/lib/file-search-manager
+    dst: /usr/libexec/file-search-manager
     type: tree
-  - src: /usr/lib/file-search-manager/FileSearchManager
+  - src: /usr/libexec/file-search-manager/FileSearchManager
     dst: /usr/bin/file-search-manager
     type: symlink
   - src: installer/linux/package/staging/file-search-manager.service

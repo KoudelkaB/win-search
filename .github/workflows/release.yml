@@ -145,7 +145,7 @@ jobs:
           cp -r publish/file-search-manager "$stage/app"
           # The package manages its service itself: the portable app's scripts stay out
           rm "$stage"/app/{install-service.sh,uninstall-service.sh,file-search-manager.service}
-          sed 's|@APPDIR@|/usr/lib/file-search-manager|g' installer/linux/file-search-manager.service > "$stage/file-search-manager.service"
+          sed 's|@APPDIR@|/usr/libexec/file-search-manager|g' installer/linux/file-search-manager.service > "$stage/file-search-manager.service"
           # GNOME Software and KDE Discover show the version from the AppStream release entry
           python3 - "installer/linux/$APP_ID.metainfo.xml" "$stage/$APP_ID.metainfo.xml" "$VERSION" "${{ needs.version.outputs.date }}" <<'EOF'
           import sys
@@ -175,9 +175,10 @@ jobs:
           nfpm package --config installer/linux/package/nfpm.yaml --packager rpm --target "dist/FileSearchManager-$VERSION-x86_64.rpm"
           nfpm package --config installer/linux/package/nfpm.yaml --packager deb --target "dist/FileSearchManager-$VERSION-amd64.deb"
 
-      # As users install them: the .deb on this Ubuntu runner, where the service must start
-      # and go away again with the package, and the .rpm in a Fedora container (its
-      # dependencies resolve - a container has no systemd)
+      # As users install them: the .deb on this Ubuntu runner, where the service must start,
+      # watch file systems and go away again with the package; the .rpm in a Fedora container,
+      # where its dependencies must resolve and SELinux must let the service watch (a container
+      # has neither systemd nor SELinux running - the policy is checked on disk)
       - name: Test the packages
         shell: bash
         run: |
@@ -187,17 +188,20 @@ jobs:
           systemctl --no-pager status file-search-manager.service
           [[ -S /run/file-search-manager/service.sock ]]
           [[ -x /usr/bin/file-search-manager ]]
+          python3 installer/linux/package/check-service.py /
           sudo apt-get remove -y file-search-manager
           # (not "! systemctl ...": bash -e lets a negated command fail unnoticed)
           if systemctl is-active --quiet file-search-manager.service; then
             echo "::error::the service still runs after the package was removed"
             exit 1
           fi
-          [[ ! -e /usr/lib/file-search-manager ]]
-          docker run --rm -v "$PWD/dist:/dist:ro" fedora:latest sh -ec "
+          [[ ! -e /usr/libexec/file-search-manager ]]
+          docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/installer/linux/package:/check:ro" fedora:latest sh -ec "
             dnf install -y --setopt=install_weak_deps=False /dist/FileSearchManager-$VERSION-x86_64.rpm
             test -x /usr/bin/file-search-manager
-            rpm -V file-search-manager"
+            rpm -V file-search-manager
+            dnf install -y --setopt=install_weak_deps=False selinux-policy-targeted python3-libselinux python3-setools
+            python3 /check/check-selinux.py \$(readlink -f /usr/bin/file-search-manager)"
 
       - uses: actions/upload-artifact@v6
         with:
