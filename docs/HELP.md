@@ -94,7 +94,7 @@ Typing anything other than `Enter` in the search field clears the current conten
 - Double-click a folder or archive name to filter into it. Double-clicking any other file opens it.
 - Double-click the folder column to open File Explorer with the item selected.
 - Ctrl + right-click a result to open it with the default Windows action.
-- Click a column header to sort by that column.
+- Click a column header to sort by that column. Sorted by **Changed** newest first (the default), the list starts past items with a future time (a wrong clock): the present lands in the middle, with those items above it. This happens after sorting, after a new filter and after the drives load.
 - Right-click selected items for Open, dynamic Open with, clipboard, rename, archive, and deletion actions.
 - **Add to target basket** follows the column that was right-clicked: Name adds the selected items, while Folder adds their parent folders. It is hidden when the corresponding paths are not supported targets or are already in the basket.
 - Drag from the Name column to send selected files or directories to another application.

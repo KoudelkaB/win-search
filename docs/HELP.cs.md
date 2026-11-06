@@ -94,7 +94,7 @@ Napsání čehokoli jiného než `Enter` do pole hledání vymaže aktuální st
 - Dvojitým klepnutím na název složky nebo archivu se do něj zafiltrujete. Jiný soubor se dvojitým klepnutím otevře.
 - Dvojitým klepnutím na sloupec složky otevřete Průzkumníka s vybranou položkou.
 - Ctrl + klepnutí pravým tlačítkem na výsledek jej otevře výchozí akcí Windows.
-- Klepnutím na záhlaví sloupce seřadíte podle daného sloupce.
+- Klepnutím na záhlaví sloupce seřadíte podle daného sloupce. Při řazení **Změněno** od nejnovějších (výchozí) začíná seznam za položkami s budoucím časem (špatné hodiny): přítomnost je uprostřed a ty položky nad ní. Platí to po seřazení, po novém filtru i po načtení disků.
 - Klepnutím pravým tlačítkem na vybrané položky vyvoláte akce Otevřít, dynamické Otevřít v programu, schránku, přejmenování, archivaci a mazání.
 - **Přidat do košíku cílů** se řídí sloupcem, na který jste klepli pravým tlačítkem: Název přidá vybrané položky, zatímco Složka přidá jejich nadřazené složky. Skryje se, pokud odpovídající cesty nejsou podporované cíle nebo už v košíku jsou.
 - Tažením ze sloupce Název odešlete vybrané soubory nebo adresáře do jiné aplikace.

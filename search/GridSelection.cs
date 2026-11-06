@@ -129,6 +129,20 @@ namespace search
             catch { return false; }
         }
 
+        /// <summary>
+        /// Move the keyboard row and make it the anchor of the next Shift+arrow too, without
+        /// touching the selection - for jumps the user asked for (Home, End, a new sort). The
+        /// grid keeps its old anchor otherwise, and Shift+Down after the jump selects
+        /// everything from that anchor on.
+        /// </summary>
+        public static bool MoveKeyboardRow(DataGrid grid, int rowIndex)
+        {
+            if (!SetCurrentRow(grid, rowIndex)) return false;
+            try { anchorSlot?.SetValue(grid, Slot(grid, rowIndex)); }
+            catch (Exception e) { $"grid anchor not moved: {e.Message}".Debug(); }
+            return true;
+        }
+
         public static void ToggleSelectAll(DataGrid grid, int itemCount)
         {
             if (grid.SelectedItems.Count == itemCount) grid.SelectedItems.Clear();

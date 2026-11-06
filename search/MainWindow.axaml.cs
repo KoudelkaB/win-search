@@ -164,6 +164,7 @@ namespace search
                         globalCmd.OnChange();
                     });
             };
+            model.DriveLoaded += () => Dispatcher.UIThread.Post(ResultsLoaded, DispatcherPriority.Loaded);
             // The runtime check reads the installed WebView2 version - kept off the first render
             Opened += (_, __) => Dispatcher.UIThread.Post(() =>
             {
@@ -386,7 +387,11 @@ namespace search
             filesView.SelectionChanged += (o, e) =>
             {
                 SelectedCount = filesView.SelectedItems.Count;
-                if (!restoringSelection) SelectionChanged(e);
+                if (!restoringSelection)
+                {
+                    pickedSelection = null;
+                    SelectionChanged(e);
+                }
                 filesViewCmd.OnChange();
                 globalCmd.OnChange();
             };
@@ -438,11 +443,14 @@ namespace search
             // Preserve selection on Items update
             INode[] selected = null;
             INode focused = null;
+            INode picked = null;
             var selectedStart = -1;
             var restoreKeyboardFocus = false;
             Model.BeforeItemsExchange = () =>
             {
                 restoringSelection = true;
+                picked = pickedSelection;
+                pickedSelection = null;
                 selected = filesView.SelectedItems.OfType<INode>().ToArray();
                 selectedStart = FirstSelectedItemIndex(selected);
                 focused = filesView.IsKeyboardFocusWithin
@@ -457,6 +465,9 @@ namespace search
                 {
                     survivors = SelectionSurvivors(selected);
                     if (survivors.Length > 0) SelectNodes(survivors);
+                    //The app's pick stays its pick while it survives (a refined filter)
+                    if (picked != null && survivors.Length == 1 && ReferenceEquals(survivors[0], picked))
+                        pickedSelection = picked;
 
                     if (restoreKeyboardFocus)
                     {
@@ -482,6 +493,7 @@ namespace search
                                 var focusTarget = Model.Items[continuation];
                                 filesView.SelectedItem = focusTarget;
                                 activeSelectedNode = focusTarget;
+                                pickedSelection = focusTarget;
                                 if (focusTarget != null) FocusFileRow(focusTarget);
                             }
                         }
@@ -491,6 +503,7 @@ namespace search
                 {
                     selected = null;
                     focused = null;
+                    picked = null;
                     selectedStart = -1;
                     restoreKeyboardFocus = false;
                     restoringSelection = false;

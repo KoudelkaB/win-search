@@ -94,7 +94,7 @@ Jede andere Eingabe als `Enter` im Suchfeld setzt den aktuellen Ergebniszustand 
 - Ein Doppelklick auf einen Ordner- oder Archivnamen filtert in dieses Element hinein. Ein Doppelklick auf eine andere Datei öffnet sie.
 - Ein Doppelklick auf die Ordnerspalte öffnet den Explorer mit ausgewähltem Element.
 - Strg + Rechtsklick auf ein Ergebnis öffnet es mit der Windows-Standardaktion.
-- Ein Klick auf eine Spaltenüberschrift sortiert nach dieser Spalte.
+- Ein Klick auf eine Spaltenüberschrift sortiert nach dieser Spalte. Sortiert nach **Geändert**, neueste zuerst (Standard), beginnt die Liste hinter Elementen mit einer Zeit in der Zukunft (falsche Uhr): Die Gegenwart steht in der Mitte, diese Elemente darüber. Das gilt nach dem Sortieren, nach einem neuen Filter und nach dem Laden der Laufwerke.
 - Ein Rechtsklick auf ausgewählte Elemente bietet Öffnen, dynamisches Öffnen mit, Zwischenablage, Umbenennen, Archivieren und Löschen.
 - **Zum Zielkorb hinzufügen** richtet sich nach der angeklickten Spalte: Name fügt die ausgewählten Elemente hinzu, Ordner deren übergeordnete Ordner. Es ist ausgeblendet, wenn die entsprechenden Pfade keine unterstützten Ziele sind oder bereits im Korb liegen.
 - Ziehen aus der Spalte Name sendet ausgewählte Dateien oder Verzeichnisse an eine andere Anwendung.

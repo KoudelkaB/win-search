@@ -29,6 +29,9 @@ namespace search
             var filter = filterTextBox.Text;
             FilterText = filter;
             await Model.Update(filter);
+            //Published - unless typing went on and a newer filter owns the results
+            if (filterTextBox.Text == filter)
+                await Dispatcher.UIThread.InvokeAsync(ResultsFiltered, DispatcherPriority.Loaded);
         }
 
         async Task StartSearching()

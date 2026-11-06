@@ -94,7 +94,7 @@ Wpisanie w polu wyszukiwania czegokolwiek innego niż `Enter` czyści bieżący 
 - Dwukrotne kliknięcie nazwy folderu lub archiwum filtruje do tego elementu. Dwukrotne kliknięcie innego pliku otwiera go.
 - Dwukrotne kliknięcie kolumny folderu otwiera Eksploratora z zaznaczonym elementem.
 - Ctrl + kliknięcie prawym przyciskiem otwiera wynik domyślną akcją systemu Windows.
-- Kliknięcie nagłówka kolumny sortuje według tej kolumny.
+- Kliknięcie nagłówka kolumny sortuje według tej kolumny. Przy sortowaniu **Zmieniono** od najnowszych (domyślnym) lista zaczyna się za elementami z czasem z przyszłości (błędny zegar): teraźniejszość trafia na środek, a te elementy nad nią. Dzieje się tak po sortowaniu, po nowym filtrze i po wczytaniu dysków.
 - Kliknięcie zaznaczonych elementów prawym przyciskiem daje dostęp do otwierania, dynamicznego Otwórz za pomocą, schowka, zmiany nazwy, archiwizacji i usuwania.
 - **Dodaj do koszyka celów** zależy od klikniętej kolumny: Nazwa dodaje zaznaczone elementy, a Folder ich foldery nadrzędne. Pozycja jest ukryta, gdy odpowiednie ścieżki nie są obsługiwanymi celami albo już znajdują się w koszyku.
 - Przeciąganie z kolumny Nazwa wysyła zaznaczone pliki lub katalogi do innej aplikacji.

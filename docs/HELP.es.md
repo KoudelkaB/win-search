@@ -94,7 +94,7 @@ Escribir cualquier cosa distinta de `Enter` en el campo de búsqueda borra el es
 - Haga doble clic en el nombre de una carpeta o de un archivo comprimido para filtrar dentro de ese elemento. El doble clic en cualquier otro archivo lo abre.
 - Haga doble clic en la columna de carpeta para abrir el Explorador con el elemento seleccionado.
 - Ctrl + clic derecho en un resultado lo abre con la acción predeterminada de Windows.
-- Haga clic en el encabezado de una columna para ordenar por ella.
+- Haga clic en el encabezado de una columna para ordenar por ella. Ordenada por **Modificado** con lo más reciente primero (la opción predeterminada), la lista empieza después de los elementos con una fecha futura (un reloj incorrecto): el presente queda en el centro y esos elementos encima. Ocurre al ordenar, con un filtro nuevo y al terminar de cargar las unidades.
 - El clic derecho sobre los elementos seleccionados ofrece Abrir, Abrir con dinámico, portapapeles, cambio de nombre, archivado y eliminación.
 - **Añadir a la cesta de destinos** sigue la columna en la que se hizo clic derecho: Nombre añade los elementos seleccionados, mientras que Carpeta añade sus carpetas padre. Se oculta cuando las rutas correspondientes no son destinos admitidos o ya están en la cesta.
 - Arrastre desde la columna Nombre para enviar los archivos o directorios seleccionados a otra aplicación.

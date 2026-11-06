@@ -50,6 +50,25 @@ namespace search
             filesView.AddHandler(PointerMovedEvent, FilesView_PointerMoved, RoutingStrategies.Tunnel);
             filesView.AddHandler(PointerReleasedEvent, FilesView_PointerReleased, RoutingStrategies.Tunnel);
             filesView.AddHandler(DoubleTappedEvent, FilesView_DoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
+            //A click (the scroll bar's too), the wheel or a navigation key in results long enough
+            //to scroll moves them by hand. Before they are, there is nothing to move: an arrow
+            //pressed in the empty list at start must not keep the first load from "now".
+            void MovedByUser(object sender, RoutedEventArgs e)
+            {
+                if (e is KeyEventArgs key && key.Key is not (Key.Up or Key.Down or Key.PageUp
+                    or Key.PageDown or Key.Home or Key.End)) return;
+                if (Model.Items.Count > RowsPerPage(filesView)) resultsMovedByUser = true;
+            }
+            filesView.AddHandler(PointerPressedEvent, MovedByUser, RoutingStrategies.Tunnel, handledEventsToo: true);
+            //A click on a row makes the selection the user's - on the selected row too, which
+            //changes no selection: the app then never moves it to another file
+            filesView.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                if ((e.Source as Visual)?.FindAncestorOfType<DataGridRow>(includeSelf: true) != null)
+                    pickedSelection = null;
+            }, RoutingStrategies.Tunnel, handledEventsToo: true);
+            filesView.AddHandler(PointerWheelChangedEvent, MovedByUser, RoutingStrategies.Tunnel, handledEventsToo: true);
+            filesView.AddHandler(KeyDownEvent, MovedByUser, RoutingStrategies.Tunnel, handledEventsToo: true);
             filesView.ContextMenu = BuildFilesContextMenu();
             //Inline rename editors live in the Name cell template
             filesView.AddHandler(KeyDownEvent, InlineNameEditor_KeyDown, RoutingStrategies.Bubble, handledEventsToo: false);
@@ -131,7 +150,105 @@ namespace search
             if (items.Count == 0) return;
             var target = end ? items[^1] : items[0];
             filesView.ScrollIntoView(target, null);
-            GridSelection.SetCurrentRow(filesView, end ? items.Count - 1 : 0);
+            GridSelection.MoveKeyboardRow(filesView, end ? items.Count - 1 : 0);
+        }
+
+        /// <summary>Newest first by the Changed column</summary>
+        internal static bool IsNewestFirst(string sort)
+            => sort?.Length > 1 && sort.Substring(1) == nameof(INode.LastChangeTime)
+                && HeaderSortDirection(sort) == ListSortDirection.Descending;
+
+        /// <summary>
+        /// The user scrolled, clicked or typed in the results since the app last placed them
+        /// at their start - a finished drive load then leaves them where they are
+        /// </summary>
+        bool resultsMovedByUser;
+
+        /// <summary>
+        /// The row the app selected itself when the selection left with the old results (a
+        /// delete, Enter into a folder) - no choice of the user's. Null once the user selects.
+        /// </summary>
+        INode pickedSelection;
+
+        /// <summary>
+        /// Show the results from their start: newest first that is "now" (ScrollToNow), any
+        /// other sort the top. The row it is at; -1 without results.
+        /// </summary>
+        internal int ScrollResultsToStart()
+        {
+            resultsMovedByUser = false;
+            if (IsNewestFirst(displayedSort)) return ScrollToNow(filesView, Model.Items, DateTime.Now);
+            ScrollResultsToBoundary(end: false);
+            return Model.Items.Count > 0 ? 0 : -1;
+        }
+
+        /// <summary>
+        /// A filter's results are on the grid. Newest first they start at "now" - unless a
+        /// selection carried over from the previous results, which the user works with. A row
+        /// the app picked in place of a selection that left goes to "now" with the view.
+        /// </summary>
+        internal void ResultsFiltered()
+        {
+            if (!IsNewestFirst(displayedSort)) return;
+            var picked = pickedSelection != null && filesView.SelectedItems.Count == 1
+                && ReferenceEquals(filesView.SelectedItem, pickedSelection);
+            if (filesView.SelectedItems.Count > 0 && !picked) return;
+            var row = ScrollResultsToStart();
+            if (!picked || row < 0) return;
+            filesView.SelectedItem = Model.Items[row];
+            pickedSelection = Model.Items[row]; //Still the app's pick, not the user's
+            GridSelection.MoveKeyboardRow(filesView, row);
+        }
+
+        /// <summary>
+        /// A drive's load is on the grid (each at start - a hung one holds back no other).
+        /// While it ran the rows of a wrong future time piled up at the top: results nobody
+        /// moved since start at "now".
+        /// </summary>
+        internal void ResultsLoaded()
+        {
+            if (!resultsMovedByUser && filesView.SelectedItems.Count == 0) ScrollResultsToStart();
+        }
+
+        /// <summary>
+        /// Newest first, rows of a wrong future time (a bad clock, an odd archive) come before
+        /// everything that changed lately. Scroll so that the first row not in the future -
+        /// "now" - lands about in the middle of the view, with the future rows above it in
+        /// sight; with nothing in the future that is the top. From the top, ScrollIntoView
+        /// brings a row below the view to its bottom edge, so scrolling to the row half a page
+        /// below "now" leaves "now" in the middle. "Now" becomes the keyboard row; returned,
+        /// -1 without rows.
+        /// </summary>
+        internal static int ScrollToNow(DataGrid grid, IList<INode> items, DateTime now)
+        {
+            if (items.Count == 0) return -1;
+            var row = FirstRowNotAfter(items, now);
+            if (row < 0) row = items.Count - 1; //Only future rows here: the nearest is the last
+            grid.ScrollIntoView(items[0], null);
+            if (row > 0) grid.ScrollIntoView(items[Math.Min(items.Count - 1, row + RowsPerPage(grid) / 2)], null);
+            GridSelection.MoveKeyboardRow(grid, row);
+            return row;
+        }
+
+        /// <summary>The first row of a newest-first list that is not after the time; -1 when all are</summary>
+        internal static int FirstRowNotAfter(IList<INode> items, DateTime time)
+        {
+            int lo = 0, hi = items.Count;
+            while (lo < hi)
+            {
+                var mid = lo + (hi - lo) / 2;
+                if (items[mid].LastChangeTime > time) lo = mid + 1;
+                else hi = mid;
+            }
+            return lo < items.Count ? lo : -1;
+        }
+
+        /// <summary>Whole rows the grid shows at once; 0 before it shows any</summary>
+        static int RowsPerPage(DataGrid grid)
+        {
+            var presenter = grid.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.DataGridRowsPresenter>().FirstOrDefault();
+            var rowHeight = grid.GetVisualDescendants().OfType<DataGridRow>().Select(r => r.Bounds.Height).FirstOrDefault(h => h > 0);
+            return presenter == null || rowHeight <= 0 ? 0 : (int)(presenter.Bounds.Height / rowHeight);
         }
 
         #region Mouse: drag source, double click, right click
@@ -998,9 +1115,8 @@ namespace search
                 ShowSortIndicator(newSort);
                 ResetSelectionCycle();
 
-                await Dispatcher.UIThread.InvokeAsync(
-                    () => ScrollResultsToBoundary(end: false),
-                    DispatcherPriority.Loaded);
+                //Newest first past the rows of a wrong future time, to what changed lately
+                await Dispatcher.UIThread.InvokeAsync(ScrollResultsToStart, DispatcherPriority.Loaded);
                 $"column sort {newSort}: update {updateMs} ms, render {watch.ElapsedMilliseconds - updateMs} ms".Debug();
             }
             finally

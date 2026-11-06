@@ -94,7 +94,7 @@ Digitar qualquer coisa que não seja `Enter` no campo de pesquisa limpa o estado
 - Clique duas vezes no nome de uma pasta ou de um arquivo compactado para filtrar dentro desse item. Clicar duas vezes em qualquer outro arquivo o abre.
 - Clique duas vezes na coluna de pasta para abrir o Explorador de Arquivos com o item selecionado.
 - Ctrl + clique com o botão direito em um resultado o abre com a ação padrão do Windows.
-- Clique no cabeçalho de uma coluna para classificar por ela.
+- Clique no cabeçalho de uma coluna para classificar por ela. Classificada por **Alterado** do mais recente para o mais antigo (o padrão), a lista começa depois dos itens com data futura (um relógio errado): o presente fica no meio, com esses itens acima. Isso acontece após classificar, após um novo filtro e após o carregamento das unidades.
 - Clique com o botão direito nos itens selecionados para Abrir, Abrir com dinâmico, área de transferência, renomear, compactar e excluir.
 - **Adicionar à cesta de destinos** segue a coluna em que foi feito o clique com o botão direito: Nome adiciona os itens selecionados, enquanto Pasta adiciona as pastas pai deles. Fica oculto quando os caminhos correspondentes não são destinos compatíveis ou já estão na cesta.
 - Arraste da coluna Nome para enviar os arquivos ou diretórios selecionados a outro aplicativo.

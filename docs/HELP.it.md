@@ -94,7 +94,7 @@ Digitare qualcosa di diverso da `Enter` nel campo di ricerca azzera lo stato cor
 - Doppio clic sul nome di una cartella o di un archivio per filtrare dentro quell’elemento. Il doppio clic su qualsiasi altro file lo apre.
 - Doppio clic sulla colonna della cartella per aprire Esplora file con l’elemento selezionato.
 - Ctrl + clic destro su un risultato lo apre con l’azione predefinita di Windows.
-- Clic sull’intestazione di una colonna per ordinare in base a essa.
+- Clic sull’intestazione di una colonna per ordinare in base a essa. Ordinato per **Modificato** dal più recente (l’ordine predefinito), l’elenco inizia dopo gli elementi con una data futura (un orologio sbagliato): il presente finisce al centro, con quegli elementi sopra. Succede dopo un ordinamento, un nuovo filtro e il caricamento delle unità.
 - Clic destro sugli elementi selezionati per Apri, Apri con dinamico, appunti, rinomina, archiviazione ed eliminazione.
 - **Aggiungi al cesto destinazioni** segue la colonna su cui hai fatto clic destro: Nome aggiunge gli elementi selezionati, Cartella aggiunge le loro cartelle padre. La voce è nascosta quando i percorsi corrispondenti non sono destinazioni supportate o sono già nel cesto.
 - Trascina dalla colonna Nome per inviare file o directory selezionati a un’altra applicazione.

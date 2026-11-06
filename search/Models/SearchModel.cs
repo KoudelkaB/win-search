@@ -413,6 +413,12 @@ namespace search.Models
         long activeViewQuery;
         bool viewQueryDeltaOverflow;
 
+        /// <summary>
+        /// A drive's scan is on the grid (any thread) - each drive's on its own, a hung network
+        /// walk holds back none of the others
+        /// </summary>
+        public event Action DriveLoaded;
+
         public Action BeforeItemsExchange = () => { };
         public Action AfterItemsExchange = () => { };
 
@@ -508,6 +514,9 @@ namespace search.Models
         /// Filter/sort changes - Items follow one only after its debounced update publishes them
         /// </summary>
         readonly LatestWork userUpdates = new();
+
+        /// <summary>The filter/sort changes asked for so far are on the grid</summary>
+        internal Task UserUpdatesSettled() => userUpdates.Settled();
 
         async Task UpdateCore(string newFilter, string newSort, bool healthRecovery, bool skipDataDebounce)
         {
@@ -3516,6 +3525,7 @@ namespace search.Models
                                 //An already queued refresh may carry this drive instead - "grid"
                                 //ends when the rows are really published, as "Loaded" does
                                 await dataRefreshPublished.WaitAsync(scanToken);
+                                DriveLoaded?.Invoke();
                             }
                             catch (OperationCanceledException)
                             {

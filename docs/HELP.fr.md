@@ -94,7 +94,7 @@ Saisir autre chose que `Enter` dans le champ de recherche efface l’état actue
 - Double-cliquez sur un nom de dossier ou d’archive pour filtrer dans cet élément. Un double-clic sur tout autre fichier l’ouvre.
 - Double-cliquez sur la colonne du dossier pour ouvrir l’Explorateur avec l’élément sélectionné.
 - Ctrl + clic droit sur un résultat l’ouvre avec l’action Windows par défaut.
-- Cliquez sur un en-tête de colonne pour trier selon cette colonne.
+- Cliquez sur un en-tête de colonne pour trier selon cette colonne. Triée par **Modifié**, du plus récent au plus ancien (le tri par défaut), la liste commence après les éléments datés dans le futur (une horloge erronée) : le présent se place au milieu, ces éléments au-dessus. C’est le cas après un tri, un nouveau filtre et le chargement des lecteurs.
 - Un clic droit sur les éléments sélectionnés propose Ouvrir, Ouvrir avec dynamique, presse-papiers, renommage, archivage et suppression.
 - **Ajouter au panier de cibles** suit la colonne où le clic droit a eu lieu : Nom ajoute les éléments sélectionnés, tandis que Dossier ajoute leurs dossiers parents. L’option est masquée lorsque les chemins correspondants ne sont pas des cibles prises en charge ou figurent déjà dans le panier.
 - Faites glisser depuis la colonne Nom pour envoyer les fichiers ou répertoires sélectionnés vers une autre application.
