@@ -156,6 +156,23 @@ Trotzdem öffnen?</value></data>
   <data name="ServiceAllFiles" xml:space="preserve"><value>Der Dateisystemdienst läuft: Änderungen werden live überwacht und alle Dateien angezeigt.</value></data>
   <data name="ServiceOwnFiles" xml:space="preserve"><value>Der Dateisystemdienst läuft: Änderungen werden live überwacht, angezeigt werden die Dateien, auf die Sie Zugriff haben.</value></data>
   <data name="ServiceNotAdmin" xml:space="preserve"><value>Alle Dateien sehen nur Administratoren (Gruppe wheel oder sudo).</value></data>
-  <data name="ServiceNotInstalled" xml:space="preserve"><value>Der Dateisystemdienst ist nicht installiert: Änderungen werden nicht live überwacht und nur Dateien angezeigt, auf die Sie Zugriff haben. Installieren Sie ihn mit installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>Der Dateisystemdienst ist nicht installiert: Änderungen werden nicht live überwacht und nur Dateien angezeigt, auf die Sie Zugriff haben.</value></data>
   <data name="ServiceNotRunning" xml:space="preserve"><value>Der Dateisystemdienst ist installiert, läuft aber nicht (systemctl status file-search-manager).</value></data>
+  <data name="Settings" xml:space="preserve"><value>Einstellungen</value></data>
+  <data name="ServiceSection" xml:space="preserve"><value>Dateisystemdienst</value></data>
+  <data name="ServiceAbout" xml:space="preserve"><value>Überwacht Änderungen auf allen Laufwerken live und zeigt Administratoren alle Dateien. Er läuft als root unter systemd.</value></data>
+  <data name="InstallService" xml:space="preserve"><value>Installieren</value></data>
+  <data name="UpdateService" xml:space="preserve"><value>Aktualisieren</value></data>
+  <data name="RemoveService" xml:space="preserve"><value>Entfernen</value></data>
+  <data name="ServiceOutdated" xml:space="preserve"><value>Der Dienst läuft in Version {0}, diese App ist Version {1}.</value></data>
+  <data name="ServiceWorking" xml:space="preserve"><value>Bestätigen Sie es in der Administrator-Abfrage…</value></data>
+  <data name="ServiceCancelled" xml:space="preserve"><value>Abgebrochen – nichts wurde geändert.</value></data>
+  <data name="ServiceFailed" xml:space="preserve"><value>Das hat nicht geklappt: {0}</value></data>
+  <data name="ServiceNoPkexec" xml:space="preserve"><value>pkexec (polkit) fehlt. Führen Sie stattdessen in einem Terminal aus: {0}</value></data>
+  <data name="ServiceRemoveRunning" xml:space="preserve"><value>Diese App läuft aus der Kopie des Dienstes selbst – das Entfernen des Dienstes würde sie löschen. Entfernen Sie ihn aus einer anderen Kopie der App.</value></data>
+  <data name="ServiceFlatpak" xml:space="preserve"><value>Die Flatpak-Version kann den Dateisystemdienst nicht nutzen: Ihre Sandbox verbirgt die Systemordner des Computers, und der Dienst bedient nur Programme außerhalb einer Sandbox. Für Live-Änderungen und alle Dateien installieren Sie stattdessen das .rpm- oder .deb-Paket.</value></data>
+  <data name="TurnOnService" xml:space="preserve"><value>Einschalten</value></data>
+  <data name="TurnOffService" xml:space="preserve"><value>Ausschalten</value></data>
+  <data name="ServiceTurnedOff" xml:space="preserve"><value>Der Dateisystemdienst ist ausgeschaltet: Änderungen werden nicht live überwacht und nur Dateien angezeigt, auf die Sie Zugriff haben.</value></data>
+  <data name="ServiceCopy" xml:space="preserve"><value>Die Installation kopiert diese App nach /opt/file-search-manager, mit root als Eigentümer: Der Dienst führt nie Dateien aus, die seine Benutzer ändern können.</value></data>
 </root>

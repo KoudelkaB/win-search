@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.koudelkab.FileSearchManager</id>
+
+  <name>File Search Manager</name>
+  <summary>Find files on every disk as you type</summary>
+  <summary xml:lang="cs">Hledání souborů na všech discích už při psaní</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="io.github.koudelkab">
+    <name>Bohdan Koudelka</name>
+  </developer>
+
+  <description>
+    <p>
+      File Search Manager indexes your disks and filters millions of files and folders as
+      you type. It searches file contents and performs common file operations directly from
+      the result list.
+    </p>
+    <p xml:lang="cs">
+      File Search Manager zaindexuje vaše disky a už při psaní filtruje miliony souborů a
+      složek. Prohledává obsah souborů a běžné operace se soubory dělá přímo ze seznamu
+      výsledků.
+    </p>
+    <ul>
+      <li>Filtering by name, parent folder, full path or exact directory</li>
+      <li>UTF-8, UTF-16, case-insensitive and hexadecimal content search</li>
+      <li>Copy, move, link, rename and move to the trash from the results, with drag and drop and the clipboard</li>
+      <li>Pinned filters and a target basket for repeated file operations</li>
+      <li>Creating, extracting and browsing ZIP and 7z archives</li>
+      <li>Built-in hex editor, log explorer and calculator</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.koudelkab.FileSearchManager.desktop</launchable>
+
+  <url type="homepage">https://koudelkab.github.io/win-search/</url>
+  <url type="bugtracker">https://github.com/KoudelkaB/win-search/issues</url>
+  <url type="vcs-browser">https://github.com/KoudelkaB/win-search</url>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+
+  <content_rating type="oars-1.1" />
+
+  <!-- The release workflow adds the version being built -->
+  <releases>
+  </releases>
+</component>

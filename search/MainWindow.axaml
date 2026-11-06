@@ -151,6 +151,9 @@
         <!-- Keyboard hints -->
         <StackPanel x:Name="help" DockPanel.Dock="Right" Orientation="Vertical" Margin="5" MaxWidth="360">
             <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" x:Name="settingsButton" Content="⚙" Click="Settings_Click" Padding="2,0" MinWidth="24"
+                        Foreground="DodgerBlue" Background="Transparent" BorderThickness="0"
+                        ToolTip.Tip="{local:Loc Key=Settings}" AutomationProperties.Name="{local:Loc Key=Settings}"/>
                 <Button DockPanel.Dock="Right" Content="🌐" Click="Language_Click" Padding="2,0" MinWidth="24"
                         Foreground="DodgerBlue" Background="Transparent" BorderThickness="0"
                         ToolTip.Tip="{local:Loc Key=Language}" AutomationProperties.Name="{local:Loc Key=Language}"/>

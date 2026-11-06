@@ -156,6 +156,23 @@ Otworzyć je mimo to?</value></data>
   <data name="ServiceAllFiles" xml:space="preserve"><value>Usługa systemu plików działa: zmiany są śledzone na bieżąco i widoczne są wszystkie pliki.</value></data>
   <data name="ServiceOwnFiles" xml:space="preserve"><value>Usługa systemu plików działa: zmiany są śledzone na bieżąco, widoczne są pliki, do których masz dostęp.</value></data>
   <data name="ServiceNotAdmin" xml:space="preserve"><value>Wszystkie pliki widzą tylko administratorzy (grupa wheel lub sudo).</value></data>
-  <data name="ServiceNotInstalled" xml:space="preserve"><value>Usługa systemu plików nie jest zainstalowana: zmiany nie są śledzone na bieżąco i widoczne są tylko pliki, do których masz dostęp. Zainstaluj ją skryptem installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>Usługa systemu plików nie jest zainstalowana: zmiany nie są śledzone na bieżąco i widoczne są tylko pliki, do których masz dostęp.</value></data>
   <data name="ServiceNotRunning" xml:space="preserve"><value>Usługa systemu plików jest zainstalowana, ale nie działa (systemctl status file-search-manager).</value></data>
+  <data name="Settings" xml:space="preserve"><value>Ustawienia</value></data>
+  <data name="ServiceSection" xml:space="preserve"><value>Usługa systemu plików</value></data>
+  <data name="ServiceAbout" xml:space="preserve"><value>Śledzi na bieżąco zmiany na wszystkich dyskach i pozwala administratorom widzieć wszystkie pliki. Działa jako root pod systemd.</value></data>
+  <data name="InstallService" xml:space="preserve"><value>Zainstaluj</value></data>
+  <data name="UpdateService" xml:space="preserve"><value>Zaktualizuj</value></data>
+  <data name="RemoveService" xml:space="preserve"><value>Usuń</value></data>
+  <data name="ServiceOutdated" xml:space="preserve"><value>Usługa działa w wersji {0}, ta aplikacja ma wersję {1}.</value></data>
+  <data name="ServiceWorking" xml:space="preserve"><value>Potwierdź to w oknie administratora…</value></data>
+  <data name="ServiceCancelled" xml:space="preserve"><value>Anulowano – nic nie zostało zmienione.</value></data>
+  <data name="ServiceFailed" xml:space="preserve"><value>Nie udało się: {0}</value></data>
+  <data name="ServiceNoPkexec" xml:space="preserve"><value>Brak pkexec (polkit). Zamiast tego uruchom w terminalu: {0}</value></data>
+  <data name="ServiceRemoveRunning" xml:space="preserve"><value>Ta aplikacja działa z kopii samej usługi – usunięcie usługi by ją skasowało. Usuń ją z innej kopii aplikacji.</value></data>
+  <data name="ServiceFlatpak" xml:space="preserve"><value>Wersja Flatpak nie może korzystać z usługi systemu plików: jej piaskownica ukrywa foldery systemowe komputera, a usługa obsługuje tylko programy spoza piaskownicy. Aby śledzić zmiany na bieżąco i widzieć wszystkie pliki, zainstaluj pakiet .rpm lub .deb.</value></data>
+  <data name="TurnOnService" xml:space="preserve"><value>Włącz</value></data>
+  <data name="TurnOffService" xml:space="preserve"><value>Wyłącz</value></data>
+  <data name="ServiceTurnedOff" xml:space="preserve"><value>Usługa systemu plików jest wyłączona: zmiany nie są śledzone na bieżąco i widoczne są tylko pliki, do których masz dostęp.</value></data>
+  <data name="ServiceCopy" xml:space="preserve"><value>Instalacja kopiuje tę aplikację do /opt/file-search-manager z właścicielem root: usługa nigdy nie uruchamia plików, które mogą zmienić jej użytkownicy.</value></data>
 </root>

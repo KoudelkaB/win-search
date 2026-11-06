@@ -142,6 +142,7 @@ namespace search
                 elevateAtStart.IsChecked = ElevationSettingsStore.StartHelperAtLaunch();
             }
             else elevateAtStart.IsVisible = false; //No UAC helper outside Windows
+            settingsButton.IsVisible = OperatingSystem.IsLinux(); //Only the Linux service is set there so far
             ApplyWorkspaceSettings(WorkspaceSettingsStore.Load());
             ApplyWindowLayout();
             Closing += (_, __) => SaveOnClose();
@@ -750,16 +751,24 @@ namespace search
             //Refresh only roots whose effective selection changed. Refreshing every drive
             //made a quick S: toggle start two unrelated 25-second C: MFT scans.
             if (!await dialog.ShowDialog<bool>(this)) return;
+            foreach (var root in dialog.ChangedRoots)
+                FSChangeProcessor.RefreshDrive(root, DriveScanReason.DriveSelection);
+        }
+
+        async void Settings_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new SettingsWindow();
+            await dialog.ShowDialog<bool>(this);
             if (dialog.ShowAllFilesChanged)
             {
                 //Every file or only the user's own: a new service connection in the other
                 //mode, then every drive scanned and watched again
                 Models.LinuxService.LinuxServiceClient.Reset();
                 FSChangeProcessor.RefreshFromNFT();
-                return;
             }
-            foreach (var root in dialog.ChangedRoots)
-                FSChangeProcessor.RefreshDrive(root, DriveScanReason.DriveSelection);
+            //A new service: watch the drives through it (the rescan that comes with it covers
+            //what changed meanwhile). A removed one needs nothing - losing it rescans its drives.
+            else if (dialog.ServiceChanged) Model.RefreshUnwatchedDrives();
         }
     }
 }

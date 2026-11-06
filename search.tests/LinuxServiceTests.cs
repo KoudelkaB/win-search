@@ -586,6 +586,43 @@ namespace search.Tests
         }
 
         [Fact]
+        public void TheRootsOfAServiceSetUpAnewAreReportedLostWhenItGoes()
+        {
+            Assert.SkipUnless(OperatingSystem.IsLinux(), LinuxOnly);
+            using var service = new Running(admin: false, requestAll: false);
+            var lost = 0;
+            using var watch = LinuxServiceClient.TryWatch(service.Folder, _ => { }, _ => { }, () => Interlocked.Increment(ref lost));
+            Assert.NotNull(watch);
+
+            //Settings turned the service off and went on before the connection noticed: the
+            //roots must still learn it, or nothing would scan and watch them again
+            LinuxServiceClient.RetryNow();
+            service.Host.Dispose();
+
+            WaitFor(() => Volatile.Read(ref lost) == 1);
+        }
+
+        [Fact]
+        public void AConnectionAskedForWhileItDiesStillReportsItsRootsLost()
+        {
+            Assert.SkipUnless(OperatingSystem.IsLinux(), LinuxOnly);
+            using var service = new Running(admin: false, requestAll: false);
+            var lost = 0;
+            using var watch = LinuxServiceClient.TryWatch(service.Folder, _ => { }, _ => { }, () => Interlocked.Increment(ref lost));
+            Assert.NotNull(watch);
+
+            //Another thread wants the connection (window activation, a drive scan) just as it
+            //is found dead - before it told its roots
+            LinuxServiceClient.Dying = () => _ = LinuxServiceClient.Available; //Connection(), as WouldWatch and TryWatch
+            try
+            {
+                service.Host.Dispose();
+                WaitFor(() => Volatile.Read(ref lost) == 1);
+            }
+            finally { LinuxServiceClient.Dying = null; }
+        }
+
+        [Fact]
         public void ARootTheServiceRefusesStaysUnwatchedAndIsNotRetried()
         {
             Assert.SkipUnless(OperatingSystem.IsLinux(), LinuxOnly);

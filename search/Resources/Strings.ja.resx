@@ -156,6 +156,23 @@
   <data name="ServiceAllFiles" xml:space="preserve"><value>ファイルシステムサービスが実行中です。変更はリアルタイムで監視され、すべてのファイルが表示されます。</value></data>
   <data name="ServiceOwnFiles" xml:space="preserve"><value>ファイルシステムサービスが実行中です。変更はリアルタイムで監視され、アクセスできるファイルが表示されます。</value></data>
   <data name="ServiceNotAdmin" xml:space="preserve"><value>すべてのファイルを表示できるのは管理者 (wheel または sudo グループ) だけです。</value></data>
-  <data name="ServiceNotInstalled" xml:space="preserve"><value>ファイルシステムサービスがインストールされていません。変更はリアルタイムで監視されず、アクセスできるファイルだけが表示されます。installer/linux/install-service.sh でインストールできます。</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>ファイルシステムサービスがインストールされていません。変更はリアルタイムで監視されず、アクセスできるファイルだけが表示されます。</value></data>
   <data name="ServiceNotRunning" xml:space="preserve"><value>ファイルシステムサービスはインストールされていますが、実行されていません (systemctl status file-search-manager)。</value></data>
+  <data name="Settings" xml:space="preserve"><value>設定</value></data>
+  <data name="ServiceSection" xml:space="preserve"><value>ファイルシステムサービス</value></data>
+  <data name="ServiceAbout" xml:space="preserve"><value>すべてのディスクの変更をリアルタイムで監視し、管理者にはすべてのファイルを表示します。systemd の下で root として実行されます。</value></data>
+  <data name="InstallService" xml:space="preserve"><value>インストール</value></data>
+  <data name="UpdateService" xml:space="preserve"><value>更新</value></data>
+  <data name="RemoveService" xml:space="preserve"><value>削除</value></data>
+  <data name="ServiceOutdated" xml:space="preserve"><value>サービスはバージョン {0}、このアプリはバージョン {1} です。</value></data>
+  <data name="ServiceWorking" xml:space="preserve"><value>管理者の確認ダイアログで承認してください…</value></data>
+  <data name="ServiceCancelled" xml:space="preserve"><value>キャンセルしました。何も変更されていません。</value></data>
+  <data name="ServiceFailed" xml:space="preserve"><value>失敗しました: {0}</value></data>
+  <data name="ServiceNoPkexec" xml:space="preserve"><value>pkexec (polkit) がありません。代わりにターミナルで次を実行してください: {0}</value></data>
+  <data name="ServiceRemoveRunning" xml:space="preserve"><value>このアプリはサービス自身のコピーから実行されています。サービスを削除するとアプリも削除されます。別のコピーのアプリから削除してください。</value></data>
+  <data name="ServiceFlatpak" xml:space="preserve"><value>Flatpak 版ではファイルシステムサービスを使えません。サンドボックスがコンピューターのシステムフォルダーを隠し、サービスはサンドボックス外のプログラムにしか応答しないためです。リアルタイムの変更とすべてのファイルが必要な場合は、代わりに .rpm または .deb パッケージをインストールしてください。</value></data>
+  <data name="TurnOnService" xml:space="preserve"><value>オンにする</value></data>
+  <data name="TurnOffService" xml:space="preserve"><value>オフにする</value></data>
+  <data name="ServiceTurnedOff" xml:space="preserve"><value>ファイルシステムサービスはオフです。変更はリアルタイムで監視されず、アクセスできるファイルだけが表示されます。</value></data>
+  <data name="ServiceCopy" xml:space="preserve"><value>インストールすると、このアプリが root 所有で /opt/file-search-manager にコピーされます。サービスがユーザーの変更できるファイルを実行することはありません。</value></data>
 </root>

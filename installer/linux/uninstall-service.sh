@@ -6,6 +6,13 @@
 # Usage: sudo installer/linux/uninstall-service.sh
 set -eu
 
+# The package's service is the package's to keep or remove
+if [ -f /usr/lib/systemd/system/file-search-manager.service ] && [ ! -f /etc/systemd/system/file-search-manager.service ]; then
+    echo "The file-search-manager package provides the service: turn it off in Settings, or with" >&2
+    echo "sudo systemctl disable --now file-search-manager" >&2
+    exit 1
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
     echo "Run it with sudo." >&2
     exit 1

@@ -1,0 +1,102 @@
+# The .rpm and .deb packages of File Search Manager - the Linux counterpart of the Windows
+# installer. The release workflow builds them with nfpm (https://nfpm.goreleaser.com), run
+# from the repository root:
+#
+#   VERSION=0.9.7 nfpm package --config installer/linux/package/nfpm.yaml --packager deb
+#
+# after filling installer/linux/package/staging/ (not in git):
+#
+#   app/                          dotnet publish search -c Release -r linux-x64 --self-contained,
+#                                 without the portable app's service scripts
+#   file-search-manager.service   the unit (../file-search-manager.service) running
+#                                 /usr/lib/file-search-manager
+#   io.github.koudelkab.FileSearchManager.metainfo.xml   with the release added
+#
+# The app is installed root-owned, so the file system service runs these very files: a first
+# install turns it on (postinstall.sh), Settings turns it off and on, and a package update
+# restarts it on the new version. Nothing is copied, and nothing gets outdated.
+name: file-search-manager
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: semver # 0.9.7-rc1 becomes 0.9.7~rc1, which sorts before 0.9.7
+section: utils
+priority: optional
+maintainer: Bohdan Koudelka <33930155+KoudelkaB@users.noreply.github.com>
+vendor: Bohdan Koudelka
+homepage: https://koudelkab.github.io/win-search/
+license: MIT
+description: |-
+  Find files on every disk as you type
+  File Search Manager indexes your disks and filters millions of files and folders
+  as you type. It searches file contents and performs common file operations
+  directly from the result list. Its file system service tracks changes on every
+  disk live and shows administrators every file.
+
+contents:
+  - src: installer/linux/package/staging/app
+    dst: /usr/lib/file-search-manager
+    type: tree
+  - src: /usr/lib/file-search-manager/FileSearchManager
+    dst: /usr/bin/file-search-manager
+    type: symlink
+  - src: installer/linux/package/staging/file-search-manager.service
+    dst: /usr/lib/systemd/system/file-search-manager.service
+  - src: installer/linux/io.github.koudelkab.FileSearchManager.desktop
+    dst: /usr/share/applications/io.github.koudelkab.FileSearchManager.desktop
+  - src: installer/linux/package/staging/io.github.koudelkab.FileSearchManager.metainfo.xml
+    dst: /usr/share/metainfo/io.github.koudelkab.FileSearchManager.metainfo.xml
+  - src: installer/linux/icons/16x16/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/16x16/apps/io.github.koudelkab.FileSearchManager.png
+  - src: installer/linux/icons/24x24/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/24x24/apps/io.github.koudelkab.FileSearchManager.png
+  - src: installer/linux/icons/32x32/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/32x32/apps/io.github.koudelkab.FileSearchManager.png
+  - src: installer/linux/icons/48x48/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/48x48/apps/io.github.koudelkab.FileSearchManager.png
+  - src: installer/linux/icons/64x64/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/64x64/apps/io.github.koudelkab.FileSearchManager.png
+  - src: installer/linux/icons/128x128/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/128x128/apps/io.github.koudelkab.FileSearchManager.png
+  - src: installer/linux/icons/256x256/io.github.koudelkab.FileSearchManager.png
+    dst: /usr/share/icons/hicolor/256x256/apps/io.github.koudelkab.FileSearchManager.png
+
+scripts:
+  postinstall: installer/linux/package/postinstall.sh
+  preremove: installer/linux/package/preremove.sh
+  postremove: installer/linux/package/postremove.sh
+
+# Avalonia draws through X11 and fontconfig; .NET needs ICU. WebKitGTK shows the hex editor,
+# log explorer and calculator inside the app (without it they open in the browser), pkexec
+# asks for the administrator password in Settings.
+overrides:
+  rpm:
+    # By library rather than package name: the names differ between Fedora and openSUSE.
+    # ICU only as a recommendation - its library is versioned (libicuuc.so.76), and every
+    # desktop has it.
+    depends:
+      - libX11.so.6()(64bit)
+      - libICE.so.6()(64bit)
+      - libSM.so.6()(64bit)
+      - libfontconfig.so.1()(64bit)
+    recommends:
+      - libicu
+      - libwebkit2gtk-4.1.so.0()(64bit)
+      - /usr/bin/pkexec
+  deb:
+    depends:
+      - libx11-6
+      - libice6
+      - libsm6
+      - libfontconfig1
+      # Debian 11 (67) to Debian 13 (76), Ubuntu 22.04 (70) to 26.04 and the next ones
+      - libicu80 | libicu79 | libicu78 | libicu77 | libicu76 | libicu75 | libicu74 | libicu73 | libicu72 | libicu71 | libicu70 | libicu67
+    recommends:
+      - libwebkit2gtk-4.1-0
+      - pkexec | policykit-1
+
+rpm:
+  summary: Find files on every disk as you type
+  compression: xz
+deb:
+  compression: xz

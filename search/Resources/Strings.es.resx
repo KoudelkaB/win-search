@@ -156,6 +156,23 @@ Tamaño total: {1}
   <data name="ServiceAllFiles" xml:space="preserve"><value>El servicio del sistema de archivos está en ejecución: los cambios se supervisan en tiempo real y se muestran todos los archivos.</value></data>
   <data name="ServiceOwnFiles" xml:space="preserve"><value>El servicio del sistema de archivos está en ejecución: los cambios se supervisan en tiempo real y se muestran los archivos a los que tiene acceso.</value></data>
   <data name="ServiceNotAdmin" xml:space="preserve"><value>Solo los administradores (grupo wheel o sudo) pueden ver todos los archivos.</value></data>
-  <data name="ServiceNotInstalled" xml:space="preserve"><value>El servicio del sistema de archivos no está instalado: los cambios no se supervisan en tiempo real y solo se muestran los archivos a los que tiene acceso. Instálelo con installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>El servicio del sistema de archivos no está instalado: los cambios no se supervisan en tiempo real y solo se muestran los archivos a los que tiene acceso.</value></data>
   <data name="ServiceNotRunning" xml:space="preserve"><value>El servicio del sistema de archivos está instalado, pero no se está ejecutando (systemctl status file-search-manager).</value></data>
+  <data name="Settings" xml:space="preserve"><value>Configuración</value></data>
+  <data name="ServiceSection" xml:space="preserve"><value>Servicio del sistema de archivos</value></data>
+  <data name="ServiceAbout" xml:space="preserve"><value>Supervisa en tiempo real los cambios en todas las unidades y permite a los administradores ver todos los archivos. Se ejecuta como root bajo systemd.</value></data>
+  <data name="InstallService" xml:space="preserve"><value>Instalar</value></data>
+  <data name="UpdateService" xml:space="preserve"><value>Actualizar</value></data>
+  <data name="RemoveService" xml:space="preserve"><value>Quitar</value></data>
+  <data name="ServiceOutdated" xml:space="preserve"><value>El servicio ejecuta la versión {0}; esta aplicación es la versión {1}.</value></data>
+  <data name="ServiceWorking" xml:space="preserve"><value>Confírmelo en la solicitud de administrador…</value></data>
+  <data name="ServiceCancelled" xml:space="preserve"><value>Cancelado: no se ha cambiado nada.</value></data>
+  <data name="ServiceFailed" xml:space="preserve"><value>No ha funcionado: {0}</value></data>
+  <data name="ServiceNoPkexec" xml:space="preserve"><value>Falta pkexec (polkit). Ejecute esto en un terminal: {0}</value></data>
+  <data name="ServiceRemoveRunning" xml:space="preserve"><value>Esta aplicación se ejecuta desde la propia copia del servicio: quitar el servicio la eliminaría. Quítelo desde otra copia de la aplicación.</value></data>
+  <data name="ServiceFlatpak" xml:space="preserve"><value>La versión Flatpak no puede usar el servicio del sistema de archivos: su sandbox oculta las carpetas del sistema del equipo y el servicio solo atiende a programas fuera de un sandbox. Para cambios en tiempo real y todos los archivos, instale el paquete .rpm o .deb.</value></data>
+  <data name="TurnOnService" xml:space="preserve"><value>Activar</value></data>
+  <data name="TurnOffService" xml:space="preserve"><value>Desactivar</value></data>
+  <data name="ServiceTurnedOff" xml:space="preserve"><value>El servicio del sistema de archivos está desactivado: los cambios no se supervisan en tiempo real y solo se muestran los archivos a los que tiene acceso.</value></data>
+  <data name="ServiceCopy" xml:space="preserve"><value>La instalación copia esta aplicación a /opt/file-search-manager, con root como propietario: el servicio nunca ejecuta archivos que sus usuarios puedan cambiar.</value></data>
 </root>

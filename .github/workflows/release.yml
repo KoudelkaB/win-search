@@ -1,18 +1,53 @@
 name: release
 
-# Pushing a tag like v0.1.0 builds the installer and publishes a GitHub release.
-# The tag is the single source of truth for the version: MinVer stamps it into
-# the assemblies and the same tag names the installer artifact.
+# Pushing a tag like v0.1.0 builds the Windows installer and the Linux packages (.rpm, .deb
+# and a portable tar.gz) and publishes them as a GitHub release. The tag is the single
+# source of truth for the version: MinVer stamps it into the assemblies and the same tag names
+# every package. Started by hand (Run workflow), it builds the packages of any branch without
+# a release - they stay downloadable as the run's artifacts.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  # The version every package is named after: the tag's, or for a run started by hand the
+  # pre-release version MinVer stamps into that build (minver-cli is the same calculation)
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      date: ${{ steps.version.outputs.date }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # MinVer needs the tag history
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            dotnet tool install --global minver-cli --version 7.0.0
+            version="$("$HOME/.dotnet/tools/minver" --tag-prefix v --verbosity warn)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cs)" >> "$GITHUB_OUTPUT"
+          echo "Version $version"
+
+  windows:
+    needs: version
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,12 +80,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Derive version from the tag
-        shell: pwsh
-        run: |
-          $version = '${{ github.ref_name }}'.TrimStart('v')
-          "VERSION=$version" >> $env:GITHUB_ENV
-
       - name: Publish app and service and build installer
         shell: pwsh
         run: |
@@ -58,19 +87,145 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           .\tools\Build-Installer.ps1 -Version $env:VERSION -IsccPath $iscc
 
-      - name: Generate checksum
-        shell: pwsh
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows
+          path: installer/Output/FileSearchManager-Setup-${{ env.VERSION }}.exe
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APP_ID: io.github.koudelkab.FileSearchManager
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # MinVer needs the tag history
+          submodules: true
+
+      # The same web apps as the Windows installer, by the same rule (see that job)
+      - name: Update web apps to latest singleHtmlApps
+        shell: bash
         run: |
-          $file = "installer/Output/FileSearchManager-Setup-$env:VERSION.exe"
-          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToUpperInvariant()
-          "$hash  FileSearchManager-Setup-$env:VERSION.exe" | Set-Content installer/Output/SHA256SUMS.txt
+          pinned=$(git ls-tree HEAD external/singleHtmlApps | awk '{print $3}')
+          if [[ "$(git -C external/singleHtmlApps rev-parse --is-shallow-repository)" == true ]]; then
+            git -C external/singleHtmlApps fetch --unshallow origin
+          fi
+          git submodule update --init --remote external/singleHtmlApps
+          git -C external/singleHtmlApps log -1 --format="Using singleHtmlApps %H (%cs) %s"
+          if ! git -C external/singleHtmlApps merge-base --is-ancestor "$pinned" HEAD; then
+            echo "::error::singleHtmlApps upstream does not contain the pinned commit $pinned - merge it upstream before releasing"
+            exit 1
+          fi
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # The folder users unpack and run. It carries install-service.sh, so Settings (or sudo)
+      # can install the file system service from it.
+      - name: Publish app (linux-x64, self-contained)
+        shell: bash
+        run: dotnet publish search/search.csproj -c Release -r linux-x64 --self-contained true -o publish/file-search-manager
+
+      - name: Portable tar.gz
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -czf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" -C publish file-search-manager
+
+      - name: Stage the packages
+        shell: bash
+        run: |
+          stage=installer/linux/package/staging
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp -r publish/file-search-manager "$stage/app"
+          # The package manages its service itself: the portable app's scripts stay out
+          rm "$stage"/app/{install-service.sh,uninstall-service.sh,file-search-manager.service}
+          sed 's|@APPDIR@|/usr/lib/file-search-manager|g' installer/linux/file-search-manager.service > "$stage/file-search-manager.service"
+          # GNOME Software and KDE Discover show the version from the AppStream release entry
+          python3 - "installer/linux/$APP_ID.metainfo.xml" "$stage/$APP_ID.metainfo.xml" "$VERSION" "${{ needs.version.outputs.date }}" <<'EOF'
+          import sys
+          source, target, version, date = sys.argv[1:]
+          text = open(source, encoding="utf-8").read()
+          assert text.count("<releases>") == 1, "the metainfo needs one <releases> element"
+          text = text.replace("<releases>", f'<releases>\n    <release version="{version}" date="{date}"/>')
+          open(target, "w", encoding="utf-8").write(text)
+          EOF
+
+      - name: Install nfpm
+        shell: bash
+        env:
+          NFPM_VERSION: 2.48.0
+        run: |
+          cd "$RUNNER_TEMP"
+          archive="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/$archive"
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/checksums.txt"
+          grep " $archive\$" checksums.txt | sha256sum -c -
+          tar -xzf "$archive" nfpm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Build .rpm and .deb
+        shell: bash
+        run: |
+          nfpm package --config installer/linux/package/nfpm.yaml --packager rpm --target "dist/FileSearchManager-$VERSION-x86_64.rpm"
+          nfpm package --config installer/linux/package/nfpm.yaml --packager deb --target "dist/FileSearchManager-$VERSION-amd64.deb"
+
+      # As users install them: the .deb on this Ubuntu runner, where the service must start
+      # and go away again with the package, and the .rpm in a Fedora container (its
+      # dependencies resolve - a container has no systemd)
+      - name: Test the packages
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y "./dist/FileSearchManager-$VERSION-amd64.deb"
+          for _ in $(seq 30); do [[ -S /run/file-search-manager/service.sock ]] && break; sleep 1; done
+          systemctl --no-pager status file-search-manager.service
+          [[ -S /run/file-search-manager/service.sock ]]
+          [[ -x /usr/bin/file-search-manager ]]
+          sudo apt-get remove -y file-search-manager
+          # (not "! systemctl ...": bash -e lets a negated command fail unnoticed)
+          if systemctl is-active --quiet file-search-manager.service; then
+            echo "::error::the service still runs after the package was removed"
+            exit 1
+          fi
+          [[ ! -e /usr/lib/file-search-manager ]]
+          docker run --rm -v "$PWD/dist:/dist:ro" fedora:latest sh -ec "
+            dnf install -y --setopt=install_weak_deps=False /dist/FileSearchManager-$VERSION-x86_64.rpm
+            test -x /usr/bin/file-search-manager
+            rpm -V file-search-manager"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            installer/Output/FileSearchManager-Setup-${{ env.VERSION }}.exe
-            installer/Output/SHA256SUMS.txt
+          files: dist/*
           generate_release_notes: true
           # v1.2.3-rc1 style tags must never become "Latest" - the site and README link there
           prerelease: ${{ contains(github.ref_name, '-') }}

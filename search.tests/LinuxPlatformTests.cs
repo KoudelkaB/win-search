@@ -65,6 +65,52 @@ namespace search.Tests
             Assert.False(FsRoots.DefaultEnabled("/mnt/nas", DriveType.Network, "nfs4"));
         }
 
+        // Inside a Flatpak with --filesystem=host (a real table, shortened): the runtime's /usr
+        // and /etc files, the app's /app, the sandbox's own files, a single shared file
+        // (/.profile), the computer's folders shared one by one, a USB stick, and the computer's
+        // /usr and whole root under /run/host
+        const string FlatpakMountInfo =
+            "959 900 0:80 /newroot / rw,nosuid,nodev - tmpfs tmpfs rw\n" +
+            "1209 959 259:7 /var/lib/flatpak/runtime/org.gnome.Platform/x86_64/50/a1/files /usr ro,nosuid,nodev - ext4 /dev/nvme0n1p4 rw\n" +
+            "1211 1209 259:7 /var/lib/flatpak/runtime/org.freedesktop.Platform.GL.default/x86_64/25.08/b2/files /usr/lib/x86_64-linux-gnu/GL/default ro - ext4 /dev/nvme0n1p4 rw\n" +
+            "1220 959 259:7 /var/lib/flatpak/app/io.github.koudelkab.FileSearchManager/x86_64/master/c3/files /app ro - ext4 /dev/nvme0n1p4 rw\n" +
+            "1228 959 259:7 /etc/machine-id /etc/machine-id ro - ext4 /dev/nvme0n1p4 rw\n" +
+            "1237 959 259:7 /var/lib/flatpak/runtime/org.gnome.Platform/x86_64/50/a1/files/etc/fonts /etc/fonts ro - ext4 /dev/nvme0n1p4 rw\n" +
+            "1539 959 0:84 /bindfileOldfLp//deleted /.flatpak-info ro - tmpfs tmpfs rw\n" +
+            "1640 959 259:7 /.profile /.profile rw - ext4 /dev/nvme0n1p4 rw\n" +
+            "1701 959 259:7 /home /home rw - ext4 /dev/nvme0n1p4 rw\n" +
+            "1703 1701 259:2 / /home/user/Data rw - xfs /dev/nvme2n1p1 rw\n" +
+            "1706 1701 0:91 / /home/user/.local/share/flatpak rw - tmpfs tmpfs rw\n" +
+            "1711 959 259:7 /mnt /mnt rw - ext4 /dev/nvme0n1p4 rw\n" +
+            "1712 959 259:7 /opt /opt rw - ext4 /dev/nvme0n1p4 rw\n" +
+            "1713 959 0:29 /media /run/media rw - tmpfs tmpfs rw\n" +
+            "1714 1713 8:17 / /run/media/user/USB rw - vfat /dev/sdb1 rw\n" +
+            "1715 959 259:7 /usr /run/host/usr rw - ext4 /dev/nvme0n1p4 rw\n" +
+            "1717 959 259:7 / /run/host/root rw - ext4 /dev/nvme0n1p4 rw\n" +
+            "1751 1717 259:2 / /run/host/root/home/user/Data rw - xfs /dev/nvme2n1p1 rw\n" +
+            "1760 959 0:95 /export/projects /srv/projects rw - nfs4 nas:/export rw\n";
+
+        [Fact]
+        public void AFlatpakIndexesTheSharedFoldersOfTheComputerOnly()
+        {
+            //A shared folder of an NFS share is never asked - a dead server would never answer
+            var (roots, mountPoints) = FsRoots.ParseMountInfo(FlatpakMountInfo, sandboxed: true,
+                isFolder: path => path == "/srv/projects" ? throw new Xunit.Sdk.XunitException("asked a network share")
+                    : path != "/.profile");
+            Assert.Equal(new[] { "/mnt", "/opt", "/home", "/srv/projects", "/home/user/Data", "/run/media/user/USB" },
+                roots.Select(r => r.Path).ToArray());
+            //Walks still stop at the sandbox's own mounts
+            Assert.Contains("/home/user/.local/share/flatpak", mountPoints);
+            Assert.Contains("/usr", mountPoints);
+
+            //Without the sandbox rules the runtime and a single file would be "drives"
+            var unfiltered = FsRoots.ParseMountInfo(FlatpakMountInfo, isFolder: path => path != "/.profile" && path != "/srv/projects")
+                .Roots.Select(r => r.Path).ToArray();
+            Assert.Contains("/usr", unfiltered);
+            Assert.Contains("/etc/fonts", unfiltered);
+            Assert.Contains("/.profile", unfiltered);
+        }
+
         [Theory]
         [InlineData("/home/user/a.txt", "/home")]
         [InlineData("/home", "/home")]

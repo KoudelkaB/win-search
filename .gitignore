@@ -17,6 +17,8 @@ obj/
 # Build outputs of the installer pipeline
 /publish/
 /installer/Output/
+/dist/
+/installer/linux/package/staging/
 
 # Generated winget manifests - the source of truth is tools/New-WingetManifest.ps1
 # plus tools/winget-locales.json; the output belongs in a winget-pkgs fork, not here.

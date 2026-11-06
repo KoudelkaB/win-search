@@ -50,6 +50,14 @@ namespace search.Models
             "/var/lib/docker", "/var/lib/containers", "/var/lib/flatpak/runtime", "/run/user", "/run/snapd",
             "/run/credentials", "/run/lock", "/run/netns", "/run/docker", "/run/host", "/tmp/.mount_" };
 
+        /// <summary>
+        /// Inside a Flatpak sandbox: what the sandbox puts in place of the computer's own
+        /// folders - the runtime's /usr and /etc (the computer's are under /run/host), the
+        /// app's /app and the sandbox's own files. Only the folders the sandbox shares (home,
+        /// data disks, /mnt, /media...) are the computer's disks.
+        /// </summary>
+        static readonly string[] SandboxTrees = { "/usr", "/etc", "/app", "/run/flatpak", "/.flatpak-info" };
+
         static volatile Snapshot current;
         static long loadedAt;
 
@@ -89,7 +97,7 @@ namespace search.Models
             var snapshot = current;
             var now = Environment.TickCount64;
             if (snapshot != null && !force && now - Interlocked.Read(ref loadedAt) < 5000) return snapshot;
-            try { snapshot = Parse(ReadMountInfo()); }
+            try { snapshot = Parse(ReadMountInfo(), Shell.IsFlatpak, Directory.Exists); }
             catch { snapshot ??= new Snapshot(); }
             current = snapshot;
             Interlocked.Exchange(ref loadedAt, now);
@@ -100,9 +108,12 @@ namespace search.Models
         internal static void Reset() => current = null;
 
         /// <summary>The roots and all mount points of a mount table (tests)</summary>
-        internal static (IReadOnlyList<FsRoot> Roots, IReadOnlyCollection<string> MountPoints) ParseMountInfo(string mountInfo)
+        /// <param name="sandboxed">The table is a Flatpak sandbox's</param>
+        /// <param name="isFolder">Whether a mount point is a folder (sandboxed only)</param>
+        internal static (IReadOnlyList<FsRoot> Roots, IReadOnlyCollection<string> MountPoints) ParseMountInfo(string mountInfo,
+            bool sandboxed = false, Func<string, bool> isFolder = null)
         {
-            var snapshot = Parse(mountInfo);
+            var snapshot = Parse(mountInfo, sandboxed, isFolder ?? Directory.Exists);
             return (snapshot.Roots, snapshot.MountPoints);
         }
 
@@ -140,7 +151,7 @@ namespace search.Models
             return entries;
         }
 
-        static Snapshot Parse(string mountInfo)
+        static Snapshot Parse(string mountInfo, bool sandboxed, Func<string, bool> isFolder)
         {
             var result = new Snapshot();
             var roots = new List<FsRoot>();
@@ -151,7 +162,16 @@ namespace search.Models
             //outer one stays a root and the inner duplicate (a bind mount) is skipped
             foreach (var e in entries.OrderBy(e => e.MountPoint.Length).ThenBy(e => e.MountPoint, StringComparer.Ordinal))
             {
-                if (PseudoFormats.Contains(e.Format) || IsSystemPath(e.MountPoint)) continue;
+                if (PseudoFormats.Contains(e.Format) || IsSystemPath(e.MountPoint, SystemTrees)) continue;
+                //A Flatpak shares the computer's folders one by one - single files among them
+                //(/.profile); the runtime's and the app's own files are not the computer's.
+                //Only a bind mount (a subtree, not "/") can be a file, and only a local file system
+                //is asked: a network share's answer may never come (a dead NFS server) - and the
+                //drive list is read on the UI thread. A shared network file stays a root that
+                //its walk finds empty.
+                if (sandboxed && (IsSystemPath(e.MountPoint, SandboxTrees)
+                    || e.FsRoot != "/" && LocalFormats.Contains(e.Format) && !isFolder(e.MountPoint)))
+                    continue;
                 if (e.Format.StartsWith("fuse.", StringComparison.Ordinal) && !NetworkFormats.Contains(e.Format)
                     && !LocalFormats.Contains(e.Format) && !e.Format.Equals("fuse.ntfs-3g", StringComparison.Ordinal))
                     continue; //Virtual FUSE views (gvfs, portals, appimage mounts...)
@@ -174,9 +194,9 @@ namespace search.Models
             return LocalFormats.Contains(format) ? DriveType.Fixed : DriveType.Unknown;
         }
 
-        static bool IsSystemPath(string mountPoint)
+        static bool IsSystemPath(string mountPoint, string[] trees)
         {
-            foreach (var tree in SystemTrees)
+            foreach (var tree in trees)
                 if (mountPoint.Equals(tree, StringComparison.Ordinal)
                     || mountPoint.StartsWith(tree + "/", StringComparison.Ordinal)
                     || tree.EndsWith('_') && mountPoint.StartsWith(tree, StringComparison.Ordinal))

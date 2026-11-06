@@ -310,6 +310,23 @@ Open them anyway?</value></data>
   <data name="ServiceAllFiles" xml:space="preserve"><value>The file system service is running: changes are tracked live and every file is shown.</value></data>
   <data name="ServiceOwnFiles" xml:space="preserve"><value>The file system service is running: changes are tracked live; the files you can access are shown.</value></data>
   <data name="ServiceNotAdmin" xml:space="preserve"><value>Only administrators (the wheel or sudo group) can see every file.</value></data>
-  <data name="ServiceNotInstalled" xml:space="preserve"><value>The file system service is not installed: changes are not tracked live and only the files you can access are shown. Install it with installer/linux/install-service.sh.</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>The file system service is not installed: changes are not tracked live and only the files you can access are shown.</value></data>
   <data name="ServiceNotRunning" xml:space="preserve"><value>The file system service is installed but not running (systemctl status file-search-manager).</value></data>
+  <data name="Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="ServiceSection" xml:space="preserve"><value>File system service</value></data>
+  <data name="ServiceAbout" xml:space="preserve"><value>Tracks changes on every disk live and lets administrators see every file. It runs as root under systemd.</value></data>
+  <data name="InstallService" xml:space="preserve"><value>Install</value></data>
+  <data name="UpdateService" xml:space="preserve"><value>Update</value></data>
+  <data name="RemoveService" xml:space="preserve"><value>Remove</value></data>
+  <data name="ServiceOutdated" xml:space="preserve"><value>The service runs version {0}, this app is version {1}.</value></data>
+  <data name="ServiceWorking" xml:space="preserve"><value>Confirm it in the administrator prompt…</value></data>
+  <data name="ServiceCancelled" xml:space="preserve"><value>Cancelled - nothing was changed.</value></data>
+  <data name="ServiceFailed" xml:space="preserve"><value>It did not work: {0}</value></data>
+  <data name="ServiceNoPkexec" xml:space="preserve"><value>pkexec (polkit) is missing. Run this in a terminal instead: {0}</value></data>
+  <data name="ServiceRemoveRunning" xml:space="preserve"><value>This app runs from the service's own copy - removing the service would delete it. Remove it from another copy of the app.</value></data>
+  <data name="ServiceFlatpak" xml:space="preserve"><value>The Flatpak version cannot use the file system service: its sandbox hides the computer's system folders, and the service serves only programs outside a sandbox. For live changes and every file, install the .rpm or .deb package instead.</value></data>
+  <data name="TurnOnService" xml:space="preserve"><value>Turn on</value></data>
+  <data name="TurnOffService" xml:space="preserve"><value>Turn off</value></data>
+  <data name="ServiceTurnedOff" xml:space="preserve"><value>The file system service is turned off: changes are not tracked live and only the files you can access are shown.</value></data>
+  <data name="ServiceCopy" xml:space="preserve"><value>Installing copies this app to /opt/file-search-manager, owned by root: the service never runs files its users can change.</value></data>
 </root>

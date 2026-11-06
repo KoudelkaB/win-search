@@ -43,6 +43,12 @@
     <None Include="..\external\singleHtmlApps\LICENSE" Link="WebApps\LICENSE.singleHtmlApps.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Linux: the file system service's scripts and unit next to the app. Settings installs the
+       service from them, and a release can be set up by hand with sudo ./install-service.sh. -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Linux')))">
+    <None Include="..\installer\linux\install-service.sh;..\installer\linux\uninstall-service.sh;..\installer\linux\file-search-manager.service" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The WebView2 package always references its WPF and WinForms controls; only its Core
        interop is used (behind Avalonia's NativeWebView), and the WPF one drags in WindowsBase -->
   <Target Name="DropWebView2UiReferences" BeforeTargets="ResolveAssemblyReferences">

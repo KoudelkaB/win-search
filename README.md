@@ -41,6 +41,13 @@ The installer is named `FileSearchManager-Setup-<version>.exe`. It installs `Fil
 
 The **Modify** button in Windows Apps & features launches the cached installer and offers **Modify settings**: it keeps the installed files and only re-applies the options, so the service can be added or removed afterwards without reinstalling. Running the installer of the version that is already installed offers the same choice. Any other version is an upgrade, whose task page changes the service just as well.
 
+### Linux
+
+Every release also carries Linux packages, the counterpart of the Windows installer:
+
+- `FileSearchManager-<version>-x86_64.rpm` for Fedora, RHEL and openSUSE, `FileSearchManager-<version>-amd64.deb` for Debian, Ubuntu and Mint. Open the downloaded file in the software center, or run `sudo dnf install ./FileSearchManager-<version>-x86_64.rpm` or `sudo apt install ./FileSearchManager-<version>-amd64.deb`. It installs the app (`file-search-manager`, with a menu entry) and turns the optional file system service on: live changes on every disk, and every file for administrators. **⚙ Settings** turns the service off and on again; installing a newer package updates both. Remove it like any other package.
+- `FileSearchManager-<version>-linux-x64.tar.gz` - a portable build for other distributions: unpack it anywhere and run `file-search-manager/FileSearchManager`. **⚙ Settings** installs the service from it (a root-owned copy of the app in `/opt/file-search-manager`), updates and removes it; `sudo ./install-service.sh` in that folder does the same.
+
 ## Quick Start
 
 1. Start **File Search Manager**.
@@ -86,7 +93,9 @@ The script clears stale generated publish inputs, rebuilds the app and service, 
 their versions match, and then invokes Inno Setup. The main publish output is
 `File Search Manager.exe`; the installer is written under `installer/Output`.
 
-Release versions come from `v*` git tags. The release workflow publishes the installer and SHA-256 checksum.
+Release versions come from `v*` git tags. The release workflow publishes the Windows installer, the Linux .rpm, .deb and tar.gz, and their SHA-256 checksums. Started by hand (**Run workflow**), it builds the same packages for any branch without a release.
+
+On Linux, `dotnet build search/search.csproj -c Release` builds the app; `sudo installer/linux/install-service.sh` installs the file system service from that build.
 
 ## winget Publishing
 

@@ -156,6 +156,23 @@
   <data name="ServiceAllFiles" xml:space="preserve"><value>文件系统服务正在运行：实时跟踪更改，并显示所有文件。</value></data>
   <data name="ServiceOwnFiles" xml:space="preserve"><value>文件系统服务正在运行：实时跟踪更改，显示您有权访问的文件。</value></data>
   <data name="ServiceNotAdmin" xml:space="preserve"><value>只有管理员（wheel 或 sudo 组）才能看到所有文件。</value></data>
-  <data name="ServiceNotInstalled" xml:space="preserve"><value>未安装文件系统服务：不会实时跟踪更改，只显示您有权访问的文件。可使用 installer/linux/install-service.sh 安装。</value></data>
+  <data name="ServiceNotInstalled" xml:space="preserve"><value>未安装文件系统服务：不会实时跟踪更改，只显示您有权访问的文件。</value></data>
   <data name="ServiceNotRunning" xml:space="preserve"><value>文件系统服务已安装，但未运行（systemctl status file-search-manager）。</value></data>
+  <data name="Settings" xml:space="preserve"><value>设置</value></data>
+  <data name="ServiceSection" xml:space="preserve"><value>文件系统服务</value></data>
+  <data name="ServiceAbout" xml:space="preserve"><value>实时跟踪所有磁盘上的更改，并让管理员看到所有文件。它在 systemd 下以 root 身份运行。</value></data>
+  <data name="InstallService" xml:space="preserve"><value>安装</value></data>
+  <data name="UpdateService" xml:space="preserve"><value>更新</value></data>
+  <data name="RemoveService" xml:space="preserve"><value>移除</value></data>
+  <data name="ServiceOutdated" xml:space="preserve"><value>服务运行的是版本 {0}，此应用是版本 {1}。</value></data>
+  <data name="ServiceWorking" xml:space="preserve"><value>请在管理员提示中确认…</value></data>
+  <data name="ServiceCancelled" xml:space="preserve"><value>已取消，未做任何更改。</value></data>
+  <data name="ServiceFailed" xml:space="preserve"><value>操作失败：{0}</value></data>
+  <data name="ServiceNoPkexec" xml:space="preserve"><value>缺少 pkexec（polkit）。请改为在终端中运行：{0}</value></data>
+  <data name="ServiceRemoveRunning" xml:space="preserve"><value>此应用正从服务自己的副本运行，移除服务会将其删除。请从应用的其他副本中移除。</value></data>
+  <data name="ServiceFlatpak" xml:space="preserve"><value>Flatpak 版本无法使用文件系统服务：其沙盒会隐藏计算机的系统文件夹，而服务只为沙盒外的程序提供服务。如需实时更改和所有文件，请改为安装 .rpm 或 .deb 软件包。</value></data>
+  <data name="TurnOnService" xml:space="preserve"><value>开启</value></data>
+  <data name="TurnOffService" xml:space="preserve"><value>关闭</value></data>
+  <data name="ServiceTurnedOff" xml:space="preserve"><value>文件系统服务已关闭：不会实时跟踪更改，只显示您有权访问的文件。</value></data>
+  <data name="ServiceCopy" xml:space="preserve"><value>安装会将此应用复制到 /opt/file-search-manager，所有者为 root：服务绝不会运行其用户可以更改的文件。</value></data>
 </root>

@@ -27,11 +27,20 @@ namespace search.Models.LinuxService
         const int ConnectTimeoutMs = 1000, ReplyTimeoutMs = 3000, RetryAfterMs = 5000;
 
         static readonly object gate = new();
+        /// <summary>Tests: runs when a connection has just died, before its roots learn it</summary>
+        internal static Action Dying;
         static WatchConnection connection;
         static long lastFailure; //Environment.TickCount64 of the last failed connect, 0 = none
 
-        /// <summary>The unit install-service.sh writes - present while the service is installed</summary>
-        internal static string UnitPath = "/etc/systemd/system/file-search-manager.service";
+        /// <summary>
+        /// The units of an installed service: the one install-service.sh writes, and the one
+        /// the .rpm and .deb packages ship
+        /// </summary>
+        internal static string[] UnitPaths =
+        {
+            "/etc/systemd/system/file-search-manager.service",
+            "/usr/lib/systemd/system/file-search-manager.service"
+        };
 
         /// <summary>The service is started (its socket exists - systemd removes it with the service)</summary>
         public static bool Installed => OperatingSystem.IsLinux() && File.Exists(SocketPath);
@@ -40,7 +49,7 @@ namespace search.Models.LinuxService
         {
             get
             {
-                if (!Installed) return File.Exists(UnitPath) ? ServiceStatus.NotRunning : ServiceStatus.NotInstalled;
+                if (!Installed) return UnitPaths.Any(File.Exists) ? ServiceStatus.NotRunning : ServiceStatus.NotInstalled;
                 var c = Connection();
                 return c == null ? ServiceStatus.NotRunning
                     : c.GrantedMode == ServiceProtocol.ModeAll ? ServiceStatus.AllFiles : ServiceStatus.OwnFiles;
@@ -59,7 +68,9 @@ namespace search.Models.LinuxService
             lock (gate)
             {
                 if (connection is { Dead: false }) return connection;
-                connection?.Dispose();
+                //A dead connection is its own to wind up: Fail reports every watched root lost.
+                //Disposing it here could overtake that and silence them for good - Dispose is
+                //for Reset, whose caller watches every root again.
                 connection = null;
                 if (!Installed || lastFailure != 0 && Environment.TickCount64 - lastFailure < RetryAfterMs) return null;
                 connection = WatchConnection.Open(RequestAllFiles() ? ServiceProtocol.ModeAll : ServiceProtocol.ModeOwn);
@@ -230,6 +241,18 @@ namespace search.Models.LinuxService
             return node;
         }
 
+        /// <summary>
+        /// The service was set up anew (installed, updated, removed, turned on or off): connect
+        /// at the next need instead of waiting out the pause after a failed connect. Unlike
+        /// Reset, a connection that still looks alive is kept - should its service be gone,
+        /// its own end reports the watched roots lost, and they are scanned and watched anew.
+        /// Reset would silence that and leave them watched by nothing.
+        /// </summary>
+        public static void RetryNow()
+        {
+            lock (gate) lastFailure = 0;
+        }
+
         /// <summary>Drop the connection - the every-file setting changed; the caller rescans and watches again</summary>
         public static void Reset()
         {
@@ -394,6 +417,7 @@ namespace search.Models.LinuxService
             {
                 if (dead && disposed) return;
                 dead = true;
+                Dying?.Invoke();
                 foreach (var answer in pending.Values) answer.TrySetResult("connection lost");
                 foreach (var watch in roots.Values) watch.Lost();
                 roots.Clear();

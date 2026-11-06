@@ -1,6 +1,6 @@
 # File Search Manager file system service: live changes (fanotify) and the every-file view
-# for administrators on Linux. Installed by install-service.sh, which replaces @APPDIR@
-# with the root-owned copy of the app it runs.
+# for administrators on Linux. @APPDIR@ is the root-owned app it runs: the copy
+# install-service.sh makes, or /usr/lib/file-search-manager of the .rpm and .deb packages.
 [Unit]
 Description=File Search Manager file system service
 After=local-fs.target

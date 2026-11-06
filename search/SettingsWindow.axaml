@@ -1,0 +1,37 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:search"
+        x:Class="search.SettingsWindow"
+        Title="{local:Loc Key=Settings}"
+        Icon="/Assets/app.ico"
+        SizeToContent="WidthAndHeight"
+        CanResize="False"
+        CanMinimize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="16" MinWidth="400">
+        <!-- Linux: the optional file system service (live changes, every file for administrators) -->
+        <StackPanel x:Name="servicePanel" Spacing="6" MaxWidth="480">
+            <TextBlock FontWeight="SemiBold" Text="{local:Loc Key=ServiceSection}"/>
+            <TextBlock x:Name="serviceAbout" TextWrapping="Wrap" FontSize="11" Opacity="0.75" Text="{local:Loc Key=ServiceAbout}"/>
+            <TextBlock x:Name="serviceCopy" TextWrapping="Wrap" FontSize="11" Opacity="0.75" IsVisible="False" Text="{local:Loc Key=ServiceCopy}"/>
+            <TextBlock x:Name="serviceState" TextWrapping="Wrap" Text="{local:Loc Key=Checking}"/>
+            <TextBlock x:Name="serviceVersion" TextWrapping="Wrap" IsVisible="False"/>
+            <StackPanel x:Name="serviceButtons" Orientation="Horizontal" Spacing="6">
+                <Button x:Name="installService" Content="{local:Loc Key=InstallService}" MinWidth="90" IsVisible="False" Click="Install_Click"/>
+                <Button x:Name="updateService" Content="{local:Loc Key=UpdateService}" MinWidth="90" IsVisible="False" Click="Install_Click"/>
+                <Button x:Name="removeService" Content="{local:Loc Key=RemoveService}" MinWidth="90" IsVisible="False" Click="Remove_Click"/>
+                <Button x:Name="turnOnService" Content="{local:Loc Key=TurnOnService}" MinWidth="90" IsVisible="False" Click="TurnOn_Click"/>
+                <Button x:Name="turnOffService" Content="{local:Loc Key=TurnOffService}" MinWidth="90" IsVisible="False" Click="TurnOff_Click"/>
+            </StackPanel>
+            <SelectableTextBlock x:Name="serviceMessage" TextWrapping="Wrap" FontSize="11" IsVisible="False"/>
+            <CheckBox x:Name="showAllFiles" VerticalContentAlignment="Center" Margin="0,4,0,0">
+                <TextBlock TextWrapping="Wrap" Text="{local:Loc Key=ShowAllFiles}"/>
+            </CheckBox>
+        </StackPanel>
+        <WrapPanel HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="okButton" Content="{local:Loc Key=OK}" MinWidth="80" Margin="3" IsDefault="True" Classes="accent" Click="Ok_Click"/>
+            <Button x:Name="cancelButton" Content="{local:Loc Key=Cancel}" MinWidth="70" Margin="3" IsCancel="True" Click="Cancel_Click"/>
+        </WrapPanel>
+    </StackPanel>
+</Window>

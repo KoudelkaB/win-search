@@ -5,9 +5,17 @@
 # Run it again after updating the app; uninstall-service.sh removes both.
 #
 # Usage: sudo installer/linux/install-service.sh [app folder]
-#   app folder: the built app (default: search/bin/Release/net10.0 of this repository -
-#               dotnet build search -c Release)
+#   app folder: the built app (default: the folder of this script when the app is next to
+#               it - a release or the app's own Settings - otherwise search/bin/Release/net10.0
+#               of this repository: dotnet build search -c Release)
 set -eu
+
+# The .rpm and .deb packages ship the service themselves, running the package's own files
+if [ -f /usr/lib/systemd/system/file-search-manager.service ]; then
+    echo "The file-search-manager package provides the service: turn it on in Settings, or with" >&2
+    echo "sudo systemctl enable --now file-search-manager" >&2
+    exit 1
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Run it with sudo." >&2
@@ -15,7 +23,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 here=$(cd "$(dirname "$0")" && pwd)
-source=${1:-$here/../../search/bin/Release/net10.0}
+if [ -x "$here/FileSearchManager" ]; then default=$here; else default=$here/../../search/bin/Release/net10.0; fi
+source=${1:-$default}
 target=/opt/file-search-manager
 unit=/etc/systemd/system/file-search-manager.service
 
