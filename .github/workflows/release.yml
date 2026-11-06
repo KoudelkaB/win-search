@@ -145,7 +145,8 @@ jobs:
           mkdir -p dist
           tar -czf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" -C publish file-search-manager
           # The licenses travel with it, the bundled .NET runtime's notices included
-          tar -tzf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" | grep -qx "file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt"
+          # (not "grep -q": it stops at the first match, and pipefail then fails on tar's broken pipe)
+          tar -tzf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" | grep -x "file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt" > /dev/null
 
       - name: Stage the packages
         shell: bash

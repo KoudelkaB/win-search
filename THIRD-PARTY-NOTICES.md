@@ -94,7 +94,7 @@ managed interop assembly is shipped, and it is not used there.
 - Copyright (c) 2026 KoudelkaB
 - License: MIT (also shipped as `WebApps/LICENSE.singleHtmlApps.txt`)
 
-### System.ServiceProcess.ServiceController 10.0.11 (Windows service only)
+### System.ServiceProcess.ServiceController 10.0.11 and System.Diagnostics.EventLog 10.0.11 (Windows service only)
 
 - Project: https://github.com/dotnet/runtime
 - Copyright (c) .NET Foundation and Contributors
