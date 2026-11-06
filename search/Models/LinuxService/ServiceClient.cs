@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -97,7 +98,7 @@ namespace search.Models.LinuxService
             }
         }
 
-        static List<INode> Walk(string root, CancellationToken cancellationToken)
+        static List<FileNode> Walk(string root, CancellationToken cancellationToken)
         {
             using var socket = Connect();
             using var cancel = cancellationToken.Register(() => { try { socket.Dispose(); } catch { } });
@@ -108,30 +109,116 @@ namespace search.Models.LinuxService
             var request = ServiceProtocol.Begin(ServiceProtocol.Walk);
             request.Writer.Write(root);
             ServiceProtocol.Send(stream, request);
-            var nodes = new List<INode>();
-            while (true)
+
+            //Millions of items: the chunks are decoded side by side as they come, and their
+            //folder totals summed afterwards. On threads of their own, like the walker's: the
+            //pool is busy while the app starts and adds threads only slowly.
+            var decoderCount = Math.Max(2, Environment.ProcessorCount / 4);
+            using var frames = new BlockingCollection<(int Index, byte[] Frame)>(decoderCount * 2);
+            var chunks = new ConcurrentDictionary<int, Chunk>();
+            Exception failure = null;
+            var decoders = Enumerable.Range(0, decoderCount).Select(_ =>
             {
-                var frame = ServiceProtocol.ReadFrame(stream, ServiceProtocol.MaxResponseFrame)
-                    ?? throw new EndOfStreamException("the service closed the walk");
-                using var r = ServiceProtocol.Open(frame, out var type);
-                switch (type)
+                var decoder = new Thread(() =>
                 {
-                    case ServiceProtocol.WalkNodes:
-                        var count = r.ReadInt32();
-                        for (var i = 0; i < count; i++) nodes.Add(ToNode(r.ReadString(), ServiceProtocol.ReadMetadata(r)));
-                        break;
-                    case ServiceProtocol.WalkEnd:
-                        var ok = r.ReadBoolean();
-                        var error = r.ReadString();
-                        if (!ok) throw new IOException(error);
-                        return nodes;
-                    default:
-                        throw new InvalidDataException($"unexpected message {type} in a walk");
+                    foreach (var (index, frame) in frames.GetConsumingEnumerable())
+                        if (!cancellationToken.IsCancellationRequested) //Then only let the rest go
+                            try { chunks[index] = Decode(frame); }
+                            catch (Exception e) { Interlocked.CompareExchange(ref failure, e, null); } //Reported at the end
+                })
+                { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "service walk decoder" };
+                decoder.Start();
+                return decoder;
+            }).ToArray();
+            try
+            {
+                for (var count = 0; ; count++)
+                {
+                    var frame = ServiceProtocol.ReadFrame(stream, ServiceProtocol.MaxResponseFrame)
+                        ?? throw new EndOfStreamException("the service closed the walk");
+                    if (frame[0] == ServiceProtocol.WalkNodes)
+                    {
+                        frames.Add((count, frame), cancellationToken);
+                        continue;
+                    }
+                    using var r = ServiceProtocol.Open(frame, out var type);
+                    if (type != ServiceProtocol.WalkEnd) throw new InvalidDataException($"unexpected message {type} in a walk");
+                    var ok = r.ReadBoolean();
+                    var error = r.ReadString();
+                    if (!ok) throw new IOException(error);
+                    frames.CompleteAdding();
+                    foreach (var decoder in decoders) decoder.Join();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (failure != null) throw new InvalidDataException($"a walk chunk could not be read: {failure.Message}", failure);
+                    var nodes = Assemble(Enumerable.Range(0, count).Select(i => chunks[i]), cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return nodes;
                 }
+            }
+            finally
+            {
+                //Also when the walk failed: the decoders finish what they have before the
+                //queue goes away under them
+                frames.CompleteAdding();
+                foreach (var decoder in decoders) decoder.Join();
             }
         }
 
-        /// <summary>A walked item as the app's own walk builds it - folder totals included</summary>
+        /// <summary>One chunk of a walk: its items, and the folder each run of them is in</summary>
+        sealed record Chunk(List<(string Folder, int Start, int Count)> Groups, List<FileNode> Nodes);
+
+        static Chunk Decode(byte[] frame)
+        {
+            using var r = ServiceProtocol.Open(frame, out _);
+            var groups = new List<(string, int, int)>();
+            var nodes = new List<FileNode>();
+            for (var left = r.ReadInt32(); left > 0; left--)
+            {
+                var folder = r.ReadString();
+                var count = r.ReadInt32();
+                if (count < 0) throw new InvalidDataException("a negative item count");
+                groups.Add((folder, nodes.Count, count));
+                //The root's group (no folder) holds its whole path
+                var prefix = folder.Length == 0 ? null : ServiceProtocol.PrefixOf(folder);
+                for (var i = 0; i < count; i++)
+                    nodes.Add(ToNode(prefix == null ? r.ReadString() : ServiceProtocol.ReadString(r, frame, prefix),
+                        ServiceProtocol.ReadMetadata(r)));
+            }
+            return new Chunk(groups, nodes);
+        }
+
+        static List<FileNode> Assemble(IEnumerable<Chunk> chunks, CancellationToken cancellationToken)
+        {
+            var decoded = chunks.ToList();
+            var nodes = new List<FileNode>(decoded.Sum(c => c.Nodes.Count));
+            var totals = new DirectoryWalker.StreamedTotals();
+            foreach (var chunk in decoded)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var (folder, start, count) in chunk.Groups)
+                {
+                    if (folder.Length == 0)
+                    {
+                        //The root itself, first and alone
+                        if (nodes.Count > 0 || count != 1) throw new InvalidDataException("a second root in a walk");
+                        totals.Root(chunk.Nodes[start]);
+                        nodes.Add(chunk.Nodes[start]);
+                        continue;
+                    }
+                    var pending = totals.FolderAt(folder);
+                    for (var i = start; i < start + count; i++)
+                    {
+                        totals.Add(pending, chunk.Nodes[i]);
+                        nodes.Add(chunk.Nodes[i]);
+                    }
+                }
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            totals.Complete();
+            return nodes;
+        }
+
+        /// <summary>A walked item as the app's own walk builds it, before the folder totals</summary>
         internal static FileNode ToNode(string path, ServiceMetadata metadata)
         {
             var node = FileNode.Create(path, metadata.ToSnapshot());

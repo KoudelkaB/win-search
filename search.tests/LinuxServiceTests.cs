@@ -621,6 +621,48 @@ namespace search.Tests
             }
         }
 
+        [Fact]
+        public void AFolderWithMoreItemsThanAChunkComesWhole()
+        {
+            Assert.SkipUnless(OperatingSystem.IsLinux() && LinuxDirectoryReader.IsSupported, LinuxOnly);
+            using var service = new Running(admin: true, requestAll: true);
+            var big = Directory.CreateDirectory(Path.Combine(service.Folder, "big", "inner")).FullName;
+            //One folder with more items than a chunk takes, and one that shares a chunk with others
+            for (var i = 0; i < 9000; i++) File.WriteAllBytes(Path.Combine(i < 8500 ? big : Path.GetDirectoryName(big), $"f{i}"), new byte[i % 7]);
+            Directory.CreateDirectory(Path.Combine(big, "after")); //Listed after its folder was split over chunks
+            File.WriteAllText(Path.Combine(big, "after", "x"), "xyz");
+
+            var served = LinuxServiceClient.TryWalk(service.Folder, CancellationToken.None);
+            var own = DirectoryWalker.Walk(new DirectoryInfo(service.Folder), TimeSpan.FromSeconds(15), CancellationToken.None, true)
+                .ToDictionary(n => n.FullName);
+
+            Assert.NotNull(served);
+            Assert.Equal(own.Count, served.Count);
+            foreach (var node in served)
+                Assert.Equal((own[node.FullName].Size, own[node.FullName].Count), (node.Size, node.Count));
+            Assert.Equal(9005U, own[service.Folder].Count); //9000 files, big, inner, after, x - and the test service's socket
+        }
+
+        [Fact]
+        public void AWalkCancelledWhileItsChunksAreDecodedEndsCleanly()
+        {
+            Assert.SkipUnless(OperatingSystem.IsLinux() && LinuxDirectoryReader.IsSupported, LinuxOnly);
+            using var service = new Running(admin: true, requestAll: true);
+            var folder = Directory.CreateDirectory(Path.Combine(service.Folder, "many")).FullName;
+            for (var i = 0; i < 40_000; i++) File.WriteAllBytes(Path.Combine(folder, $"file-with-a-longer-name-{i}"), Array.Empty<byte>());
+            var whole = LinuxServiceClient.TryWalk(service.Folder, CancellationToken.None).Count;
+
+            var cancelled = 0;
+            for (var round = 0; round < 20; round++)
+            {
+                using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(round * 3));
+                try { Assert.Equal(whole, LinuxServiceClient.TryWalk(service.Folder, cancel.Token).Count); }
+                catch (OperationCanceledException) { cancelled++; }
+            }
+
+            Assert.True(cancelled > 0); //Some ended half way - and none took the process with it
+        }
+
         /// <summary>A connection that says nothing</summary>
         static NetworkStream Silent(string socketPath)
         {

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 
 namespace search.Models.LinuxService
@@ -28,6 +29,8 @@ namespace search.Models.LinuxService
     internal sealed class ServiceHost : IDisposable
     {
         const int MaxQueuedChanges = 200_000, MaxChangesPerFrame = 4096, MaxNodesPerFrame = 8192;
+        /// <summary>Listed folders a walk may have waiting for the client</summary>
+        const int MaxQueuedFolders = 1024;
         /// <summary>An app holds one watch connection and one per running walk</summary>
         const int MaxConnectionsPerUser = 32;
 
@@ -235,45 +238,113 @@ namespace search.Models.LinuxService
         }
 
         /// <summary>
-        /// A walk holds its whole tree until the folder totals are known - gigabytes for
-        /// millions of files - and the idle service allocates nothing that would start the
-        /// collection to free it: give that memory back once no walk runs
+        /// What a walk allocated - each item on its way to the client - is garbage once it is
+        /// sent, and the idle service allocates nothing that would start the collection to
+        /// free it: give that memory back once no walk runs
         /// </summary>
         static void ReleaseWalkMemory()
             => GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 
         /// <summary>
         /// Walk the root with the service's rights, describing every item for the client, and
-        /// stream it - the same walk the app runs itself, folder totals included
+        /// send each folder's items as soon as it is listed - the same walk the app runs
+        /// itself, but nothing is kept here: the client adds the folder totals
+        /// (DirectoryWalker.StreamedTotals). Listed folders wait in a bounded queue, so a
+        /// client that reads slowly slows the walk down; one that stops reading ends it
+        /// failed and one that goes away stops it. A listing that hangs ends it with what was
+        /// read, as the app's own walk.
         /// </summary>
         static void Walk(Session session, string root)
         {
             var user = session.User;
-            var nodes = DirectoryWalker.Walk(new DirectoryInfo(root), TimeSpan.FromSeconds(15), CancellationToken.None,
-                () => new LinuxDirectoryReader(user, utcTimes: true));
-            var chunk = ServiceProtocol.Begin(ServiceProtocol.WalkNodes);
-            var count = 0;
-            var counter = chunk.Buffer.Position;
-            chunk.Writer.Write(0); //Node count, patched before sending
+            using var stop = new CancellationTokenSource();
+            using var listed = new BlockingCollection<Group>(MaxQueuedFolders);
+            var complete = false;
+            var walker = new Thread(() =>
+            {
+                try
+                {
+                    //Written here, on the walking threads: one writer for millions of items
+                    //held the whole walk up
+                    complete = DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromSeconds(15), stop.Token,
+                        () => new LinuxDirectoryReader(user, utcTimes: true),
+                        (folder, entries, token) => listed.Add(WriteGroup(folder, entries, root, user), token),
+                        batch: MaxNodesPerFrame);
+                }
+                catch (OperationCanceledException) { } //The client went away
+                catch (Exception e) { LinuxService.Log($"walk of {root} failed: {e.Message}"); }
+                finally { listed.CompleteAdding(); }
+            }) { IsBackground = true, Name = $"service walk uid {user.Uid}" };
+            walker.Start();
+
+            //A chunk: its number of groups, then the groups as they were written
+            (MemoryStream Buffer, BinaryWriter Writer) chunk = default;
+            long groupsAt = 0;
+            int groups = 0, items = 0;
+            void BeginChunk()
+            {
+                chunk = ServiceProtocol.Begin(ServiceProtocol.WalkNodes);
+                groupsAt = chunk.Buffer.Position;
+                chunk.Writer.Write(0);
+                groups = items = 0;
+            }
             void Flush()
             {
                 chunk.Writer.Flush();
                 var end = chunk.Buffer.Position;
-                chunk.Buffer.Position = counter;
-                chunk.Writer.Write(count);
+                chunk.Buffer.Position = groupsAt;
+                chunk.Writer.Write(groups);
                 chunk.Writer.Flush();
                 chunk.Buffer.Position = end;
                 session.Send(chunk);
-                chunk = ServiceProtocol.Begin(ServiceProtocol.WalkNodes);
-                count = 0;
-                chunk.Writer.Write(0);
+                BeginChunk();
             }
-            foreach (var node in nodes)
+            BeginChunk();
+            try
             {
-                var path = node.FullName;
+                foreach (var group in listed.GetConsumingEnumerable())
+                {
+                    chunk.Writer.Write(group.Bytes, 0, group.Length);
+                    groups++;
+                    items += group.Items;
+                    if (items >= MaxNodesPerFrame) Flush();
+                }
+                if (groups > 0) Flush();
+            }
+            catch
+            {
+                stop.Cancel(); //Nobody to send it to
+                throw;
+            }
+            finally
+            {
+                walker.Join(); //Ends with the walk - whose stuck listings it abandons
+                chunk.Writer.Dispose();
+                chunk.Buffer.Dispose();
+            }
+            EndWalk(session, complete ? null : "the walk did not reach the client whole");
+        }
+
+        /// <summary>A folder's items as written for a walk chunk</summary>
+        readonly record struct Group(byte[] Bytes, int Length, int Items);
+
+        /// <summary>
+        /// One group of a walk chunk: the folder's path (empty for the root's own group), then
+        /// its items - by name, the root by its whole path - each described for the client
+        /// </summary>
+        static Group WriteGroup(FileNode folder, IReadOnlyList<FileNode> entries, string root, UserIdentity user)
+        {
+            var buffer = new MemoryStream(entries.Count * 64);
+            using var w = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true);
+            var path = folder?.FullName ?? "";
+            var prefix = folder == null ? null : ServiceProtocol.PrefixOf(path);
+            w.Write(path);
+            w.Write(entries.Count);
+            foreach (var node in entries)
+            {
+                var name = node.FullName;
                 ServiceMetadata metadata;
-                if (string.Equals(PathText.TrimEndSeparators(path), PathText.TrimEndSeparators(root), StringComparison.Ordinal)
-                    && LinuxDirectoryReader.StatPath(root, out _) is { } rootStat)
+                if (prefix == null && LinuxDirectoryReader.StatPath(root, out _) is { } rootStat)
                 {
                     //The root node comes from the managed DirectoryInfo: describe it for the client too
                     var snapshot = rootStat.ToSnapshot(user, utc: true);
@@ -285,14 +356,13 @@ namespace search.Models.LinuxService
                     if (time.Kind == DateTimeKind.Local) time = time.ToUniversalTime();
                     metadata = new ServiceMetadata(node.Attributes, node.Size, time.Ticks, node.IsDirectory ? node.Count : 0);
                 }
-                chunk.Writer.Write(path);
-                ServiceProtocol.WriteMetadata(chunk.Writer, metadata);
-                if (++count >= MaxNodesPerFrame) Flush();
+                if (prefix == null) w.Write(name); //The root: its whole path
+                else if (name.StartsWith(prefix, StringComparison.Ordinal)) ServiceProtocol.WriteString(w, name.AsSpan(prefix.Length));
+                else throw new InvalidDataException($"{name} listed in {prefix}");
+                ServiceProtocol.WriteMetadata(w, metadata);
             }
-            if (count > 0) Flush();
-            chunk.Writer.Dispose();
-            chunk.Buffer.Dispose();
-            EndWalk(session, null);
+            w.Flush();
+            return new Group(buffer.GetBuffer(), (int)buffer.Length, entries.Count);
         }
 
         /// <summary>Changes waiting for all clients together</summary>

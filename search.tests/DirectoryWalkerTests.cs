@@ -265,6 +265,246 @@ namespace search.Tests
             }
         }
 
+        static Func<LinuxDirectoryReader> Reader => LinuxDirectoryReader.IsSupported ? () => new LinuxDirectoryReader() : null;
+
+        /// <summary>Folders with files, two levels deep, a link to a folder and an unreadable folder</summary>
+        static string NewWideTree(int folders, int filesEach)
+        {
+            var root = NewTree();
+            for (var f = 0; f < folders; f++)
+            {
+                var folder = Path.Combine(root, "d" + f, "inner");
+                Directory.CreateDirectory(folder);
+                for (var i = 0; i < filesEach; i++)
+                    File.WriteAllBytes(Path.Combine(i % 2 == 0 ? folder : Path.GetDirectoryName(folder), $"f{i}.bin"), new byte[i + f]);
+            }
+            if (OperatingSystem.IsLinux())
+            {
+                File.CreateSymbolicLink(Path.Combine(root, "link"), Path.Combine(root, "d0"));
+                var closed = Directory.CreateDirectory(Path.Combine(root, "closed")).FullName;
+                File.WriteAllText(Path.Combine(closed, "x"), "x");
+                File.SetUnixFileMode(closed, UnixFileMode.None);
+            }
+            return root;
+        }
+
+        static void DeleteWideTree(string root)
+        {
+            if (OperatingSystem.IsLinux() && Directory.Exists(Path.Combine(root, "closed")))
+                File.SetUnixFileMode(Path.Combine(root, "closed"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Directory.Delete(root, true);
+        }
+
+        [Theory]
+        [InlineData(int.MaxValue, false)]
+        [InlineData(3, false)] //A folder's entries in several batches
+        [InlineData(1, false)]
+        [InlineData(3, true)] //Every folder's entries before the folder itself
+        public void AStreamedWalkWithItsFolderTotalsIsTheWalk(int batch, bool reversed)
+        {
+            var root = NewWideTree(folders: 20, filesEach: 6);
+            try
+            {
+                var groups = new List<(FileNode Folder, IReadOnlyList<FileNode> Entries)>();
+                Assert.True(DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromSeconds(15), CancellationToken.None,
+                    Reader, (folder, entries, _) => { lock (groups) groups.Add((folder, entries)); }, batch));
+                Assert.All(groups, g => Assert.InRange(g.Entries.Count, 1, batch));
+
+                //The root alone first, then the folders' entries as they came - or the other way round
+                var streamed = new List<FileNode>();
+                var totals = new DirectoryWalker.StreamedTotals();
+                Assert.Null(groups[0].Folder);
+                totals.Root(groups[0].Entries.Single());
+                streamed.Add(groups[0].Entries.Single());
+                var rest = groups.Skip(1).ToList();
+                if (reversed) rest.Reverse();
+                foreach (var (folder, entries) in rest)
+                {
+                    var pending = totals.FolderAt(folder.FullName);
+                    Assert.NotNull(pending);
+                    foreach (var entry in entries)
+                    {
+                        totals.Add(pending, entry);
+                        streamed.Add(entry);
+                    }
+                }
+                totals.Complete();
+                var walked = Walk(root, LinuxDirectoryReader.IsSupported);
+
+                Assert.Equal(walked.Keys.OrderBy(k => k), streamed.Select(n => n.FullName).OrderBy(k => k));
+                foreach (var node in streamed)
+                {
+                    var expected = walked[node.FullName];
+                    Assert.Equal((expected.Attributes, expected.Size, expected.Count), (node.Attributes, node.Size, node.Count));
+                }
+                Assert.True(walked[root].Count > 100);
+            }
+            finally
+            {
+                DeleteWideTree(root);
+            }
+        }
+
+        [Fact]
+        public void AStreamedWalkKeepsNoFileItHandedOver()
+        {
+            var root = NewWideTree(folders: 40, filesEach: 10);
+            try
+            {
+                var handed = new List<(int Batch, WeakReference File)>();
+                var batches = 0;
+                var kept = -1;
+                DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromSeconds(15), CancellationToken.None, Reader, (_, folder, _) =>
+                {
+                    lock (handed)
+                    {
+                        if (++batches == 30)
+                        {
+                            //Everything handed before - nothing here holds it. Only the other
+                            //worker may not have let go of its last folder yet.
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                            GC.Collect();
+                            kept = handed.Count(h => h.Batch < batches - 1 && h.File.IsAlive);
+                        }
+                        foreach (var node in folder.Where(n => !n.IsDirectory)) handed.Add((batches, new WeakReference(node)));
+                    }
+                }, maxThreads: 1);
+
+                Assert.True(batches > 30);
+                Assert.Equal(0, kept);
+            }
+            finally
+            {
+                DeleteWideTree(root);
+            }
+        }
+
+        [Fact]
+        public void AConsumerThatTakesNothingEndsTheStreamedWalkIncomplete()
+        {
+            var root = NewWideTree(folders: 5, filesEach: 2);
+            try
+            {
+                var released = false;
+                var watch = Stopwatch.StartNew();
+                var complete = DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromMilliseconds(300), CancellationToken.None,
+                    Reader, (folder, _, token) =>
+                    {
+                        if (folder == null) return; //The root's node goes through
+                        token.WaitHandle.WaitOne(10_000); //Takes nothing more - until the walk ends
+                        released = token.IsCancellationRequested;
+                        token.ThrowIfCancellationRequested();
+                    });
+
+                Assert.False(complete);
+                Assert.True(watch.ElapsedMilliseconds < 5000);
+                Assert.True(released); //The waiting consumer was let go, not abandoned
+            }
+            finally
+            {
+                DeleteWideTree(root);
+            }
+        }
+
+        [Fact]
+        public void AConsumerThatTakesSlowlyButSteadilyKeepsTheStreamedWalkGoing()
+        {
+            var root = NewTree();
+            try
+            {
+                for (var i = 0; i < 60; i++) File.WriteAllText(Path.Combine(root, $"f{i}.txt"), "x");
+                //One folder handed over for 3 s - longer than the stall timeout and the watchdog's
+                //1 s look together - each of its batches in less than the stall timeout
+                var arrived = 0;
+                var complete = DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromMilliseconds(300), CancellationToken.None,
+                    Reader, (folder, entries, _) =>
+                    {
+                        if (folder != null) Thread.Sleep(100);
+                        Interlocked.Add(ref arrived, entries.Count);
+                    }, batch: 2);
+
+                Assert.True(complete);
+                Assert.Equal(61, arrived);
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        /// <summary>A folder with files and a folder in it with files: each listing fits one read</summary>
+        static string NewHangingTree()
+        {
+            var root = NewTree();
+            for (var i = 0; i < 40; i++) File.WriteAllText(Path.Combine(root, $"a{i}.txt"), "a");
+            Directory.CreateDirectory(Path.Combine(root, "sub"));
+            for (var i = 0; i < 40; i++) File.WriteAllText(Path.Combine(root, "sub", $"c{i}.txt"), "cc");
+            return root;
+        }
+
+        [Fact]
+        public void AHungListingEndsTheStreamedWalkWithEverythingItRead()
+        {
+            Assert.SkipUnless(LinuxDirectoryReader.IsSupported, NoNativeListing);
+            var root = NewHangingTree();
+            using var release = new ManualResetEventSlim(false);
+            try
+            {
+                //Each directory's first read arrives, the read after it never returns - with
+                //batches that never fill: what was read is the walk, as when the walk keeps it
+                var handed = new List<string>();
+                var complete = DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromMilliseconds(300), CancellationToken.None,
+                    () => new HangingReader(release), (_, entries, _) => { lock (handed) handed.AddRange(entries.Select(e => e.FullName)); },
+                    batch: 8192);
+                var kept = DirectoryWalker.Walk(new DirectoryInfo(root), TimeSpan.FromMilliseconds(300),
+                    CancellationToken.None, () => new HangingReader(release)).Select(n => n.FullName).ToHashSet();
+
+                Assert.True(complete);
+                Assert.Equal(82, kept.Count);
+                lock (handed)
+                {
+                    Assert.Equal(kept, handed.ToHashSet());
+                    Assert.Equal(handed.Count, handed.Distinct().Count());
+                }
+            }
+            finally
+            {
+                release.Set(); //Let the abandoned workers go
+                Directory.Delete(root, true);
+            }
+        }
+
+        [Fact]
+        public void AConsumerThatDoesNotTakeWhatHungListingsReadEndsTheStreamedWalkIncomplete()
+        {
+            Assert.SkipUnless(LinuxDirectoryReader.IsSupported, NoNativeListing);
+            var root = NewHangingTree();
+            using var release = new ManualResetEventSlim(false);
+            try
+            {
+                var released = false;
+                var watch = Stopwatch.StartNew();
+                var complete = DirectoryWalker.Stream(new DirectoryInfo(root), TimeSpan.FromMilliseconds(300), CancellationToken.None,
+                    () => new HangingReader(release), (folder, _, token) =>
+                    {
+                        if (folder == null) return; //The root's node goes through
+                        token.WaitHandle.WaitOne(10_000); //Takes nothing more - until it is let go
+                        released = token.IsCancellationRequested;
+                        token.ThrowIfCancellationRequested();
+                    }, batch: 8192);
+
+                Assert.False(complete);
+                Assert.True(watch.ElapsedMilliseconds < 8000);
+                Assert.True(released);
+            }
+            finally
+            {
+                release.Set();
+                Directory.Delete(root, true);
+            }
+        }
+
         [Fact]
         public void AHungListingKeepsTheEntriesReadBeforeIt()
         {

@@ -15,12 +15,16 @@ namespace search.Models.LinuxService
     /// Client: Hello(version, mode) first, then Watch(root) for each root on one long-lived
     /// connection that receives Changes, or a single Walk(root) on a connection of its own.
     /// The service answers Hello with Welcome, Watch with WatchResult and streams WalkNodes
-    /// chunks closed by WalkEnd. Times are UTC ticks; attributes are computed for the client.
+    /// chunks closed by WalkEnd. A chunk holds groups: a folder's path (empty for the group
+    /// that is the root itself, the first one), then its items by name - each folder as it
+    /// is listed, possibly before the group that names the folder itself, and without
+    /// folder totals. Times are UTC ticks; attributes are computed for the client.
     /// </summary>
     internal static class ServiceProtocol
     {
         public const string SocketPath = "/run/file-search-manager/service.sock";
-        public const ushort Version = 1;
+        /// <summary>2: walks by folder, without folder totals</summary>
+        public const ushort Version = 2;
         public const int MaxRequestFrame = 64 * 1024;
         public const int MaxResponseFrame = 64 * 1024 * 1024;
 
@@ -79,6 +83,34 @@ namespace search.Models.LinuxService
             WriteFrame(stream, message.Buffer.GetBuffer().AsSpan(0, (int)message.Buffer.Length));
             message.Writer.Dispose();
             message.Buffer.Dispose();
+        }
+
+        /// <summary>What a folder's item path starts with, as the walk forms it</summary>
+        public static string PrefixOf(string folder) => folder.EndsWith('/') ? folder : folder + "/";
+
+        /// <summary>A string as BinaryWriter.Write(string) writes it - from a part of another</summary>
+        public static void WriteString(BinaryWriter w, ReadOnlySpan<char> text)
+        {
+            w.Write7BitEncodedInt(Encoding.UTF8.GetByteCount(text));
+            w.Write(text);
+        }
+
+        /// <summary>
+        /// A string BinaryWriter.Write(string) wrote, read from the payload after a prefix -
+        /// without a string of its own on the way (millions in a walk)
+        /// </summary>
+        public static string ReadString(BinaryReader r, byte[] payload, string prefix)
+        {
+            var length = r.Read7BitEncodedInt();
+            var at = (int)r.BaseStream.Position;
+            if (length < 0 || length > payload.Length - at) throw new EndOfStreamException();
+            r.BaseStream.Position = at + length;
+            var count = Encoding.UTF8.GetCharCount(payload.AsSpan(at, length));
+            return string.Create(prefix.Length + count, (prefix, payload, at, length), static (chars, s) =>
+            {
+                s.prefix.AsSpan().CopyTo(chars);
+                Encoding.UTF8.GetChars(s.payload.AsSpan(s.at, s.length), chars[s.prefix.Length..]);
+            });
         }
 
         public static BinaryReader Open(byte[] payload, out byte type)
