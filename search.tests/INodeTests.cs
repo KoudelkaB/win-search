@@ -7,6 +7,8 @@ namespace search.Tests
 {
     public class INodeTests
     {
+        const string WindowsOnly = "only Windows refuses to delete a file that is open";
+
         [Fact]
         public void IndexKeepsOnlyTheTimestampDisplayedByTheGrid()
         {
@@ -134,6 +136,7 @@ namespace search.Tests
         [InlineData(true)]
         public void BestEffortDeleteRemovesEverythingExceptLockedItems(bool recycle)
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var root = Path.Combine(Path.GetTempPath(), $"win-search-delete-{Guid.NewGuid():N}");
             var firstLockedPath = Path.Combine(root, "first-locked.bin");
             var secondLockedPath = Path.Combine(root, "blocked", "second-locked.bin");

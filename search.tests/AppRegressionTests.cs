@@ -17,6 +17,8 @@ namespace search.Tests
 {
     public class AppRegressionTests
     {
+        const string WindowsOnly = "Windows path rules: drive letters, '\\' separators, names equal regardless of case";
+
         [Theory]
         [InlineData(null, true)]
         [InlineData("", true)]
@@ -25,7 +27,10 @@ namespace search.Tests
         [InlineData(@"C:\Users", false)]
         [InlineData(@"C:\Users\Bohdan\Downloads\a.zip", false)]
         public void HalfDeliveredWatcherEventsAreRecognizedByTheirRootPath(string path, bool root)
-            => Assert.Equal(root, SearchModel.IsDriveRoot(path));
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+            Assert.Equal(root, SearchModel.IsDriveRoot(path));
+        }
 
         [Theory]
         [InlineData(0, true)]
@@ -94,6 +99,7 @@ namespace search.Tests
         [InlineData(@"Q:\other.bin", false)]
         public void FolderDeleteCoversOnlyItsRealDescendants(string path, bool expected)
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             IReadOnlySet<string> trees = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 @"Q:\Docs"
@@ -109,7 +115,10 @@ namespace search.Tests
         [InlineData(@"C:\Sdk\es", @"C:\Sdk\esperanto\file.dll", false)]
         [InlineData(@"c:\sdk\ES\", @"C:\Sdk\es\file.dll", true)]
         public void PendingDeletesFlushOnlyForOverlappingPaths(string deleted, string current, bool expected)
-            => Assert.Equal(expected, SearchModel.PathsOverlap(deleted, current));
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+            Assert.Equal(expected, SearchModel.PathsOverlap(deleted, current));
+        }
 
         [Theory]
         [InlineData("+Name", "-Name", true, true)]
@@ -157,6 +166,7 @@ namespace search.Tests
         [Fact]
         public void WatcherChangeWindowCoalescesDataButNotAcrossStructuralEvents()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var firstA = new FsEvent(WatcherChangeTypes.Changed, @"C:\a.txt");
             var finalA = new FsEvent(WatcherChangeTypes.Changed, @"C:\A.txt");
             var changedB = new FsEvent(WatcherChangeTypes.Changed, @"C:\b.txt");
@@ -181,6 +191,7 @@ namespace search.Tests
         [Fact]
         public void WatcherChangeWindowCollapsesAdjacentDuplicateCreatesOnly()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var firstCreate = new FsEvent(WatcherChangeTypes.Created, @"C:\asset.png");
             var duplicateCreate = new FsEvent(WatcherChangeTypes.Created, @"c:\ASSET.png");
             var changed = new FsEvent(WatcherChangeTypes.Changed, @"C:\asset.png");
@@ -197,6 +208,7 @@ namespace search.Tests
         [Fact]
         public void ExactUsnEchoReplacesAPathOnlyDuplicate()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var appEcho = new FsEvent(WatcherChangeTypes.Created, @"C:\asset.png");
             var usn = new FsEvent(WatcherChangeTypes.Created, @"c:\ASSET.png",
                 frn: 0x0007_00000000002A, ntfsAttributes: 0x20);
@@ -811,7 +823,7 @@ namespace search.Tests
         [InlineData(DriveType.Fixed, "ReFS", false)]
         public void RawMftIsNeverAttemptedForMappedNetworkDrives(
             DriveType type, string format, bool expected)
-            => Assert.Equal(expected, SearchModel.CanUseMftSource(type, format));
+            => Assert.Equal(expected && OperatingSystem.IsWindows(), SearchModel.CanUseMftSource(type, format)); //Linux never reads a raw MFT
 
         [Theory]
         [InlineData(DriveType.Fixed, "NTFS", true)]
@@ -1093,6 +1105,8 @@ namespace search.Tests
         [InlineData(@"\server\share\outside.txt")]
         public void ArchiveExtractionRejectsPathsOutsideTheDestination(string entry)
         {
+            Assert.SkipWhen(!OperatingSystem.IsWindows() && entry.StartsWith("C:"),
+                "on Linux \"C:\" is an ordinary folder name inside the destination");
             var root = Path.Combine(Path.GetTempPath(), "win-search-extract");
             Assert.Null(ZipExtensions.SafeExtractionPath(root, entry));
             Assert.False(ZipExtensions.IsSafeArchivePath(entry));
@@ -1118,6 +1132,7 @@ namespace search.Tests
         [Fact]
         public void WindowsPathIdentityIgnoresCaseAndRelativeSpelling()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var path = Path.Combine(Path.GetTempPath(), "Win-Search", "File.txt");
             var alternate = Path.Combine(Path.GetDirectoryName(path), ".", "file.TXT");
 

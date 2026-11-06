@@ -8,9 +8,12 @@ namespace search.Tests
 {
     public class HardLinkSearchTests
     {
+        const string WindowsOnly = "NTFS hard links and MFT records are read on Windows only";
+
         [Fact]
         public void EdgeNamesInBaseAndExtensionsAreAllSearchable()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var mft = new FakeMft(1024).AddEmpty(5).AddRoot()
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(5, "EdgeCore") })
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(5, "EdgeWebView") })
@@ -50,6 +53,7 @@ namespace search.Tests
         [Fact]
         public void SurvivingLinkRescuesAFileWithAStaleCanonicalParent()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = new FakeMft(1024).AddEmpty(5).AddRoot()
                 .AddRecord(directory: true, sequence: 3, attributes: new[] { FakeMft.FileName(5, "Live") })
                 .AddRecord(attributes: new[] {
@@ -116,6 +120,7 @@ namespace search.Tests
         [Fact]
         public void ReconcileReadsReplacementIdentityInsteadOfReusingQueuedFrn()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var root = Path.Combine(Path.GetTempPath(), $"win-search-frn-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             try

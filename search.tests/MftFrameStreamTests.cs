@@ -10,6 +10,8 @@ namespace search.Tests
 {
     public class MftFrameStreamTests
     {
+        const string WindowsOnly = "the MFT is read on Windows only (the samples are Q:\\ paths)";
+
         /// <summary>
         /// Encode an image the way the service does: zero frames for the given records,
         /// data frames of at most dataChunk bytes for the rest (the partial tail included)
@@ -125,6 +127,7 @@ namespace search.Tests
         [Fact]
         public void FramedPayloadParsesToTheSameTreeAsTheRawOne()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // A large free block between the directory and its file, like a $MFT that
             // once held many more files
             var mft = new FakeMft(1024).AddEmpty(5).AddRoot()

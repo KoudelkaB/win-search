@@ -9,6 +9,8 @@ namespace search.Tests
 {
     public class NodeFilterTests : IDisposable
     {
+        const string WindowsOnly = "the samples are a Windows drive (Q:\\) parsed from a synthetic MFT";
+
         readonly List<INode> nodes;
 
         public NodeFilterTests()
@@ -53,6 +55,7 @@ namespace search.Tests
         [Fact]
         public void ParentsFilterMatchesAnyPathComponentWithoutBuildingPaths()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // "docs\\" = the term must appear anywhere in the full path
             Assert.Equal(new[] { "a.txt", "b.txt", "Docs", "Sub" }, Matching(@"docs\\"));
             Assert.Equal(new[] { "b.txt", "Sub" }, Matching(@"sub\\"));
@@ -62,6 +65,7 @@ namespace search.Tests
         [Fact]
         public void AnchoredParentsPatternBindsToASingleComponent()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // ".txt:" anchored at the end => some path component ends with ".txt"
             Assert.Equal(new[] { "a.txt", "b.txt", "c.txt" }, Matching(@".txt:\\"));
 
@@ -75,6 +79,7 @@ namespace search.Tests
         [Fact]
         public void AnchoredParentsPatternWorksOnPathBackedNodes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var entry = new FileNode(@"Q:\Docs\arch.zip\inner.txt");
             Assert.True(new NodeFilter(@":docs:\\").Matches(entry));
             Assert.True(new NodeFilter(@":arch.zip:\\").Matches(entry));
@@ -84,6 +89,7 @@ namespace search.Tests
         [Fact]
         public void DirFilterMatchesDirectChildrenOnly()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             Assert.Equal(new[] { "a.txt", "Sub" }, Matching(@"Q:\Docs"));
             Assert.Equal(new[] { "b.txt" }, Matching(@"Q:\Docs\Sub"));
         }
@@ -91,12 +97,14 @@ namespace search.Tests
         [Fact]
         public void RecursiveDirFilterMatchesTheWholeSubtree()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             Assert.Equal(new[] { "a.txt", "b.txt", "Sub" }, Matching(@"Q:\Docs\\"));
         }
 
         [Fact]
         public void DirTermMeansTheSameWithANameTerm()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // A name term does not widen a single-backslash folder to its subtree
             Assert.Equal(new[] { "a.txt" }, Matching(@"Q:\Docs .txt:"));
             Assert.Empty(Matching(@"Q:\Docs b.txt"));
@@ -107,6 +115,7 @@ namespace search.Tests
         [Fact]
         public void AnchoredFullPathTermMatchesAPathPrefix()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // ":Q:\Do\\" = a full path starting with "Q:\Do" - Docs itself and everything below it
             Assert.Equal(new[] { "a.txt", "b.txt", "Docs", "Sub" }, Matching(@":Q:\Do\\"));
         }
@@ -114,6 +123,7 @@ namespace search.Tests
         [Fact]
         public void AnchoredPathTermWithSingleBackslashEndsInTheParentName()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // ":Q:\Do\" = directly inside a folder under Q:\ whose name starts with "Do" -
             // Docs\a.txt and Docs\Sub, but not Docs\Sub\b.txt
             Assert.Equal(new[] { "a.txt", "Sub" }, Matching(@":Q:\Do\"));
@@ -127,6 +137,7 @@ namespace search.Tests
         [Fact]
         public void PathTermAnchorsBindToComponentBoundaries()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // ':' is a component boundary anywhere in the path, not only the path start
             Assert.Equal(new[] { "b.txt", "Sub" }, Matching(@":Docs\Sub\\"));
             Assert.Equal(new[] { "b.txt" }, Matching(@":Docs\Su\"));
@@ -146,6 +157,7 @@ namespace search.Tests
         [Fact]
         public void PathBackedNodesKeepTextualDirSemantics()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // A zip entry is not in the index - it must still match its textual location
             var entry = new FileNode(@"Q:\Docs\arch.zip\inner.txt");
             Assert.True(new NodeFilter(@"Q:\Docs\\").Matches(entry));
@@ -157,6 +169,7 @@ namespace search.Tests
         [Fact]
         public void RootDirFilterMatchesRootChildren()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             Assert.Equal(new[] { "c.txt", "Docs" }, Matching(@"Q:\"));
         }
     }

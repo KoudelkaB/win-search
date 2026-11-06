@@ -11,6 +11,8 @@ namespace search.Tests
 {
     public class FileApplicationsTests
     {
+        const string WindowsOnly = "Windows finds programs in the file index, Linux on the PATH";
+
         static INode FileAt(string path) => new FileNode(path);
         static INode DirectoryAt(string path) => new DirectoryFileNode(path,
             new NodeMetadataSnapshot(true, 0, DateTime.MinValue));
@@ -207,6 +209,7 @@ namespace search.Tests
         [AvaloniaFact]
         public void DetectionUsesOnlyIndexPathsCachesUntilIndexPublicationAndRefreshesAfterIt()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var name = Guid.NewGuid().ToString("N") + ".exe";
             string indexed = null;
             var lookups = 0;

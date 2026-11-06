@@ -10,6 +10,8 @@ namespace search.Tests
 {
     public class DriveNodeIndexTests
     {
+        const string WindowsOnly = "the samples are paths on Windows drives (C:\\, D:\\)";
+
         sealed class TestNode : INode
         {
             readonly string path;
@@ -64,6 +66,7 @@ namespace search.Tests
         [Fact]
         public void CompactBaseAndDeltaExposeOneLogicalEntryPerPath()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var original = new TestNode(@"C:\one.txt");
             IReadOnlyList<INode> dense = new INode[] { original };
             var prepared = DriveNodeIndex.PrepareDrive(dense, dense);
@@ -83,6 +86,7 @@ namespace search.Tests
         [Fact]
         public void RemovingTransientAdditionRestoresZeroCopyDenseSnapshot()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var original = new TestNode(@"C:\one.txt");
             IReadOnlyList<INode> dense = new INode[] { original };
             var index = new DriveNodeIndex();
@@ -100,6 +104,7 @@ namespace search.Tests
         [Fact]
         public void CopySnapshotMergesBaseReplacementsRemovalsAndAdditions()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var keep = new TestNode(@"C:\keep.txt");
             var remove = new TestNode(@"C:\remove.txt");
             var replace = new TestNode(@"C:\replace.txt");
@@ -125,6 +130,7 @@ namespace search.Tests
         [Fact]
         public void FilterSnapshotMatchesOverBaseAndDeltaWithoutTheFullCopy()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var keep = new TestNode(@"C:\keep.txt");
             var remove = new TestNode(@"C:\remove.txt");
             var replace = new TestNode(@"C:\replace.txt");
@@ -285,6 +291,7 @@ namespace search.Tests
         [Fact]
         public void ScanPublicationPreservesOnlyLiveMutationsNewerThanItsWatermark()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var root = new TestNode(@"C:\");
             var renamedOld = new TestNode(@"C:\draft.tmp");
             var changedBeforeScan = new TestNode(@"C:\already-live.txt");
@@ -326,6 +333,7 @@ namespace search.Tests
         [Fact]
         public void RemovalWhileASnapshotIsPendingKeepsAStaleScanFromResurrectingTheEntry()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var root = new TestNode(@"C:\");
             var index = new DriveNodeIndex();
             index.ReplaceDrive(@"C:\", Map(root));
@@ -376,6 +384,7 @@ namespace search.Tests
         [Fact]
         public void MetadataOnlyUpdatesKeepTheDenseSnapshotOutsideAScan()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var node = new TestNode(@"C:\growing.log");
             var dense = new INode[] { node };
             var index = new DriveNodeIndex();
@@ -402,6 +411,7 @@ namespace search.Tests
         [Fact]
         public void ScanPublicationLetsTheDiskArbitratePreWatermarkDisagreements()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var root = new TestNode(@"C:\");
             var stale = new TestNode(@"C:\gone.txt");
             var index = new DriveNodeIndex();

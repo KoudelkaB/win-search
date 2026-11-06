@@ -10,6 +10,8 @@ namespace search.Tests
 {
     public class MftDriveReaderTests
     {
+        const string WindowsOnly = "the MFT is read on Windows only (the samples are Q:\\ paths)";
+
         static readonly DateTime Created = new(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
         static readonly DateTime Modified = new(2021, 6, 7, 8, 9, 10, DateTimeKind.Utc);
         static readonly DateTime Accessed = new(2022, 11, 12, 13, 14, 15, DateTimeKind.Utc);
@@ -55,6 +57,7 @@ namespace search.Tests
         [InlineData(1000, 3000)]  // no power of two, not even sector-aligned
         public void ParsesTheHierarchyForAnyRecordSizeAndChunking(int bytesPerRecord, int chunkBytes)
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var mft = WithRoot(bytesPerRecord)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") }) // 6
                 .AddRecord(attributes: new[]                                                                   // 7
@@ -92,6 +95,7 @@ namespace search.Tests
         [Fact]
         public void WholeTreeDeletionSubtractsItsAggregateOnceFromSurvivingParents()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[]
                 {
@@ -120,6 +124,7 @@ namespace search.Tests
         [Fact]
         public void DeepHierarchyAggregatesOnceAndKeepsCanonicalPathHashes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(5, "A") })
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(6, "B") })
@@ -145,6 +150,7 @@ namespace search.Tests
         [Fact]
         public void IndexedMftFileCanBeRemovedByPathAndDecrementsTheRootAggregate()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[]
                 {
@@ -171,6 +177,7 @@ namespace search.Tests
         [Fact]
         public void FileDeleteBeforeItsParentTreeDeleteIsNotSubtractedTwice()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[]
                 {
@@ -303,6 +310,7 @@ namespace search.Tests
         [Fact]
         public void NameDeduplicationPreservesExactCasing()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "A") })
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "B") })
@@ -320,6 +328,7 @@ namespace search.Tests
         [Fact]
         public void RecoversTheWin32NameFromAnExtensionRecord()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // A crowded base record kept only the DOS 8.3 name; the Win32 name overflowed
             // into an extension record. The file must show its full Windows name - and
             // count once in folder sizes (the DOS name shadows the extension's Win32 pair).
@@ -344,6 +353,7 @@ namespace search.Tests
         [Fact]
         public void ExtensionRecordNamesUseTheSameNamePool()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "A") }) // 6
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "B") }) // 7
@@ -399,6 +409,7 @@ namespace search.Tests
         [Fact]
         public void AFileWhoseNamesAllOverflowedIsStillIndexed()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(attributes: new[] { FakeMft.StandardInfo(Created, Modified, Accessed), FakeMft.ResidentData(123) }) // 6: no $FILE_NAME at all
                 .AddRecord(baseReference: 6, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "overflowed.txt", ns: 1) }) // 7
@@ -412,6 +423,7 @@ namespace search.Tests
         [Fact]
         public void AnEquallyRankedExtensionNameDoesNotReplaceTheBaseName()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // Both names are Win32 hard links - the base record's own name stays
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Other") })   // 6
@@ -439,6 +451,7 @@ namespace search.Tests
         [Fact]
         public void SkipsFreeCorruptAndExtensionRecords()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(inUse: false, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "deleted.txt") }) // 6: free
                 .AddRaw(Enumerable.Repeat((byte)0xCC, 1024).ToArray())                                             // 7: garbage
@@ -452,6 +465,7 @@ namespace search.Tests
         [Fact]
         public void OrphanedFilesAreDropped()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // Parent entry 99 does not exist (deleted mid-scan): the file's real path is
             // unknowable and must not surface at a made-up "Q:\" path
             var nodes = WithRoot(1024)
@@ -466,6 +480,7 @@ namespace search.Tests
         [Fact]
         public void AnOrphanedDirectoryTakesItsSubtreeWithIt()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(99, "lost") })          // 6: orphan dir
                 .AddRecord(attributes: new[] { FakeMft.FileName(6, "child.txt"), FakeMft.ResidentData(50) }) // 7
@@ -477,6 +492,7 @@ namespace search.Tests
         [Fact]
         public void ParentCyclesAreDropped()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(7, "a") })          // 6 -> 7
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(6, "b") })          // 7 -> 6
@@ -490,6 +506,7 @@ namespace search.Tests
         [Fact]
         public void AStaleParentSequenceOrphansTheFile()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // Entry 6 currently holds "Docs" with sequence 5; the stale file still references
             // sequence 2 - its true parent was deleted and the entry reused mid-scan
             var nodes = WithRoot(1024)
@@ -549,6 +566,7 @@ namespace search.Tests
         [Fact]
         public void HardLinksCountOncePerLinkInFolderSizes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // A file hard-linked into Docs and Other is one directory entry in each -
             // both folders count it, and the root counts both entries (walk/Explorer semantics)
             var mft = WithRoot(1024)
@@ -603,6 +621,7 @@ namespace search.Tests
         [Fact]
         public void HardLinkNamesOverflowedToExtensionRecordsCountInFolderSizes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // The file's second hard-link name lives in an extension record (its base
             // record ran out of space) - the extension's own base reference ties it back
             var mft = WithRoot(1024)
@@ -622,6 +641,7 @@ namespace search.Tests
         [Fact]
         public void ADosShadowNameDoesNotDoubleCountFolderSizes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var mft = WithRoot(1024)
                 .AddRecord(directory: true, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "Docs") }) // 6
                 .AddRecord(attributes: new[]                                                                   // 7
@@ -644,6 +664,7 @@ namespace search.Tests
         [Fact]
         public void ParsesManyChunksInParallelWithCorrectFolderSizes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             const int files = 500;
             var mft = WithRoot(1024);
             for (var i = 0; i < files; i++)
@@ -660,6 +681,7 @@ namespace search.Tests
         [Fact]
         public void ParallelDenseCompactionPreservesMftOrderAndPathHashes()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             const int records = 5_000;
             var expected = new string[records];
             var expectedCount = 0;

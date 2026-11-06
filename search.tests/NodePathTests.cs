@@ -9,6 +9,8 @@ namespace search.Tests
 {
     public class NodePathTests
     {
+        const string WindowsOnly = "the samples are a Windows drive (Q:\\) parsed from a synthetic MFT";
+
         static List<INode> Sample()
         {
             var mft = new FakeMft(1024).AddEmpty(5).AddRoot();
@@ -24,6 +26,7 @@ namespace search.Tests
         [Fact]
         public void NodesEqualTheirFullPathStrings()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             foreach (var n in Sample())
             {
                 Assert.True(NodePath.KeyComparer.Equals(n, n.FullName));
@@ -37,6 +40,7 @@ namespace search.Tests
         [Fact]
         public void DictionaryKeyedByNodesIsQueriedByPathStrings()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = Sample();
             var dict = new NonBlocking.ConcurrentDictionary<object, INode>(NodePath.KeyComparer);
             foreach (var n in nodes) dict[n] = n;
@@ -53,6 +57,7 @@ namespace search.Tests
         [Fact]
         public void PathBackedAndChainedNodesWithTheSamePathAreEqual()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var chained = ByName(Sample(), "a.txt");
             var pathBacked = new FileNode(@"Q:\Docs\a.txt");
 
@@ -66,6 +71,7 @@ namespace search.Tests
         [Fact]
         public void OrdersAsAComponentTree()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             // Tree order: a folder groups with its content ("a\z" right after "a",
             // before "a!" and "ab" - a plain string sort would interleave them)
             var mft = new FakeMft(1024).AddEmpty(5).AddRoot();
@@ -82,6 +88,7 @@ namespace search.Tests
         [Fact]
         public void MixedRepresentationsSortConsistently()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = Sample();
             var mixed = nodes.Concat(new INode[]
             {
@@ -102,6 +109,7 @@ namespace search.Tests
         [Fact]
         public void FolderThenNameGroupsSiblings()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = Sample();
             var sorted = nodes.OrderBy(x => x, NodePath.ByFolderThenName).Select(n => n.FullName).ToArray();
 
@@ -112,6 +120,7 @@ namespace search.Tests
         [Fact]
         public void IsUnderMatchesSubtrees()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = Sample();
             var docs = ByName(nodes, "Docs");
             var b = ByName(nodes, "b.txt");
@@ -142,6 +151,7 @@ namespace search.Tests
         [Fact]
         public void SubtreeMembershipSurvivesMixedSnapshotGenerations()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var old = Sample();
             var fresh = Sample();
             var docs = ByName(fresh, "Docs");
@@ -175,6 +185,7 @@ namespace search.Tests
         [Fact]
         public void DirectoryMovesRebaseBothScannedAndLiveFileReferences()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = Sample();
             var map = new UsnDriveWatcher.FrnMap();
             map.Populate(nodes);
@@ -202,6 +213,7 @@ namespace search.Tests
         [Fact]
         public void LeafAndComponentHelpersNeedNoFullPath()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var nodes = Sample();
             var a = ByName(nodes, "a.txt");
 

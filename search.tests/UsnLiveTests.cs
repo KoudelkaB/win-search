@@ -26,6 +26,8 @@ namespace search.Tests
     [Collection(LiveNtfsCollection.Name)]
     public class UsnLiveTests
     {
+        const string WindowsOnly = "the USN journal is NTFS on Windows only";
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool CreateHardLink(string newFileName, string existingFileName, IntPtr securityAttributes);
 
@@ -197,6 +199,7 @@ namespace search.Tests
         [Fact]
         public void FileReferenceResolutionSupportsPathsLongerThanTheInitialBuffer()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var directory = Path.Combine(Path.GetTempPath(), $"usn-long-path-{Guid.NewGuid():N}");
             try
             {
@@ -219,6 +222,7 @@ namespace search.Tests
         [Fact]
         public async Task DeletedDescendantOfARenamedDirectoryKeepsItsExactPath()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var directory = Path.Combine(Path.GetTempPath(), $"usn-moved-tree-{Guid.NewGuid():N}");
             var before = Path.Combine(directory, "before");
             var after = Path.Combine(directory, "after");

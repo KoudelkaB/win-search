@@ -13,6 +13,8 @@ namespace search.Tests
 {
     public class UsnTests
     {
+        const string WindowsOnly = "USN journal paths are Windows drive paths";
+
         /// <summary>Build one USN_RECORD_V2 (name empty = the unprivileged read's blanking)</summary>
         static byte[] RecordV2(ulong frn, ulong parentFrn, uint reason, uint attributes, string name = "")
         {
@@ -334,6 +336,7 @@ namespace search.Tests
         [Fact]
         public void ExpandsVolumeRelativeHardLinkNames()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             Assert.Equal(@"C:\folder\file.bin",
                 UsnJournal.ExpandHardLinkPath(@"C:\", @"\folder\file.bin"));
             Assert.Equal(@"D:\file.bin",
@@ -472,6 +475,7 @@ namespace search.Tests
         [Fact]
         public void FsEventCarriesRenamesAcrossDirectories()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var moved = new FsEvent(WatcherChangeTypes.Renamed, @"C:\b\file.txt", @"C:\a\file.txt");
             Assert.Equal(@"C:\a\file.txt", moved.OldFullPath); //RenamedEventArgs cannot express this
 

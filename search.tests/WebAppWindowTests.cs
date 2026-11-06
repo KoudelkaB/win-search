@@ -16,7 +16,11 @@ namespace search.Tests
         [InlineData("", false)]
         [InlineData(null, false)]
         public void FileHandoffNeedsARuntimeWithFileSystemHandleApis(string runtimeVersion, bool supported)
-            => Assert.Equal(supported, WebAppWindow.SupportsFileHandoff(runtimeVersion));
+        {
+            Assert.SkipWhen(!System.OperatingSystem.IsWindows() && !string.IsNullOrEmpty(runtimeVersion),
+                "comparing WebView2 versions needs the WebView2 loader, which exists on Windows only");
+            Assert.Equal(supported, WebAppWindow.SupportsFileHandoff(runtimeVersion));
+        }
 
         [Fact]
         public void LayoutIsKeptPerAppAndDefaultsToTheCompactZoom()
