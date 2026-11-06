@@ -945,7 +945,7 @@ namespace search
                 {
                     Interlocked.Exchange(ref publishPending, 0);
                     publish(Volatile.Read(ref latestSnapshot));
-                }, DispatcherPriority.DataBind);
+                }, DispatcherPriority.Normal); //Avalonia keeps DataBind, just below it, for WPF code only
             }
             catch { Interlocked.Exchange(ref publishPending, 0); }
         }

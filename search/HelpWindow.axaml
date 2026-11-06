@@ -9,7 +9,7 @@
             <Button DockPanel.Dock="Right" Content="{local:Loc Key=Close}" IsCancel="True"
                     MinWidth="90" HorizontalContentAlignment="Center" Click="Close_Click"/>
             <StackPanel Orientation="Horizontal" Spacing="4">
-                <TextBox x:Name="findBox" Width="220" Watermark="🔍" KeyDown="FindBox_KeyDown"/>
+                <TextBox x:Name="findBox" Width="220" PlaceholderText="🔍" KeyDown="FindBox_KeyDown"/>
                 <Button Content="▼" Click="FindNext_Click" ToolTip.Tip="F3"/>
                 <Button Content="A−" Click="ZoomOut_Click"/>
                 <Button Content="A+" Click="ZoomIn_Click"/>

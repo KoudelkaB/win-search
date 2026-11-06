@@ -53,7 +53,7 @@ namespace search
         }
 
         /// <summary>Focus the text input</summary>
-        public new bool Focus() => TextBox.Focus();
+        public bool Focus() => TextBox.Focus();
 
         /// <summary>
         /// Auto suggestion list property.
