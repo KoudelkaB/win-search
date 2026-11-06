@@ -1,64 +1,136 @@
 # Third-party notices
 
-File Search Manager incorporates or is built with the following third-party components.
-Their licenses (MIT and Apache-2.0, both reproduced at the end of this document, and the
-BSD-style Microsoft WebView2 SDK license linked below) are compatible with the MIT license
-of File Search Manager itself.
+File Search Manager (MIT, see `LICENSE`) incorporates or is built with the third-party
+components below. Their licenses are MIT, BSD-3-Clause and Apache-2.0, all reproduced at the
+end of this document. Two components carry further third-party code, whose notices ship
+verbatim next to this file:
 
-## singleHtmlApps (Hex Editor and Comparer, Log Explorer)
+- `licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt` - the native SkiaSharp and HarfBuzzSharp
+  libraries: Skia, HarfBuzz, FreeType, libpng, libjpeg-turbo, zlib, piex, the Adobe DNG SDK
+  and more.
+- `licenses/dotnet-THIRD-PARTY-NOTICES.txt` - the .NET runtime, where a package carries it
+  (the Windows installer, the portable tar.gz and the .rpm and .deb packages).
 
-- Project: https://github.com/KoudelkaB/singleHtmlApps
-- Copyright (c) 2026 KoudelkaB
-- License: MIT (also shipped as `WebApps\LICENSE.singleHtmlApps.txt`)
+Every package the build references must be listed here: the release workflow checks it
+(`tools/check-third-party-notices.py`).
 
-## Microsoft.Web.WebView2 1.0.4191.47
+## Shipped with the application
+
+### Avalonia 12.1.4, Avalonia.Controls.DataGrid 12.1.2, Avalonia.Controls.WebView 12.1.1
+
+The user interface: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent, Avalonia.Skia,
+Avalonia.HarfBuzz, Avalonia.X11, Avalonia.FreeDesktop, Avalonia.FreeDesktop.AtSpi,
+Avalonia.Win32, Avalonia.Native, Avalonia.Remote.Protocol, Avalonia.Controls.DataGrid and
+Avalonia.Controls.WebView.
+
+- Project: https://github.com/AvaloniaUI/Avalonia, https://avaloniaui.net
+- Copyright (c) The AvaloniaUI Project; Avalonia.Controls.WebView Copyright (c) AvaloniaUI OÜ
+- License: MIT
+
+### Avalonia.Angle.Windows.Natives 2.1.27548.20260419 (Windows only)
+
+ANGLE, the OpenGL ES implementation Avalonia draws with on Windows.
+
+- Project: https://avaloniaui.net, https://chromium.googlesource.com/angle/angle
+- Copyright 2018 The ANGLE Project Authors
+- License: BSD-3-Clause (reproduced below)
+
+### SkiaSharp 3.119.4 and HarfBuzzSharp 8.3.1.3
+
+The 2D graphics and text shaping behind Avalonia, with their native libraries
+(SkiaSharp.NativeAssets.* and HarfBuzzSharp.NativeAssets.*).
+
+- Project: https://github.com/mono/SkiaSharp
+- Copyright (c) Microsoft Corporation
+- License: MIT
+
+The native libraries incorporate third-party code - among others Skia (BSD-3-Clause),
+HarfBuzz (MIT), FreeType (FreeType License), libpng (libpng-2.0), libjpeg-turbo (IJG,
+BSD-3-Clause, Zlib), zlib (Zlib), piex (Apache-2.0) and the Adobe DNG SDK (DNG SDK License
+Agreement). This product includes DNG technology under license by Adobe Systems
+Incorporated. All their notices: `licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt`.
+
+### Tmds.DBus.Protocol 0.94.1
+
+D-Bus for Avalonia on Linux (accessibility, the desktop's dialogs and settings).
+
+- Project: https://github.com/tmds/Tmds.DBus
+- Copyright (c) Tom Deseyn
+- License: MIT
+
+### MicroCom.Runtime 0.11.6
+
+COM interop used by Avalonia.
+
+- Project: https://github.com/kekekeks/MicroCom
+- Copyright (c) 2021 Nikita Tsukanov
+- License: MIT
+
+### Microsoft.Web.WebView2 1.0.4191.47
 
 - Project: https://www.nuget.org/packages/Microsoft.Web.WebView2
-- Copyright (c) Microsoft Corporation
-- License: https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47/License
+- Copyright (C) Microsoft Corporation
+- License: BSD-3-Clause (reproduced below)
 
 Note: only the WebView2 SDK is redistributed. The Microsoft Edge WebView2 Runtime it
-uses is part of Windows and is not shipped with File Search Manager.
+uses is part of Windows and is not shipped with File Search Manager. On Linux only its
+managed interop assembly is shipped, and it is not used there.
 
-## NonBlocking 2.1.2
+### NonBlocking 2.1.2
 
 - Project: https://github.com/VSadov/NonBlocking
 - Copyright (c) 2023 Vladimir Sadov
+- License: MIT
 
-## SharpCompress 0.50.4
+### SharpCompress 0.50.4
 
 - Project: https://github.com/adamhathcock/sharpcompress
 - Copyright (c) 2014 Adam Hathcock
+- License: MIT
 
-## System.ServiceProcess.ServiceController 10.0.11
+### singleHtmlApps (Hex Editor and Comparer, Log Explorer, Calculator)
+
+- Project: https://github.com/KoudelkaB/singleHtmlApps
+- Copyright (c) 2026 KoudelkaB
+- License: MIT (also shipped as `WebApps/LICENSE.singleHtmlApps.txt`)
+
+### System.ServiceProcess.ServiceController 10.0.11 (Windows service only)
 
 - Project: https://github.com/dotnet/runtime
 - Copyright (c) .NET Foundation and Contributors
 - License: MIT
 
-## .NET runtime 10
+### .NET runtime 10
 
-Both executables are published self-contained and carry the .NET runtime.
+The Windows installer, the portable tar.gz and the .rpm and .deb packages are published
+self-contained and carry the .NET runtime. Its own third-party notices:
+`licenses/dotnet-THIRD-PARTY-NOTICES.txt`.
 
 - Project: https://github.com/dotnet/runtime
 - Copyright (c) .NET Foundation and Contributors
 - License: MIT
 
-## PropertyChanged.Fody 4.1.0
+## Build tools (not shipped)
 
-- Project: https://github.com/Fody/PropertyChanged
+### PropertyChanged.Fody 4.1.0 and Fody 6.6.4
+
+- Project: https://github.com/Fody/PropertyChanged, https://github.com/Fody/Fody
 - Copyright (c) Simon Cropp and contributors
-
-## Fody 6.6.4
-
-- Project: https://github.com/Fody/Fody
-- Copyright (c) Simon Cropp and contributors
+- License: MIT
 
 Note: Fody and PropertyChanged.Fody are build-time IL weavers - the tools
 themselves are not redistributed, but code woven by them ships in the
 application binaries, so their attribution is kept here.
 
-## MinVer 7.0.0
+### Avalonia.BuildServices 11.3.2
+
+- Project: https://avaloniaui.net
+- Copyright (c) 2023-2025 The AvaloniaUI Project
+- License: MIT
+
+Note: an MSBuild task Avalonia runs while building; none of it is redistributed.
+
+### MinVer 7.0.0
 
 - Project: https://github.com/adamralph/minver
 - Copyright (c) Adam Ralph and contributors
@@ -91,6 +163,79 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## The BSD 3-Clause License
+
+### Microsoft.Web.WebView2
+
+```text
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * The name of Microsoft Corporation, or the names of its contributors 
+may not be used to endorse or promote products derived from this
+software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### ANGLE (Avalonia.Angle.Windows.Natives)
+
+```text
+// Copyright 2018 The ANGLE Project Authors.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+//     Redistributions of source code must retain the above copyright
+//     notice, this list of conditions and the following disclaimer.
+//
+//     Redistributions in binary form must reproduce the above
+//     copyright notice, this list of conditions and the following
+//     disclaimer in the documentation and/or other materials provided
+//     with the distribution.
+//
+//     Neither the name of TransGaming Inc., Google Inc., 3DLabs Inc.
+//     Ltd., nor the names of their contributors may be used to endorse
+//     or promote products derived from this software without specific
+//     prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+// BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+// ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+```
 
 ---
 

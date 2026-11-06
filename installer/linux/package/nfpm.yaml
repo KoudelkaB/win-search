@@ -64,6 +64,36 @@ contents:
     dst: /usr/share/icons/hicolor/128x128/apps/io.github.koudelkab.FileSearchManager.png
   - src: installer/linux/icons/256x256/io.github.koudelkab.FileSearchManager.png
     dst: /usr/share/icons/hicolor/256x256/apps/io.github.koudelkab.FileSearchManager.png
+  # The licenses also where each system keeps them (they stay next to the app too): rpm's
+  # %license files install even where documentation is left out; Debian wants "copyright"
+  - src: installer/linux/package/staging/app/LICENSE
+    dst: /usr/share/licenses/file-search-manager/LICENSE
+    type: license
+    packager: rpm
+  - src: installer/linux/package/staging/app/THIRD-PARTY-NOTICES.md
+    dst: /usr/share/licenses/file-search-manager/THIRD-PARTY-NOTICES.md
+    type: license
+    packager: rpm
+  - src: installer/linux/package/staging/app/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/licenses/file-search-manager/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt
+    type: license
+    packager: rpm
+  - src: installer/linux/package/staging/app/licenses/dotnet-THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/licenses/file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt
+    type: license
+    packager: rpm
+  - src: installer/linux/package/staging/app/LICENSE
+    dst: /usr/share/doc/file-search-manager/copyright
+    packager: deb
+  - src: installer/linux/package/staging/app/THIRD-PARTY-NOTICES.md
+    dst: /usr/share/doc/file-search-manager/THIRD-PARTY-NOTICES.md
+    packager: deb
+  - src: installer/linux/package/staging/app/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/doc/file-search-manager/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt
+    packager: deb
+  - src: installer/linux/package/staging/app/licenses/dotnet-THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/doc/file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt
+    packager: deb
 
 scripts:
   postinstall: installer/linux/package/postinstall.sh

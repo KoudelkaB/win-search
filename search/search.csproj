@@ -43,6 +43,28 @@
     <None Include="..\external\singleHtmlApps\LICENSE" Link="WebApps\LICENSE.singleHtmlApps.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Licenses travel with the app on every platform: its own, the third-party summary, and the
+       verbatim notices of the native SkiaSharp/HarfBuzzSharp libraries (Skia, FreeType, libpng,
+       libjpeg-turbo, zlib, the Adobe DNG SDK...) and of a bundled .NET runtime. Those two come
+       from the very packages the build uses, so they always match their versions. -->
+  <ItemGroup>
+    <None Include="..\LICENSE;..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!-- Both resolutions first (AfterTargets would run it after whichever of them comes first),
+       and before AssignTargetPaths gathers the files to copy -->
+  <Target Name="AddPackageNotices" DependsOnTargets="ResolvePackageAssets;ResolveRuntimePackAssets" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <!-- The same file in every SkiaSharp and HarfBuzzSharp native package, which share SkiaSharp's
+           version; the Linux one is restored on every platform -->
+      <_SkiaVersion Include="@(RuntimeCopyLocalItems->'%(NuGetPackageVersion)')" Condition="'%(RuntimeCopyLocalItems.NuGetPackageId)' == 'SkiaSharp'" />
+      <_SkiaNotices Include="@(_SkiaVersion->Distinct()->'$(NuGetPackageRoot)skiasharp.nativeassets.linux/%(Identity)/THIRD-PARTY-NOTICES.txt')" />
+      <_RuntimeNotices Include="@(ResolvedRuntimePack->'%(PackageDirectory)/THIRD-PARTY-NOTICES.TXT')" Condition="'$(SelfContained)' == 'true' And '%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'" />
+      <None Include="@(_SkiaNotices)" Condition="Exists('%(FullPath)')" Link="licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <None Include="@(_RuntimeNotices)" Condition="Exists('%(FullPath)')" Link="licenses/dotnet-THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+    <Error Condition="'@(_SkiaNotices)' == ''" Text="SkiaSharp's THIRD-PARTY-NOTICES.txt was not found - the native library notices must ship with the app." />
+  </Target>
+
   <!-- Linux: the file system service's scripts and unit next to the app. Settings installs the
        service from them, and a release can be set up by hand with sudo ./install-service.sh. -->
   <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Linux')))">

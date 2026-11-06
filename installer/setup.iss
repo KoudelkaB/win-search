@@ -166,8 +166,8 @@ Source: "{srcexe}"; DestDir: "{app}"; DestName: "FileSearchManager-Setup.exe"; F
 ; they contain same-named runtime DLLs with different content
 Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Check: NotModifying
 Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion; Check: NotModifying
-Source: "..\LICENSE"; DestDir: "{app}"; Check: NotModifying
-Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Check: NotModifying
+; LICENSE, THIRD-PARTY-NOTICES.md and licenses\ (the verbatim notices of SkiaSharp and the .NET
+; runtime) come with publish\app - search.csproj puts them there
 Source: "..\README.md"; DestDir: "{app}"; Check: NotModifying
 Source: "..\docs\HELP*.md"; DestDir: "{app}\Docs"; Check: NotModifying
 ; The executable was "File Search Manager.exe" before the Avalonia port. A copy of the new

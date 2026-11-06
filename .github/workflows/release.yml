@@ -87,6 +87,10 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           .\tools\Build-Installer.ps1 -Version $env:VERSION -IsccPath $iscc
 
+      - name: Check third-party notices
+        shell: bash
+        run: python tools/check-third-party-notices.py search/search.csproj search.service/search.service.csproj
+
       - uses: actions/upload-artifact@v6
         with:
           name: windows
@@ -130,11 +134,18 @@ jobs:
         shell: bash
         run: dotnet publish search/search.csproj -c Release -r linux-x64 --self-contained true -o publish/file-search-manager
 
+      # A new or updated package fails here until THIRD-PARTY-NOTICES.md lists it
+      - name: Check third-party notices
+        shell: bash
+        run: python3 tools/check-third-party-notices.py search/search.csproj
+
       - name: Portable tar.gz
         shell: bash
         run: |
           mkdir -p dist
           tar -czf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" -C publish file-search-manager
+          # The licenses travel with it, the bundled .NET runtime's notices included
+          tar -tzf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" | grep -qx "file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt"
 
       - name: Stage the packages
         shell: bash
@@ -189,6 +200,8 @@ jobs:
           [[ -S /run/file-search-manager/service.sock ]]
           [[ -x /usr/bin/file-search-manager ]]
           python3 installer/linux/package/check-service.py /
+          [[ -s /usr/share/doc/file-search-manager/copyright ]]
+          [[ -s /usr/share/doc/file-search-manager/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt ]]
           sudo apt-get remove -y file-search-manager
           # (not "! systemctl ...": bash -e lets a negated command fail unnoticed)
           if systemctl is-active --quiet file-search-manager.service; then
@@ -200,6 +213,7 @@ jobs:
             dnf install -y --setopt=install_weak_deps=False /dist/FileSearchManager-$VERSION-x86_64.rpm
             test -x /usr/bin/file-search-manager
             rpm -V file-search-manager
+            test -s /usr/share/licenses/file-search-manager/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt
             dnf install -y --setopt=install_weak_deps=False selinux-policy-targeted python3-libselinux python3-setools
             python3 /check/check-selinux.py \$(readlink -f /usr/bin/file-search-manager)"
 
