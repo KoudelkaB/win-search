@@ -234,14 +234,38 @@ namespace search
 
         /// <summary>
         /// Hints for the focused field and the result list - computed on every focus move,
-        /// Avalonia has no style triggers to bind several conditions
+        /// Avalonia has no style triggers to bind several conditions.
+        /// Each hint has its own width. A mouse press moves the focus (and ends a key sequence)
+        /// before the button is released, so a panel resized by it would shift the filter and
+        /// search rows: the pressed button (Pin) slides from under the pointer and its click
+        /// is lost. The panel keeps its width while a mouse button is held.
         /// </summary>
         void ConfigureFocusHints()
         {
             AddHandler(GotFocusEvent, (_, __) => UpdateHints(), RoutingStrategies.Bubble, handledEventsToo: true);
             AddHandler(LostFocusEvent, (_, __) => Dispatcher.UIThread.Post(UpdateHints), RoutingStrategies.Bubble, handledEventsToo: true);
             globalCmd.ReceivingChanged += UpdateHints;
+            AddHandler(PointerPressedEvent, (_, __) => help.Width = help.Bounds.Width, RoutingStrategies.Tunnel, handledEventsToo: true);
+            // Posted: the click is handled on the release
+            AddHandler(PointerReleasedEvent, (_, __) => Dispatcher.UIThread.Post(ReleaseHintsWidth), RoutingStrategies.Tunnel, handledEventsToo: true);
+            // A release this window did not get (a drop into another app)
+            AddHandler(PointerMovedEvent, (_, e) =>
+            {
+                if (double.IsNaN(help.Width)) return;
+                var buttons = e.GetCurrentPoint(this).Properties;
+                if (!buttons.IsLeftButtonPressed && !buttons.IsRightButtonPressed && !buttons.IsMiddleButtonPressed
+                    && !buttons.IsXButton1Pressed && !buttons.IsXButton2Pressed)
+                    ReleaseHintsWidth();
+            }, RoutingStrategies.Tunnel, handledEventsToo: true);
+            encodingComboBox.DropDownClosed += (_, __) => ReleaseHintsWidth();
             UpdateHints();
+        }
+
+        void ReleaseHintsWidth()
+        {
+            // An open drop-down does not follow its moved box
+            if (encodingComboBox.IsDropDownOpen) return;
+            help.Width = double.NaN;
         }
 
         void UpdateHints()
