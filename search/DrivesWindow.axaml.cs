@@ -92,7 +92,7 @@ namespace search
                     Dispatcher.UIThread.Post(() =>
                     {
                         choice.Details = $"{format ?? L.Text("NotReady")} · {TypeName(root.Type)}"
-                            + (size > 0 ? $" · {size >> 30} GB" : "")
+                            + (size > 0 ? $" · {SizeText(size)}" : "")
                             + (label is { Length: > 0 } ? $" · {label}" : "");
                         if (!known) choice.IsChecked = defaultEnabled; //No explicit choice => the platform default
                         choice.Probed = true;
@@ -101,6 +101,10 @@ namespace search
                 { IsBackground = true }.Start();
             }
         }
+
+        /// <summary>Whole gigabytes; a smaller volume (/boot, an EFI partition) in megabytes, not "0 GB"</summary>
+        internal static string SizeText(long bytes)
+            => bytes >= 1L << 30 ? $"{bytes >> 30} GB" : $"{Math.Max(1, bytes >> 20)} MB";
 
         static string TypeName(DriveType t) => t switch
         {

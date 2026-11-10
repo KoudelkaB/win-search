@@ -159,7 +159,7 @@ namespace search.Models
             if (Path.IsPathRooted(relative)) return null;
             var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relative));
-            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) ? fullPath : null;
+            return fullPath.StartsWith(fullRoot, PathText.Comparison) ? fullPath : null;
         }
 
         internal static bool IsSafeArchivePath(string entry)
@@ -212,7 +212,7 @@ namespace search.Models
                 throw new FileNotFoundException("Archive target was not found.", archive);
             sources = sources.Where(x => File.Exists(x) || Directory.Exists(x))
                 .Where(x => !search.Models.Extensions.PathsReferToSameLocation(x, archive))
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                .Distinct(PathText.Comparer).ToArray();
             if (sources.Length == 0) return;
 
             // 7-Zip can update every supported archive format. Use it when present;

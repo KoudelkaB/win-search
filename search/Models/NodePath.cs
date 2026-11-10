@@ -6,6 +6,80 @@ using System.Text;
 namespace search.Models
 {
     /// <summary>
+    /// Directory paths asked whether they contain a path: a path is covered when it is one
+    /// of them or lies below one. The answer comes from hash lookups of the path's own
+    /// leading folders - only those exactly as long as one of the directories - so it does
+    /// not grow with the number of directories, and a path outside the text they all start
+    /// with is rejected by one comparison. Follows the platform's path rules (PathText).
+    /// Not for concurrent changes; any number of threads may ask while nothing changes.
+    /// </summary>
+    internal sealed class PathTreeSet
+    {
+        readonly HashSet<string> paths = new(PathText.Comparer);
+        readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> lookup;
+        string common;
+        int shortest = int.MaxValue, longest;
+        bool[] lengths = new bool[128]; //Which lengths the directories have
+        bool anyRoot; //"/" or "C:\": the separator that ends it belongs to the paths below it
+
+        public PathTreeSet() => lookup = paths.GetAlternateLookup<ReadOnlySpan<char>>();
+
+        /// <param name="directories">Paths without a trailing separator, but for a bare root</param>
+        public PathTreeSet(IEnumerable<string> directories) : this()
+        {
+            foreach (var directory in directories) Add(directory);
+        }
+
+        public int Count => paths.Count;
+
+        public void Add(string directory)
+        {
+            if (string.IsNullOrEmpty(directory) || !paths.Add(directory)) return;
+            shortest = Math.Min(shortest, directory.Length);
+            longest = Math.Max(longest, directory.Length);
+            if (directory.Length >= lengths.Length)
+                Array.Resize(ref lengths, Math.Max(directory.Length + 1, lengths.Length * 2));
+            lengths[directory.Length] = true;
+            anyRoot |= directory[^1] == PathText.Sep;
+            if (common == null)
+            {
+                common = directory;
+                return;
+            }
+            var same = 0;
+            while (same < common.Length && same < directory.Length && common[same] == directory[same]) same++;
+            if (same < common.Length) common = common.Substring(0, same);
+        }
+
+        public void Clear()
+        {
+            paths.Clear();
+            common = null;
+            shortest = int.MaxValue;
+            longest = 0;
+            anyRoot = false;
+            Array.Clear(lengths);
+        }
+
+        /// <summary>The path is one of the directories or lies below one</summary>
+        public bool Covers(string path)
+        {
+            if (path == null || path.Length < shortest || !path.StartsWith(common ?? "", PathText.Comparison))
+                return false;
+            //A directory covers the path when it is the whole path or ends where one of the
+            //path's separators stands (a bare root: right after its own)
+            var text = path.AsSpan();
+            for (var at = path.IndexOf(PathText.Sep, anyRoot ? shortest - 1 : shortest); at >= 0 && at <= longest;
+                at = at + 1 < path.Length ? path.IndexOf(PathText.Sep, at + 1) : -1)
+            {
+                if (at >= shortest && lengths[at] && lookup.Contains(text.Slice(0, at))) return true;
+                if (anyRoot && at < longest && lengths[at + 1] && lookup.Contains(text.Slice(0, at + 1))) return true;
+            }
+            return path.Length <= longest && lengths[path.Length] && lookup.Contains(text);
+        }
+    }
+
+    /// <summary>
     /// Path identity, ordering and containment for INodes without materializing full-path
     /// strings. A node's canonical path is its PathParent chain of names on top of the
     /// terminal node's FullName ("C:\" for MFT roots/orphans, a stored path for
@@ -191,6 +265,26 @@ namespace search.Models
             for (var i = 0; i < prefixes.Count; i++)
                 if (full.StartsWith(prefixes[i], PathText.Comparison)) return true;
             return false;
+        }
+
+        /// <summary>
+        /// True when the node is one of the directories or lies below one - the membership
+        /// test of a tree removal, run once for every indexed node. dirs holds the
+        /// directories' indexed nodes with KeyComparer, paths the same directories as text.
+        /// Chained nodes answer by identity (their path hash is cached); a path-backed node
+        /// - or the path-backed end of a chain - is looked up in paths, which costs the same
+        /// for one directory as for thousands. Hashing every path-backed node's whole path
+        /// against dirs instead made one pass over a few million nodes take half a second.
+        /// </summary>
+        public static bool IsInAnyTree(INode n, HashSet<object> dirs, PathTreeSet paths)
+        {
+            var m = n;
+            for (var guard = 0; m.PathParent != null && guard < MaxWalk; guard++)
+            {
+                if (dirs.Contains(m)) return true;
+                m = m.PathParent;
+            }
+            return paths.Covers(m.FullName);
         }
 
         /// <summary>

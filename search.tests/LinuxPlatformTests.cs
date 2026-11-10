@@ -131,5 +131,63 @@ namespace search.Tests
         [InlineData("/a/100%.txt", "/a/100%25.txt")]
         public void TrashInfoPathsArePercentEncoded(string path, string expected)
             => Assert.Equal(expected, LinuxTrash.Escape(path));
+
+        const string CaseSensitiveOnly = "names differing only in case are different items only where the platform says so";
+
+        [Fact]
+        public void FoldersDifferingOnlyInCaseAreBothFiltered()
+        {
+            Assert.SkipWhen(PathText.IgnoreCase, CaseSensitiveOnly);
+            Assert.Equal("/data/Foo /data/foo", new NodeFilter("/data/Foo /data/foo /data/Foo").ToString());
+        }
+
+        [Fact]
+        public void TargetsDifferingOnlyInCaseAreBothKept()
+        {
+            Assert.SkipWhen(PathText.IgnoreCase, CaseSensitiveOnly);
+            var settings = new WorkspaceSettings
+            {
+                BasketTargets =
+                {
+                    new BasketTarget { Path = "/data/Foo", Kind = BasketTargetKind.Folder },
+                    new BasketTarget { Path = "/data/foo", Kind = BasketTargetKind.Folder },
+                    new BasketTarget { Path = "/data/Foo", Kind = BasketTargetKind.Folder }
+                }
+            };
+
+            WorkspaceSettingsStore.Validate(settings);
+
+            Assert.Equal(new[] { "/data/Foo", "/data/foo" }, settings.BasketTargets.Select(t => t.Path));
+        }
+
+        [Fact]
+        public void AnArchiveEntryCannotLeaveForAFolderOfTheSameNameInAnotherCase()
+        {
+            Assert.SkipWhen(PathText.IgnoreCase, CaseSensitiveOnly);
+            Assert.Null(ZipExtensions.SafeExtractionPath("/tmp/Out", "../out/escaped.txt"));
+            Assert.Equal("/tmp/Out/inside.txt", ZipExtensions.SafeExtractionPath("/tmp/Out", "inside.txt"));
+        }
+
+        [Fact]
+        public void MountPointsDifferingOnlyInCaseAreChosenSeparately()
+        {
+            Assert.SkipWhen(PathText.IgnoreCase, CaseSensitiveOnly);
+            var selection = new DriveSelection();
+            selection.Drives["/mnt/Data"] = true;
+            selection.Drives["/mnt/data"] = false;
+
+            Assert.True(selection.Drives["/mnt/Data"]);
+            Assert.False(selection.Drives["/mnt/data"]);
+            //One drive's rescan request does not stand for the other's
+            var now = new System.DateTime(2026, 11, 9, 12, 0, 0, System.DateTimeKind.Utc);
+            var scanned = new[]
+            {
+                new System.Collections.Generic.KeyValuePair<string, System.DateTime>("/mnt/Data", now.AddHours(-1)),
+                new System.Collections.Generic.KeyValuePair<string, System.DateTime>("/mnt/data", now)
+            };
+            Assert.Equal(new[] { "/mnt/Data" }, SearchModel.DrivesToRefresh(scanned,
+                System.Array.Empty<System.Collections.Generic.KeyValuePair<string, System.DateTime>>(), now,
+                System.TimeSpan.FromMinutes(2), _ => true, _ => false));
+        }
     }
 }

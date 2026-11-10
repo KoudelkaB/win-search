@@ -15,11 +15,8 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="0,3,0,0" VerticalContentAlignment="Center">
-                            <TextBlock>
-                                <Run FontWeight="SemiBold" Text="{Binding Root, Mode=OneWay}"/>
-                                <Run Text="  "/>
-                                <Run Text="{Binding Details, Mode=OneWay}"/>
-                            </TextBlock>
+                            <!-- On one line: white space between the runs is text too -->
+                            <TextBlock><Run FontWeight="SemiBold" Text="{Binding Root, Mode=OneWay}"/><Run Text="  "/><Run Text="{Binding Details, Mode=OneWay}"/></TextBlock>
                         </CheckBox>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

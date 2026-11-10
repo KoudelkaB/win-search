@@ -152,7 +152,7 @@ namespace search
                 .Select(x => x.First()).ToList();
             settings.BasketTargets = settings.BasketTargets
                 .Select(x => new BasketTarget { Path = NormalizePath(x.Path), Kind = x.Kind })
-                .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => x.Path, search.Models.PathText.Comparer)
                 .Select(x => x.First()).ToList();
         }
 

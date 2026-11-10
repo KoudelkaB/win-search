@@ -19,7 +19,7 @@ namespace search
         /// <summary>
         /// Explicit user choices keyed by drive root without the slash ("C:")
         /// </summary>
-        public Dictionary<string, bool> Drives { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, bool> Drives { get; set; } = new(PathText.Comparer);
     }
 
     internal static class DriveSelectionStore
@@ -39,8 +39,8 @@ namespace search
                     loaded = JsonSerializer.Deserialize<DriveSelection>(File.ReadAllText(SettingsPath), JsonOptions) ?? loaded;
             }
             catch { } //Unreadable settings must never prevent indexing - fall back to the default
-            //The deserializer loses the case-insensitive comparer => rebuild the dictionary
-            loaded.Drives = new Dictionary<string, bool>(loaded.Drives ?? new(), StringComparer.OrdinalIgnoreCase);
+            //The deserializer loses the comparer => rebuild the dictionary
+            loaded.Drives = new Dictionary<string, bool>(loaded.Drives ?? new(), PathText.Comparer);
             return current = loaded;
         }
 

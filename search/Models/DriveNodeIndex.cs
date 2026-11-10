@@ -703,8 +703,7 @@ namespace search.Models
                     foreach (var node in shard.Base)
                     {
                         if ((++seen & 0x0FFF) == 0 && isCanceled()) return null;
-                        if (shadowed?.Contains(node) == true) continue;
-                        if (match(node)) result.Add(node);
+                        if (match(node) && shadowed?.Contains(node) != true) result.Add(node);
                     }
                 }
                 else if (dense.Count != 0)
@@ -725,8 +724,9 @@ namespace search.Models
                             for (var i = range.Item1; i < range.Item2; i++)
                             {
                                 var node = dense[i];
-                                if (shadowed?.Contains(node) == true) continue;
-                                if (match(node)) local.Add(node);
+                                //The match first: asking the shadow set hashes the node's
+                                //whole path, which only the few matching nodes need
+                                if (match(node) && shadowed?.Contains(node) != true) local.Add(node);
                             }
                             return local;
                         },

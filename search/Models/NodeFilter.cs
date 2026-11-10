@@ -193,7 +193,7 @@ namespace search.Models
                     for (int i = val.Length - 1; i >= 0 && val[i] == PathText.Sep; i--) trailing++;
                     bool recursive = trailing >= 2; // double backslash => recursive subtree
                     var path = TrimDirectory(raw);
-                    if (!dirs.Any(d => d.Recursive == recursive && string.Equals(d.Path, path, StringComparison.OrdinalIgnoreCase)))
+                    if (!dirs.Any(d => d.Recursive == recursive && PathText.Equal(d.Path, path)))
                         dirs.Add(new DirCriterion(path, recursive));
                 }
                 else

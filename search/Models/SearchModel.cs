@@ -74,6 +74,62 @@ namespace search.Models
     }
 
     /// <summary>
+    /// The deletes of one change batch, waiting to be applied together: every deleted folder
+    /// is searched for in the whole index, and all that wait share one pass. Paths that have
+    /// nothing to do with each other commute, so a delete waits until an event comes whose
+    /// meaning depends on it - at the latest for the end of the batch.
+    /// </summary>
+    internal sealed class PendingDeletes
+    {
+        readonly List<FsEvent> events = new();
+        readonly PathTreeSet paths = new();
+
+        public IReadOnlyList<FsEvent> Events => events;
+        public int Count => events.Count;
+        /// <summary>The first one waiting (diagnostics name the batch by it)</summary>
+        public FsEvent First => events.Count == 0 ? null : events[0];
+
+        public void Add(FsEvent deleted)
+        {
+            events.Add(deleted);
+            paths.Add(PathText.TrimEndSeparators(deleted.FullPath));
+        }
+
+        public void Clear()
+        {
+            events.Clear();
+            paths.Clear();
+        }
+
+        /// <summary>
+        /// A create or a rename of these paths: a waiting delete of the same path, of a folder
+        /// above it or of anything below it has to be in the index first
+        /// </summary>
+        public bool Overlap(params string[] changed)
+            => events.Count != 0 && events.Any(deleted => changed.Any(path =>
+                SearchModel.PathsOverlap(deleted.FullPath, path)));
+
+        /// <summary>
+        /// Whether the waiting deletes have to be applied before this change of an item's
+        /// state. The state is the item's own - its metadata, nothing of what is below it -
+        /// so it depends only on a delete that took the item: its own or that of a folder
+        /// above it. A delete BELOW it commutes with it and keeps waiting. That is the usual
+        /// case: whatever is deleted, the folder it was in follows with its new time - and
+        /// applying the deletes for that made every folder of a removed tree pay a pass over
+        /// the whole index of its own, the changes behind it waiting for minutes.
+        /// A hard-link repair and what the Linux service says about a folder's content read
+        /// the index around the path as well: they see every overlapping delete applied.
+        /// </summary>
+        public bool MustPrecede(FsEvent change)
+        {
+            if (events.Count == 0 || change?.FullPath == null) return false;
+            if (change.IsHardLinkUpdate || change.Content != FolderContent.Unchanged)
+                return Overlap(change.FullPath);
+            return paths.Covers(PathText.TrimEndSeparators(change.FullPath));
+        }
+    }
+
+    /// <summary>
     /// The newest of a series of tasks where a later one supersedes the earlier (the filter/sort
     /// updates). Settled once the newest known one has finished, whatever it ended with.
     /// </summary>
@@ -395,7 +451,7 @@ namespace search.Models
         //stalled on Windows\Prefetch). Keep it off the ordered drive queue. Workers batch
         //FRNs so the service/admin helper pays one IPC round trip for a whole change burst.
         readonly ConcurrentDictionary<string, MetadataRefreshSlot> metadataRefreshSlots =
-            new(StringComparer.OrdinalIgnoreCase);
+            new(PathText.Comparer);
         readonly BlockingCollection<MetadataRefreshSlot> metadataRefreshQueue = new();
         readonly NtfsMetadataSource metadataSource = new();
         internal const int SlowMetadataReadLogMs = 1000;
@@ -1700,7 +1756,7 @@ namespace search.Models
             //inside it. Keep only top-level roots: subtracting both aggregates would count
             //the nested tree twice. Ordering by path length lets a small accepted-path set
             //identify ancestors in O(number of paths * directory depth), not O(paths²).
-            var acceptedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var acceptedPaths = PathText.NewSet();
             var treeRoots = new List<(string Path, INode Node)>();
             foreach (var candidate in candidatesForRoot.OrderBy(x => x.Path.Length))
             {
@@ -1719,17 +1775,20 @@ namespace search.Models
             }
 
             var roots = new HashSet<object>(treeRoots.Select(x => x.Node), NodePath.KeyComparer);
-            var prefixes = treeRoots.Select(x => x.Path + Path.DirectorySeparatorChar).ToArray();
+            var rootPaths = new PathTreeSet(treeRoots.Select(x => x.Path));
 
             //The directory node already stores both aggregates for its complete subtree.
             //Subtract them once from surviving ancestors. Walking every removed item was
             //both expensive and dependent on receiving every descendant USN event.
             foreach (var (_, root) in treeRoots) SubtractTreeAggregatesFromAncestors(root);
 
-            var candidates = files.Values.AsParallel()
-                .Where(n => roots.Contains(n) || NodePath.IsUnderAny(n, roots, prefixes))
-                .ToArray();
-            var removed = new List<INode>(candidates.Length);
+            //The drives' dense arrays, matched on every core. Enumerating the index entry by
+            //entry asks its live overlay about every node - a hash of the whole path each -
+            //on one thread: half a second for 4.5 million nodes, paid for every folder that
+            //a package removal or a cache cleanup deleted, while the changes behind it
+            //waited for an hour.
+            var candidates = files.FilterSnapshot(n => NodePath.IsInAnyTree(n, roots, rootPaths), null);
+            var removed = new List<INode>(candidates.Count);
             foreach (var candidate in candidates)
             {
                 if (!files.TryRemove(candidate, out var actual)) continue;
@@ -1836,7 +1895,7 @@ namespace search.Models
                 {
                     targets.Add((dirNode,
                         dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar,
-                        new HashSet<string>(Directory.EnumerateFileSystemEntries(dir), StringComparer.OrdinalIgnoreCase)));
+                        new HashSet<string>(Directory.EnumerateFileSystemEntries(dir), PathText.Comparer)));
                 }
                 catch { } //Directory gone or unreadable - its own delete record handles it
             }
@@ -2495,7 +2554,7 @@ namespace search.Models
 
         // Registrations are added on the UI thread and completed on the FS change processing thread => lock
         Dictionary<string, List<TaskCompletionSource<INode>>> OnFileCreated =
-            new Dictionary<string, List<TaskCompletionSource<INode>>>(StringComparer.InvariantCultureIgnoreCase);
+            new Dictionary<string, List<TaskCompletionSource<INode>>>(PathText.Comparer);
         Task<INode> WaitForFileCreationIf(string path, Func<bool> p)
         {
             var t = new TaskCompletionSource<INode>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2585,19 +2644,18 @@ namespace search.Models
                 //their tree removals share ONE index pass and ONE grid update, so deleting
                 //nine folders empties nine rows at once instead of one by one, each paced
                 //by its own full-index scan.
-                var pendingDeletes = new List<FsEvent>();
-                FsEvent pendingDeleteEvent = null;
+                var pendingDeletes = new PendingDeletes();
                 void FlushDeletes()
                 {
                     if (pendingDeletes.Count == 0) return;
-                    FSChangeProcessor.ReportActiveStage(pendingDeleteEvent, "delete-index");
+                    FSChangeProcessor.ReportActiveStage(pendingDeletes.First, "delete-index");
                     //Discover every tree before mutating anything. USN commonly reports a
                     //directory delete together with deletes of its children; those children
                     //are covered by the directory's stored aggregate and must not each walk
                     //their parent chain as well.
-                    var trees = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var trees = PathText.NewSet();
                     var skipped = new HashSet<FsEvent>(ReferenceEqualityComparer.Instance);
-                    foreach (var deleted in pendingDeletes)
+                    foreach (var deleted in pendingDeletes.Events)
                     {
                         var path = deleted.FullPath;
                         var indexed = files.TryGetValue(path, out var i) ? i : null;
@@ -2622,7 +2680,7 @@ namespace search.Models
 
                     var removed = new List<INode>();
                     var directlyRemoved = new List<INode>();
-                    foreach (var deleted in pendingDeletes)
+                    foreach (var deleted in pendingDeletes.Events)
                     {
                         if (skipped.Contains(deleted)) continue;
                         var path = deleted.FullPath;
@@ -2634,7 +2692,6 @@ namespace search.Models
                         if (direct != null) directlyRemoved.Add(direct);
                     }
                     pendingDeletes.Clear();
-                    pendingDeleteEvent = null;
                     if (directlyRemoved.Count > 0)
                     {
                         //One immutable cache/version patch for the complete coalesced batch;
@@ -2649,13 +2706,12 @@ namespace search.Models
                 //Independent paths commute inside one watcher batch: their final index and
                 //directory-size state is identical regardless of which is applied first.
                 //Keep such deletes pending so every deleted directory shares one full-index
-                //RemoveTrees pass. Only a create/change/rename of the same path or one of its
-                //ancestors/descendants needs the delete to be visible before it is handled.
+                //RemoveTrees pass. Only a create/rename of the same path or one of its
+                //ancestors/descendants needs the delete to be visible before it is handled;
+                //a change of an item's state needs still less (PendingDeletes.MustPrecede).
                 void FlushConflictingDeletes(params string[] paths)
                 {
-                    if (!pendingDeletes.Any(deleted => paths.Any(path =>
-                        PathsOverlap(deleted.FullPath, path)))) return;
-                    FlushDeletes();
+                    if (pendingDeletes.Overlap(paths)) FlushDeletes();
                 }
 
                 var changeFailures = new List<(FsEvent Event, Exception Error)>();
@@ -2706,7 +2762,7 @@ namespace search.Models
                                 break;
                             case WatcherChangeTypes.Changed:
                                 //Change attributes and size
-                                FlushConflictingDeletes(e.FullPath);
+                                if (pendingDeletes.MustPrecede(e)) FlushDeletes();
                                 if (e.IsServiceState)
                                 {
                                     //The Linux service's state of an item: applied without a
@@ -2717,9 +2773,7 @@ namespace search.Models
                                     var (deleteFirst, indexContent) = PlanServiceState(known, state, e.Content);
                                     if (deleteFirst)
                                     {
-                                        var gone = new FsEvent(WatcherChangeTypes.Deleted, e.FullPath);
-                                        pendingDeletes.Add(gone);
-                                        pendingDeleteEvent ??= gone;
+                                        pendingDeletes.Add(new FsEvent(WatcherChangeTypes.Deleted, e.FullPath));
                                         FlushDeletes();
                                         known = null;
                                     }
@@ -2873,7 +2927,6 @@ namespace search.Models
                                     break;
                                 }
                                 pendingDeletes.Add(e);
-                                pendingDeleteEvent ??= e;
                                 break;
                         }
                         }
@@ -3156,13 +3209,13 @@ namespace search.Models
             if (string.IsNullOrEmpty(first) || string.IsNullOrEmpty(second)) return false;
             first = first.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             second = second.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (string.Equals(first, second, StringComparison.OrdinalIgnoreCase)) return true;
+            if (PathText.Equal(first, second)) return true;
             return IsDescendantPath(first, second) || IsDescendantPath(second, first);
         }
 
         static bool IsDescendantPath(string path, string ancestor)
             => path.Length > ancestor.Length
-            && path.StartsWith(ancestor, StringComparison.OrdinalIgnoreCase)
+            && path.StartsWith(ancestor, PathText.Comparison)
             && (path[ancestor.Length] == Path.DirectorySeparatorChar
                 || path[ancestor.Length] == Path.AltDirectorySeparatorChar);
 
@@ -3212,13 +3265,13 @@ namespace search.Models
         // Per-drive pending scan requests - each drive loads and publishes independently, so a
         // hung network walk can never gate an NTFS drive's results or block its refresh
         readonly NonBlocking.ConcurrentDictionary<string, DriveScanRequestAccumulator> driveRequests =
-            new(StringComparer.OrdinalIgnoreCase);
+            new(PathText.Comparer);
         // Per-drive load origin for the status tooltip - survives across scans
-        readonly NonBlocking.ConcurrentDictionary<string, MftOrigin> origins = new(StringComparer.OrdinalIgnoreCase);
-        readonly ConcurrentDictionary<string, string> unavailableDrives = new(StringComparer.OrdinalIgnoreCase);
-        readonly ConcurrentDictionary<string, CancellationTokenSource> driveRetries = new(StringComparer.OrdinalIgnoreCase);
-        readonly ConcurrentDictionary<string, CancellationTokenSource> activeDriveScans = new(StringComparer.OrdinalIgnoreCase);
-        readonly ConcurrentDictionary<string, string> driveLogStates = new(StringComparer.OrdinalIgnoreCase);
+        readonly NonBlocking.ConcurrentDictionary<string, MftOrigin> origins = new(PathText.Comparer);
+        readonly ConcurrentDictionary<string, string> unavailableDrives = new(PathText.Comparer);
+        readonly ConcurrentDictionary<string, CancellationTokenSource> driveRetries = new(PathText.Comparer);
+        readonly ConcurrentDictionary<string, CancellationTokenSource> activeDriveScans = new(PathText.Comparer);
+        readonly ConcurrentDictionary<string, string> driveLogStates = new(PathText.Comparer);
         internal const int DriveRetryDelayMs = 15000;
         int modelDisposed;
         readonly object publishLock = new();     //Serializes finished-drive merges into files
@@ -3230,9 +3283,9 @@ namespace search.Models
         Task loadProgressTask;
         bool compactAfterBurst;                  //A scan of this burst was not a background refresh
         // When each indexed drive's last completed scan started (UTC) - the age of its index
-        readonly NonBlocking.ConcurrentDictionary<string, DateTime> scannedAt = new(StringComparer.OrdinalIgnoreCase);
+        readonly NonBlocking.ConcurrentDictionary<string, DateTime> scannedAt = new(PathText.Comparer);
         // When the scan running on a drive started (UTC) - the age its index will have
-        readonly NonBlocking.ConcurrentDictionary<string, DateTime> scanStartedAt = new(StringComparer.OrdinalIgnoreCase);
+        readonly NonBlocking.ConcurrentDictionary<string, DateTime> scanStartedAt = new(PathText.Comparer);
 
         /// <summary>
         /// A drive nobody watches (Linux) is rescanned once its index is this old and the user
@@ -3266,7 +3319,7 @@ namespace search.Models
             {
                 //The Linux service started (or was installed) meanwhile: watch through it -
                 //the rescan that comes with the new source covers what changed until now
-                var rewatched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var rewatched = PathText.NewSet();
                 if (LinuxService.LinuxServiceClient.Installed)
                     foreach (var root in FSChangeProcessor.UnwatchedRoots())
                         if (LinuxService.LinuxServiceClient.WouldWatch(root))
@@ -3295,7 +3348,7 @@ namespace search.Models
             IEnumerable<KeyValuePair<string, DateTime>> running, DateTime utcNow, TimeSpan age,
             Func<string, bool> unwatched, Func<string, bool> waitingForRetry)
         {
-            var newest = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            var newest = new Dictionary<string, DateTime>(PathText.Comparer);
             foreach (var (root, at) in scannedAt.Concat(running))
                 if (!newest.TryGetValue(root, out var known) || at > known) newest[root] = at;
             return newest
@@ -3606,7 +3659,7 @@ namespace search.Models
 
         void DriveSelectionChanged(IReadOnlyList<string> changedRoots)
         {
-            foreach (var root in changedRoots.Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var root in changedRoots.Distinct(PathText.Comparer))
             {
                 if (!DriveSelectionStore.TryGetExplicit(root, out var enabled) || enabled) continue;
                 if (activeDriveScans.TryGetValue(root, out var scan))
@@ -3869,7 +3922,7 @@ namespace search.Models
         /// </summary>
         string OriginsInfo(NonBlocking.ConcurrentDictionary<string, MftOrigin> origins)
         {
-            var keys = origins.Keys.Union(unavailableDrives.Keys, StringComparer.OrdinalIgnoreCase)
+            var keys = origins.Keys.Union(unavailableDrives.Keys, PathText.Comparer)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
             if (keys.Length == 0) return "";
             var parts = string.Join(", ", keys.Select(key =>
