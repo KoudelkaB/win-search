@@ -78,6 +78,19 @@ namespace search.Tests
             Assert.Equal(new Size(1171, 1303), result.Size);
         }
 
+        [Fact]
+        public void LinuxDialogSizesTheCalculatorAtTheZoomTheSizeWasMeasuredWith()
+        {
+            static (int, int)? Size(string json, double zoom)
+                => WebAppWindow.DialogCalculatorSize(System.Text.Json.JsonDocument.Parse(json).RootElement, zoom);
+
+            // A zoom message the host has not handled yet must not change the result
+            Assert.Equal((1107, 1196), Size("""{"calculatorSize":{"width":924,"height":1000,"zoom":1.18}}""", 1.07));
+            Assert.Equal((1005, 1086), Size("""{"calculatorSize":{"width":924,"height":1000}}""", 1.07));
+            Assert.Null(Size("""{"zoom":1.18}""", 1.07));
+            Assert.Null(Size("""{"calculatorSize":{"width":0,"height":1000,"zoom":1.18}}""", 1.07));
+        }
+
         static System.Text.Json.JsonElement LogExplorerOptions(string[] files, LogExplorerLoad load)
             => System.Text.Json.JsonDocument.Parse(WebAppWindow.MessageFor(Apps.LogExplorer, files, load))
                 .RootElement.GetProperty("logExplorer");

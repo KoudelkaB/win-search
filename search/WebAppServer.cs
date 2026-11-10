@@ -89,14 +89,16 @@ namespace search
         /// <summary>
         /// Register one window's page and files; returns the URL that opens the page with
         /// them. Messages the page posts (unreadable files, calculator size, zoom) reach
-        /// onMessage as JSON text on a background thread.
+        /// onMessage as JSON text on a background thread, one after another in the order posted.
+        /// The page applies the zoom as CSS zoom unless hostZoom - then the host zooms the
+        /// web view itself and the page only reports the changes.
         /// </summary>
-        public static string Register(string page, string[] files, string message, double zoom, Action<string> onMessage,
-            out string token)
+        public static string Register(string page, string[] files, string message, double zoom, bool hostZoom,
+            Action<string> onMessage, out string token)
         {
             var baseUrl = BaseUrl;
             token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-            var script = HandoffScript(token, files, message, zoom, page == Apps.Calculator);
+            var script = HandoffScript(token, files, message, zoom, hostZoom, page == Apps.Calculator);
             sessions[token] = new Session(page, files ?? Array.Empty<string>(), script, onMessage);
             return baseUrl + "WebApps/" + Uri.EscapeDataString(page) + "?lang="
                 + Uri.EscapeDataString(CultureInfo.CurrentUICulture.Name) + "&session=" + token;
@@ -296,7 +298,7 @@ namespace search
         /// the document, or the Hex editor's two file inputs). Also applies the saved zoom
         /// (Ctrl+wheel / Ctrl+plus/minus change it) and reports the calculator's size.
         /// </summary>
-        static string HandoffScript(string token, string[] files, string message, double zoom, bool calculator)
+        static string HandoffScript(string token, string[] files, string message, double zoom, bool hostZoom, bool calculator)
         {
             //Both are embedded in a <script> element - never let them close it
             var names = JsonSerializer.Serialize((files ?? Array.Empty<string>()).Select(Path.GetFileName).ToArray())
@@ -306,10 +308,13 @@ namespace search
             return $$"""
                 (() => {
                     const token = '{{token}}', names = {{names}}, message = {{message ?? "null"}};
-                    const post = m => fetch('/fsm/' + token + '/message', { method: 'POST', body: JSON.stringify(m) }).catch(() => {});
-                    let zoom = {{zoomText}};
-                    const applyZoom = () => { document.documentElement.style.zoom = zoom; };
-                    const setZoom = z => { zoom = Math.min(5, Math.max(0.25, Math.round(z * 100) / 100)); applyZoom(); post({ zoom }); };
+                    // One request at a time: the server handles requests in parallel, and a zoom
+                    // or size overtaken by an older one would be applied last
+                    let posted = Promise.resolve();
+                    const post = m => posted = posted.then(() => fetch('/fsm/' + token + '/message', { method: 'POST', body: JSON.stringify(m) })).catch(() => {});
+                    let zoom = {{zoomText}}, zoomChanged = () => {};
+                    const applyZoom = () => { if (!{{(hostZoom ? "true" : "false")}}) document.documentElement.style.zoom = zoom; };
+                    const setZoom = z => { zoom = Math.min(5, Math.max(0.25, Math.round(z * 100) / 100)); applyZoom(); post({ zoom }); zoomChanged(); };
                     document.addEventListener('DOMContentLoaded', applyZoom);
                     window.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); }, { passive: false });
                     window.addEventListener('keydown', e => {
@@ -321,9 +326,9 @@ namespace search
                     if ({{(calculator ? "true" : "false")}}) window.addEventListener('DOMContentLoaded', () => {
                         const app = document.querySelector('.app');
                         if (!app) return;
-                        // Sizes in CSS px before the zoom - the host multiplies them by it. Computed
-                        // styles are such; getBoundingClientRect is already zoomed in newer WebKitGTK
-                        // (2.54), which left the window too low, with a scrollbar.
+                        // Sizes in CSS px before the zoom, sent with the zoom the host multiplies them
+                        // by - also when only the zoom changed. Computed styles are such even with CSS
+                        // zoom; getBoundingClientRect is already zoomed then in newer WebKitGTK (2.54).
                         const preferredWidth = parseFloat(getComputedStyle(app).maxWidth) || app.offsetWidth;
                         let timer, previous = '';
                         const report = () => {
@@ -331,12 +336,13 @@ namespace search
                             const box = getComputedStyle(app);
                             const width = Math.ceil(Math.max(parseFloat(box.width), app.scrollWidth, preferredWidth) + parseFloat(body.paddingLeft) + parseFloat(body.paddingRight) + 2);
                             const height = Math.ceil(parseFloat(box.height) + parseFloat(body.paddingTop) + parseFloat(body.paddingBottom) + 2);
-                            const key = width + ':' + height;
+                            const key = width + ':' + height + ':' + zoom;
                             if (key === previous) return;
                             previous = key;
-                            post({ calculatorSize: { width, height } });
+                            post({ calculatorSize: { width, height, zoom } });
                         };
                         const queue = () => { clearTimeout(timer); timer = setTimeout(report, 50); };
+                        zoomChanged = queue;
                         new ResizeObserver(queue).observe(app);
                         window.addEventListener('resize', queue);
                         document.fonts.ready.then(queue);

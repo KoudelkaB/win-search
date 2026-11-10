@@ -244,29 +244,28 @@ namespace search
             var layout = WebAppLayoutStore.Load(page);
             string token = null;
             NativeWebDialog dialog = null;
-            var url = WebAppServer.Register(page, files, MessageFor(page, files, load), layout.Zoom, message =>
+            GtkWebDialogWindow gtk = null;
+            // The page posts one message at a time, so they come in order
+            void Receive(string message)
             {
                 try
                 {
                     using var json = JsonDocument.Parse(message);
                     if (json.RootElement.TryGetProperty("zoom", out var z) && z.TryGetDouble(out var value))
                     {
-                        layout.Zoom = value; // The calculator size that follows is at this zoom
+                        gtk?.SetZoom(value);
                         WebAppLayoutStore.Update(page, l => l.Zoom = Math.Round(value, 2));
                     }
-                    else if (json.RootElement.TryGetProperty("calculatorSize", out var size) && dialog != null
-                        && size.TryGetProperty("width", out var w) && size.TryGetProperty("height", out var h))
-                    {
-                        // Read now - the document is disposed before the posted resize runs
-                        var width = (int)Math.Ceiling(w.GetDouble() * layout.Zoom) + 16;
-                        var height = (int)Math.Ceiling(h.GetDouble() * layout.Zoom) + 16;
+                    else if (dialog != null && DialogCalculatorSize(json.RootElement, layout.Zoom) is var (width, height))
                         Dispatcher.UIThread.Post(() => dialog.Resize(width, height));
-                    }
                 }
                 catch { }
-            }, out token);
+            }
+            string Register(bool hostZoom) => WebAppServer.Register(page, files, MessageFor(page, files, load), layout.Zoom, hostZoom, Receive, out token);
+
             if (linuxHost.Value == LinuxHost.Dialog)
             {
+                var url = Register(hostZoom: true);
                 try
                 {
                     dialog = new NativeWebDialog
@@ -276,8 +275,7 @@ namespace search
                         DefaultBackground = App.MainWindowOrNull?.Background is ISolidColorBrush b ? b.Color : Colors.White
                     };
                     dialog.EnvironmentRequested += ConfigureEnvironment;
-                    // Comes before the dialog shows its GTK window, which would be a frameless toolbar
-                    dialog.AdapterCreated += (sender, __) => GtkWebDialogWindow.MakeNormal((NativeWebDialog)sender);
+                    gtk = new GtkWebDialogWindow(dialog, layout.Zoom);
                     dialog.Closing += (_, __) => WebAppServer.Unregister(token);
                     dialog.NavigationCompleted += async (_, __) =>
                     {
@@ -288,7 +286,9 @@ namespace search
                         }
                         catch { }
                     };
-                    var w = page == Apps.Calculator ? 760 : layout.Width is > 200 ? (int)layout.Width : 1280;
+                    // The calculator starts as wide as its desktop layout needs at the saved zoom,
+                    // as on Windows - measured in the narrow layout, it would keep it
+                    var w = page == Apps.Calculator ? (int)Math.Round(760 * layout.Zoom / DefaultZoom) : layout.Width is > 200 ? (int)layout.Width : 1280;
                     var h = page == Apps.Calculator ? 860 : layout.Height is > 150 ? (int)layout.Height : 860;
                     dialog.Resize(w, h);
                     // No owner: on its own like the Windows version - a transient window would stay
@@ -297,10 +297,32 @@ namespace search
                     dialog.Navigate(new Uri(url));
                     return;
                 }
-                catch (Exception e) { $"native web dialog failed, using the browser: {e.Message}".Debug(); }
+                catch (Exception e)
+                {
+                    $"native web dialog failed, using the browser: {e.Message}".Debug();
+                    WebAppServer.Unregister(token);
+                    dialog = null;
+                    gtk = null;
+                }
             }
-            try { Shell.OpenDefault(url); }
-            catch (Exception e) { $"opening {url} in the browser failed: {e.Message}".Debug(); }
+            // A browser tab gets CSS zoom from the page itself
+            var browserUrl = Register(hostZoom: false);
+            try { Shell.OpenDefault(browserUrl); }
+            catch (Exception e) { $"opening {browserUrl} in the browser failed: {e.Message}".Debug(); }
+        }
+
+        /// <summary>
+        /// Size of the web dialog for a calculatorSize report: the page size in CSS px at the
+        /// zoom it was measured with, and the margin of the dialog. Null for other messages.
+        /// </summary>
+        internal static (int Width, int Height)? DialogCalculatorSize(JsonElement message, double zoom)
+        {
+            if (!message.TryGetProperty("calculatorSize", out var size) ||
+                !size.TryGetProperty("width", out var w) || !w.TryGetDouble(out var width) ||
+                !size.TryGetProperty("height", out var h) || !h.TryGetDouble(out var height) ||
+                !double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0) return null;
+            if (size.TryGetProperty("zoom", out var z) && z.TryGetDouble(out var measured) && measured > 0) zoom = measured;
+            return ((int)Math.Ceiling(width * zoom) + 16, (int)Math.Ceiling(height * zoom) + 16);
         }
 
         static void ConfigureEnvironment(object sender, WebViewEnvironmentRequestedEventArgs e)
@@ -504,7 +526,7 @@ namespace search
             started = true;
             if (!OperatingSystem.IsWindows())
             {
-                var url = WebAppServer.Register(page, files, Message, zoom, ReceiveServerMessage, out serverToken);
+                var url = WebAppServer.Register(page, files, Message, zoom, false, ReceiveServerMessage, out serverToken);
                 view.Navigate(new Uri(url));
                 return;
             }
