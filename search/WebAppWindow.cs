@@ -250,11 +250,18 @@ namespace search
                 {
                     using var json = JsonDocument.Parse(message);
                     if (json.RootElement.TryGetProperty("zoom", out var z) && z.TryGetDouble(out var value))
+                    {
+                        layout.Zoom = value; // The calculator size that follows is at this zoom
                         WebAppLayoutStore.Update(page, l => l.Zoom = Math.Round(value, 2));
+                    }
                     else if (json.RootElement.TryGetProperty("calculatorSize", out var size) && dialog != null
                         && size.TryGetProperty("width", out var w) && size.TryGetProperty("height", out var h))
-                        Dispatcher.UIThread.Post(() => dialog.Resize(
-                            (int)Math.Ceiling(w.GetDouble() * layout.Zoom) + 16, (int)Math.Ceiling(h.GetDouble() * layout.Zoom) + 16));
+                    {
+                        // Read now - the document is disposed before the posted resize runs
+                        var width = (int)Math.Ceiling(w.GetDouble() * layout.Zoom) + 16;
+                        var height = (int)Math.Ceiling(h.GetDouble() * layout.Zoom) + 16;
+                        Dispatcher.UIThread.Post(() => dialog.Resize(width, height));
+                    }
                 }
                 catch { }
             }, out token);
@@ -262,8 +269,15 @@ namespace search
             {
                 try
                 {
-                    dialog = new NativeWebDialog { Title = TitleFor(page, files, null) };
+                    dialog = new NativeWebDialog
+                    {
+                        Title = TitleFor(page, files, null),
+                        // What Show(owner) would take from the main window
+                        DefaultBackground = App.MainWindowOrNull?.Background is ISolidColorBrush b ? b.Color : Colors.White
+                    };
                     dialog.EnvironmentRequested += ConfigureEnvironment;
+                    // Comes before the dialog shows its GTK window, which would be a frameless toolbar
+                    dialog.AdapterCreated += (sender, __) => GtkWebDialogWindow.MakeNormal((NativeWebDialog)sender);
                     dialog.Closing += (_, __) => WebAppServer.Unregister(token);
                     dialog.NavigationCompleted += async (_, __) =>
                     {
@@ -277,7 +291,9 @@ namespace search
                     var w = page == Apps.Calculator ? 760 : layout.Width is > 200 ? (int)layout.Width : 1280;
                     var h = page == Apps.Calculator ? 860 : layout.Height is > 150 ? (int)layout.Height : 860;
                     dialog.Resize(w, h);
-                    dialog.Show(App.MainWindowOrNull);
+                    // No owner: on its own like the Windows version - a transient window would stay
+                    // above the main window and be minimized with it
+                    dialog.Show();
                     dialog.Navigate(new Uri(url));
                     return;
                 }

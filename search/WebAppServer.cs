@@ -321,13 +321,16 @@ namespace search
                     if ({{(calculator ? "true" : "false")}}) window.addEventListener('DOMContentLoaded', () => {
                         const app = document.querySelector('.app');
                         if (!app) return;
-                        const preferredWidth = parseFloat(getComputedStyle(app).maxWidth) || app.getBoundingClientRect().width;
+                        // Sizes in CSS px before the zoom - the host multiplies them by it. Computed
+                        // styles are such; getBoundingClientRect is already zoomed in newer WebKitGTK
+                        // (2.54), which left the window too low, with a scrollbar.
+                        const preferredWidth = parseFloat(getComputedStyle(app).maxWidth) || app.offsetWidth;
                         let timer, previous = '';
                         const report = () => {
                             const body = getComputedStyle(document.body);
-                            const bounds = app.getBoundingClientRect();
-                            const width = Math.ceil(Math.max(bounds.width, app.scrollWidth, preferredWidth) + parseFloat(body.paddingLeft) + parseFloat(body.paddingRight) + 2);
-                            const height = Math.ceil(bounds.height + parseFloat(body.paddingTop) + parseFloat(body.paddingBottom) + 2);
+                            const box = getComputedStyle(app);
+                            const width = Math.ceil(Math.max(parseFloat(box.width), app.scrollWidth, preferredWidth) + parseFloat(body.paddingLeft) + parseFloat(body.paddingRight) + 2);
+                            const height = Math.ceil(parseFloat(box.height) + parseFloat(body.paddingTop) + parseFloat(body.paddingBottom) + 2);
                             const key = width + ':' + height;
                             if (key === previous) return;
                             previous = key;
