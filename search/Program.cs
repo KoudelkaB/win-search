@@ -1,6 +1,7 @@
 using System;
 using System.Security.Principal;
 using Avalonia;
+using Avalonia.Logging;
 
 // PropertyChanged.Fody weaves only the models: every Avalonia control implements INotifyPropertyChanged
 // through AvaloniaObject and must keep its own change notification.
@@ -82,9 +83,15 @@ namespace search
 
         // Also used by the Avalonia designer
         public static AppBuilder BuildAvaloniaApp()
-            => AppBuilder.Configure<App>()
+        {
+            var builder = AppBuilder.Configure<App>()
                 .UsePlatformDetect()
                 .With(new X11PlatformOptions { WmClass = "file-search-manager" })
                 .LogToTrace();
+            // Hide the IBus "Destroy is not implemented" error logged on every window close
+            if (Logger.Sink is { } sink and not AvaloniaLogFilter)
+                Logger.Sink = new AvaloniaLogFilter(sink);
+            return builder;
+        }
     }
 }
