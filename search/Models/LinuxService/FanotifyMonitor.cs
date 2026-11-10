@@ -335,7 +335,7 @@ namespace search.Models.LinuxService
             {
                 //A folder's time changes with its content: keep it current (sorting by time
                 //shows where programs write)
-                var folder = System.IO.Path.GetDirectoryName(path);
+                var folder = Parent(path);
                 if (folder != null && IsUnder(folder, root)) Report(root, folder, deleted: false);
             }
 
@@ -464,6 +464,17 @@ namespace search.Models.LinuxService
             b = b.Trim('/');
             if (b.Length == 0) return a.Length == 0 ? "/" : a;
             return a.EndsWith('/') ? a + b : a + "/" + b;
+        }
+
+        /// <summary>
+        /// The folder of a Linux path ("/a/b" -> "/a", "/a" -> "/"); null for "/" and a bare
+        /// name. Not Path.GetDirectoryName: that answers "\a" on Windows, where tests run too.
+        /// </summary>
+        internal static string Parent(string path)
+        {
+            if (string.IsNullOrEmpty(path) || path == "/") return null;
+            var slash = path.LastIndexOf('/');
+            return slash < 0 ? null : slash == 0 ? "/" : path.Substring(0, slash);
         }
 
         /// <summary>The path of a reported folder, through the mount the file system was marked on</summary>

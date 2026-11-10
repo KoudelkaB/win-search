@@ -563,12 +563,7 @@ namespace search.Models.LinuxService
             return result;
         }
 
-        static string FolderOf(string path)
-        {
-            if (string.IsNullOrEmpty(path) || path == "/") return null;
-            var folder = Path.GetDirectoryName(path);
-            return string.IsNullOrEmpty(folder) ? null : folder;
-        }
+        static string FolderOf(string path) => FanotifyMonitor.Parent(path);
     }
 
     /// <summary>

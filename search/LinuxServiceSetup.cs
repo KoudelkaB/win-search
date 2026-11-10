@@ -44,8 +44,9 @@ namespace search
         /// </summary>
         public static bool FromPackage => File.Exists(PackageUnit);
 
-        static string InstallScript => Path.Combine(AppFolder, "install-service.sh");
-        static string UninstallScript => Path.Combine(AppFolder, "uninstall-service.sh");
+        //Linux paths: "/" also where tests run on Windows (Path.Combine would put "\")
+        static string InstallScript => AppFolder.TrimEnd('/') + "/install-service.sh";
+        static string UninstallScript => AppFolder.TrimEnd('/') + "/uninstall-service.sh";
 
         /// <summary>The app runs from the service's own copy - removing the service would delete it</summary>
         public static bool RunsFromInstallFolder => string.Equals(AppFolder, InstallFolder, StringComparison.Ordinal);
