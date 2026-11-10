@@ -16,7 +16,7 @@ Every package the build references must be listed here: the release workflow che
 
 ## Shipped with the application
 
-### Avalonia 12.1.4, Avalonia.Controls.DataGrid 12.1.2, Avalonia.Controls.WebView 12.1.1
+### Avalonia 12.1.6, Avalonia.Controls.DataGrid 12.1.2, Avalonia.Controls.WebView 12.1.1
 
 The user interface: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent, Avalonia.Skia,
 Avalonia.HarfBuzz, Avalonia.X11, Avalonia.FreeDesktop, Avalonia.FreeDesktop.AtSpi,
@@ -66,7 +66,7 @@ COM interop used by Avalonia.
 - Copyright (c) 2021 Nikita Tsukanov
 - License: MIT
 
-### Microsoft.Web.WebView2 1.0.4191.47
+### Microsoft.Web.WebView2 1.0.4314.35
 
 - Project: https://www.nuget.org/packages/Microsoft.Web.WebView2
 - Copyright (C) Microsoft Corporation
@@ -82,7 +82,7 @@ managed interop assembly is shipped, and it is not used there.
 - Copyright (c) 2023 Vladimir Sadov
 - License: MIT
 
-### SharpCompress 0.50.4
+### SharpCompress 0.50.8
 
 - Project: https://github.com/adamhathcock/sharpcompress
 - Copyright (c) 2014 Adam Hathcock
@@ -94,7 +94,7 @@ managed interop assembly is shipped, and it is not used there.
 - Copyright (c) 2026 KoudelkaB
 - License: MIT (also shipped as `WebApps/LICENSE.singleHtmlApps.txt`)
 
-### System.ServiceProcess.ServiceController 10.0.11 and System.Diagnostics.EventLog 10.0.11 (Windows service only)
+### System.ServiceProcess.ServiceController 10.0.14 and System.Diagnostics.EventLog 10.0.14 (Windows service only)
 
 - Project: https://github.com/dotnet/runtime
 - Copyright (c) .NET Foundation and Contributors
@@ -130,7 +130,7 @@ application binaries, so their attribution is kept here.
 
 Note: an MSBuild task Avalonia runs while building; none of it is redistributed.
 
-### MinVer 7.0.0
+### MinVer 8.0.0
 
 - Project: https://github.com/adamralph/minver
 - Copyright (c) Adam Ralph and contributors
