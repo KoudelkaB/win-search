@@ -116,6 +116,7 @@ namespace search.Tests
                 await scene.Until(() => !dialog.IsVisible);
             }
 
+            await scene.Idle();
             Assert.Equal(questions, asked);
             Assert.Equal("content", File.ReadAllText(Path.Combine(scene.Folder, "a.txt")));
             Assert.Equal("other", File.ReadAllText(Path.Combine(scene.Folder, "b.txt")));

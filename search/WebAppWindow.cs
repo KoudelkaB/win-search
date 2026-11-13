@@ -207,12 +207,23 @@ namespace search
         public static bool IsWebApp(string app) => app is Apps.LogExplorer or Apps.HexEditor or Apps.Calculator;
 
         /// <summary>
+        /// Replaces opening a web app (the UI tests record what would open: the page, the
+        /// files and the Log explorer filter); null opens the window
+        /// </summary>
+        internal static Action<string, string[], LogExplorerLoad> OpenOverride;
+
+        /// <summary>
         /// Show the app in a new window with the files loaded. Log explorer takes them as one
         /// appended source with the filter when load is given, otherwise it asks how to combine them.
         /// </summary>
         public static void Open(string page, string[] files = null, LogExplorerLoad load = null)
         {
             files ??= Array.Empty<string>();
+            if (OpenOverride != null)
+            {
+                OpenOverride(page, files, load);
+                return;
+            }
             if (!OperatingSystem.IsWindows() && linuxHost.Value != LinuxHost.Embedded)
             {
                 OpenOutside(page, files, load);

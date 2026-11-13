@@ -261,12 +261,15 @@ namespace search
             if (point.Properties.IsRightButtonPressed)
             {
                 contextTargetColumn = column;
+                openedByCtrlRightClick = false;
                 if (row?.DataContext is not INode n) return;
                 //CTRL + right click => open the file by its default application
                 if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
                 {
                     filters.Used(filterTextBox.Text);
                     _ = Open(n);
+                    //The release still asks for the menu - the file is open, no menu belongs to it
+                    openedByCtrlRightClick = true;
                     e.Handled = true;
                 }
                 else if (!row.IsSelected)
@@ -620,8 +623,16 @@ namespace search
 
         INode[] ContextNodes() => SelectedNodes().ToArray();
 
+        bool openedByCtrlRightClick;
+
         void FilesContextMenu_Opening(object sender, CancelEventArgs e)
         {
+            if (openedByCtrlRightClick)
+            {
+                openedByCtrlRightClick = false;
+                e.Cancel = true;
+                return;
+            }
             var nodes = ContextNodes();
             var paths = contextTargetColumn == "Name"
                 ? nodes.Select(NameTargetPath).ToArray()
@@ -1037,6 +1048,9 @@ namespace search
         #region Sorting by column headers
         DataGridColumn sortedColumn;
         string displayedSort;
+
+        /// <summary>The sort the header arrow shows: "+Size", "-LastChangeTime"</summary>
+        internal string DisplayedSort => displayedSort;
 
         internal static ListSortDirection HeaderSortDirection(string sort)
         {

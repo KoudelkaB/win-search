@@ -189,6 +189,7 @@ namespace search.Tests
             var moved = Path.Combine(scene.Folder, "a.txt");
             await scene.Until(() => File.Exists(moved));
             Assert.False(File.Exists(scene.File));
+            await scene.Idle();
             Assert.Equal("content", File.ReadAllText(moved));
         }
 

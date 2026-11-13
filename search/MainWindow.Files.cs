@@ -771,14 +771,16 @@ namespace search
             arg = arguments;
             string name = "", ext = "", subStr = "";
             int index = 0;
-            var e = arg.GetEnumerator();
+            //Past the last key Current reads Key.None - an array enumerator would throw where
+            //a typed value ends the sequence (F2, E, "md") and is asked whether Delete ended it
+            var e = arg.ReadKeys();
             bool overwrite = e.MoveNext() && e.Current == Key.O, replace = false, removeExt = false;
             if (overwrite) e.MoveNext();
             switch (e.Current)
             {
                 case Key.V: // File name from clipboard
                     name = await FileClipboard.GetText(this) ?? "";
-                    ext = IOPath.GetExtension(name);
+                    ext = IOPath.GetExtension(name).TrimStart('.'); //Added below with its dot
                     name = IOPath.GetFileNameWithoutExtension(name);
                     break;
                 case Key.N: // Add extension

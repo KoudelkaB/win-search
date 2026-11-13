@@ -85,7 +85,7 @@ namespace search
                 : new ProcessStartInfo(program, arguments ?? "");
             start.UseShellExecute = false;
             if (!IsFlatpak && !string.IsNullOrEmpty(workDir) && Directory.Exists(workDir)) start.WorkingDirectory = workDir;
-            return Process.Start(start);
+            return ProcessLauncher.Start(start);
         }
 
         /// <summary>Start a program with an explicit argument list on the host</summary>
@@ -100,12 +100,12 @@ namespace search
             }
             else if (!string.IsNullOrEmpty(workDir) && Directory.Exists(workDir)) start.WorkingDirectory = workDir;
             foreach (var a in arguments) start.ArgumentList.Add(a);
-            return Process.Start(start);
+            return ProcessLauncher.Start(start);
         }
 
         /// <summary>Open a file or folder with its default application (xdg-open / portal)</summary>
         public static Process OpenDefault(string path)
-            => Process.Start(new ProcessStartInfo("xdg-open") { ArgumentList = { path }, UseShellExecute = false });
+            => ProcessLauncher.Start(new ProcessStartInfo("xdg-open") { ArgumentList = { path }, UseShellExecute = false });
 
         /// <summary>
         /// Run a program as root through polkit. GUI programs need the display variables,

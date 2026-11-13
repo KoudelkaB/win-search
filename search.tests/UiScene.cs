@@ -35,6 +35,14 @@ namespace search.Tests
         public DataGrid Grid => Window.FindControl<DataGrid>("filesView");
         public string Status => ((SearchModel)Window.DataContext).Status;
 
+        /// <summary>The programs the window asked to start - none of them runs</summary>
+        public System.Collections.Generic.List<System.Diagnostics.ProcessStartInfo> Launched { get; } = new();
+
+        /// <summary>The web apps the window asked to open: the page, its files, the Log explorer filter</summary>
+        public System.Collections.Generic.List<(string Page, string[] Files, LogExplorerLoad Load)> WebApps { get; } = new();
+
+        readonly TimeSpan progressDelay = MainWindow.ProgressDialogDelay;
+
         public static async Task<UiScene> Open()
         {
             var root = Path.Combine(Path.GetTempPath(), "win-search-ui-" + Guid.NewGuid().ToString("N"));
@@ -49,10 +57,15 @@ namespace search.Tests
             Directory.CreateDirectory(scene.Folder);
             System.IO.File.WriteAllText(scene.File, "content");
             System.IO.File.WriteAllText(scene.Other, "other");
+            //Nothing a test does starts a real program or a web view
+            ProcessLauncher.Override = start => { scene.Launched.Add(start); return null; };
+            WebAppWindow.OpenOverride = (page, files, load) => scene.WebApps.Add((page, files, load));
 
             var window = new MainWindow(startFileSystem: false);
             scene.Window = window;
+            //Pins and targets of the previous test come back from the saved workspace
             window.BasketTargets.Clear();
+            window.PinnedFilters.Clear();
             scene.WatchAnswers();
             // The headless font is wide - room for the filter column
             window.Width = 2400;
@@ -61,7 +74,12 @@ namespace search.Tests
             //The headless clipboard outlives the window of the previous test
             await window.Clipboard.ClearAsync();
             var model = (SearchModel)window.DataContext;
-            await model.Update("");
+            //The results the opening asked for would replace rows added sooner; the index is
+            //shared with other tests, so they are not the rows of this scene
+            Dispatcher.UIThread.RunJobs();
+            await model.UserUpdatesSettled();
+            Dispatcher.UIThread.RunJobs();
+            model.Items.Clear();
             model.Items.Add(scene.FileNode = new PathNode(scene.File, FileAttributes.Normal));
             model.Items.Add(scene.OtherNode = new PathNode(scene.Other, FileAttributes.Normal));
             model.Items.Add(scene.FolderNode = new PathNode(scene.Folder, FileAttributes.Directory));
@@ -177,6 +195,167 @@ namespace search.Tests
 
         public INode[] Selected => Grid.SelectedItems.Cast<INode>().ToArray();
 
+        /// <summary>
+        /// A key sequence as the hints show it: the keys go down in their order and come up
+        /// in the reverse one - the command runs when the last one is released
+        /// </summary>
+        public void Keys(params Key[] keys)
+        {
+            var held = RawInputModifiers.None;
+            foreach (var key in keys)
+            {
+                held |= ModifierOf(key);
+                Window.KeyPress(key, held, PhysicalKey.None, null);
+                Dispatcher.UIThread.RunJobs();
+            }
+            foreach (var key in keys.Reverse())
+            {
+                held &= ~ModifierOf(key);
+                Window.KeyRelease(key, held, PhysicalKey.None, null);
+                Dispatcher.UIThread.RunJobs();
+            }
+            Settle();
+        }
+
+        /// <summary>
+        /// A key held while the others are tapped one after another - how a value is typed
+        /// into a sequence (F2, E, then the new extension), letters repeated included
+        /// </summary>
+        public void Hold(Key held, params Key[] taps)
+        {
+            var modifiers = ModifierOf(held);
+            Window.KeyPress(held, modifiers, PhysicalKey.None, null);
+            Dispatcher.UIThread.RunJobs();
+            foreach (var key in taps)
+            {
+                Window.KeyPress(key, modifiers | ModifierOf(key), PhysicalKey.None, null);
+                Dispatcher.UIThread.RunJobs();
+                Window.KeyRelease(key, modifiers, PhysicalKey.None, null);
+                Dispatcher.UIThread.RunJobs();
+            }
+            Window.KeyRelease(held, RawInputModifiers.None, PhysicalKey.None, null);
+            Settle();
+        }
+
+        /// <summary>The keys that type the text in a sequence: letters, digits, "." and ","</summary>
+        public static Key[] KeysOf(string text) => text.Select(c => c switch
+        {
+            >= 'a' and <= 'z' => Key.A + (c - 'a'),
+            >= '0' and <= '9' => Key.D0 + (c - '0'),
+            '.' => Key.OemPeriod,
+            ',' => Key.OemComma,
+            _ => throw new ArgumentException($"No key types '{c}' in a sequence")
+        }).ToArray();
+
+        /// <summary>One more row of the results, for a file or folder made by the test</summary>
+        public INode AddRow(string path)
+        {
+            var node = new PathNode(path, Directory.Exists(path) ? FileAttributes.Directory : FileAttributes.Normal);
+            ((SearchModel)Window.DataContext).Items.Add(node);
+            Settle();
+            return node;
+        }
+
+        /// <summary>Add a target the way a user does: a drop into the targets box</summary>
+        public async Task<BasketTarget> AddTarget(string path)
+        {
+            var before = Window.BasketTargets.Count;
+            var box = Find<Border>("BasketItemsZone");
+            var at = Center(box);
+            //Its free right end, away from the buttons of the targets already there
+            DropAt(new Point(at.X + box.Bounds.Width / 2 - 20, at.Y), await Files(path));
+            Assert.Equal(before + 1, Window.BasketTargets.Count);
+            Settle();
+            return Window.BasketTargets[^1];
+        }
+
+        /// <summary>The button the targets bar shows for the target</summary>
+        public Button TargetButton(BasketTarget target)
+        {
+            Settle();
+            return Find<ItemsControl>("basketItems").GetVisualDescendants().OfType<Button>()
+                .Single(b => ReferenceEquals(b.Tag, target));
+        }
+
+        bool recycles;
+
+        /// <summary>
+        /// The test moves its files to the Recycle Bin (the trash on Linux). They are taken
+        /// out of it again at the end - only the items from this test's folder.
+        /// </summary>
+        public void Recycles()
+        {
+            recycles = true;
+            //The Linux trash then lives in the test's folder, on its file system
+            if (!OperatingSystem.IsWindows())
+                LinuxTrash.HomeTrashOverride = () => Path.Combine(Root, ".trash");
+        }
+
+        /// <summary>Remove this test's items from the Recycle Bin for good; how many there were</summary>
+        public int PurgeRecycled() => RecycleBin.Purge(Root);
+
+        /// <summary>The progress window appears with the operation, not a second later</summary>
+        public void ShowProgressAtOnce() => MainWindow.ProgressDialogDelay = TimeSpan.Zero;
+
+        /// <summary>The program start names the path - as the program, an argument or its folder</summary>
+        public static bool Mentions(System.Diagnostics.ProcessStartInfo start, string path) =>
+            new[] { start.FileName, start.Arguments, start.WorkingDirectory }.Concat(start.ArgumentList)
+                .Any(text => text != null && text.Contains(path, StringComparison.OrdinalIgnoreCase));
+
+        static RawInputModifiers ModifierOf(Key key) => key switch
+        {
+            Key.LeftShift or Key.RightShift => RawInputModifiers.Shift,
+            Key.LeftCtrl or Key.RightCtrl => RawInputModifiers.Control,
+            Key.LeftAlt or Key.RightAlt => RawInputModifiers.Alt,
+            _ => RawInputModifiers.None
+        };
+
+        /// <summary>Text typed into the focused box</summary>
+        public void Type(string text)
+        {
+            Window.KeyTextInput(text);
+            Settle();
+        }
+
+        /// <summary>Replace the whole text of the focused box by typing</summary>
+        public void Retype(string text)
+        {
+            Ctrl(Key.A);
+            Type(text);
+        }
+
+        public T Find<T>(string name) where T : Control => Window.FindControl<T>(name);
+
+        public void Click(Control control, MouseButton button = MouseButton.Left) => Click(Center(control), button);
+
+        /// <summary>The button of the window with this localized caption</summary>
+        public Button ButtonOf(string caption) => Window.GetVisualDescendants().OfType<Button>()
+            .Single(b => Equals(b.Content, caption) && b.IsEffectivelyVisible);
+
+        /// <summary>Click an item of an open context menu, in the popup the menu lives in</summary>
+        public void Choose(ContextMenu menu, string caption)
+        {
+            Assert.True(menu.IsOpen);
+            var item = menu.Items.OfType<MenuItem>().Single(i => MenuText(i) == caption);
+            Assert.True(item.IsVisible && item.IsEffectivelyEnabled);
+            var popup = TopLevel.GetTopLevel(item);
+            Assert.NotNull(popup);
+            var at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), popup).Value;
+            popup.MouseMove(at);
+            popup.MouseDown(at, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+            popup.MouseUp(at, MouseButton.Left);
+            Settle();
+        }
+
+        /// <summary>The caption of a menu item, with or without the key hint beside it</summary>
+        public static string MenuText(MenuItem item) => item.Header switch
+        {
+            string text => text,
+            Grid grid => grid.Children.OfType<TextBlock>().First().Text,
+            _ => null
+        };
+
         #endregion
 
         #region Dialogs
@@ -200,7 +379,7 @@ namespace search.Tests
         /// <summary>Click a named control of a dialog, or its button of that localized caption</summary>
         public void Click(Window dialog, string name)
         {
-            var control = dialog.FindControl<Control>(name)
+            var control = dialog.GetVisualDescendants().OfType<Control>().FirstOrDefault(c => c.Name == name)
                 ?? dialog.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, L.Text(name)));
             var at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), dialog).Value;
             dialog.MouseMove(at);
@@ -215,14 +394,17 @@ namespace search.Tests
             for (var i = 0; i < 200; i++)
             {
                 Dispatcher.UIThread.RunJobs();
-                if (reached()) return;
+                //A file still being written is simply not there yet
+                try { if (reached()) return; }
+                catch (IOException) { }
                 await Task.Delay(25);
             }
             Assert.Fail("The expected state was not reached in 5 s; status: " + Status);
         }
 
         /// <summary>No dialog is left open and no transfer is still running</summary>
-        public Task Idle() => Until(() => !Window.OwnedWindows.Any(w => w.IsVisible) && !string.IsNullOrEmpty(Status));
+        public Task Idle() => Until(() => !Window.OwnedWindows.Any(w => w.IsVisible)
+            && !Window.FileOperationInProgress && !string.IsNullOrEmpty(Status));
 
         #endregion
 
@@ -231,7 +413,16 @@ namespace search.Tests
             if (Grid.ContextMenu is { IsOpen: true } menu) menu.Close();
             foreach (var owned in Window.OwnedWindows.ToArray()) owned.Close();
             Window.BasketTargets.Clear();
+            Window.PinnedFilters.Clear();
             Window.Close();
+            ProcessLauncher.Override = null;
+            WebAppWindow.OpenOverride = null;
+            MainWindow.ProgressDialogDelay = progressDelay;
+            if (recycles)
+            {
+                try { PurgeRecycled(); } catch { }
+                LinuxTrash.HomeTrashOverride = null;
+            }
             try { Directory.Delete(Root, recursive: true); } catch { }
         }
 

@@ -103,6 +103,9 @@ namespace search
         bool newFolderOverwrite;
         string contextTargetColumn;
         bool fileOperationInProgress;
+
+        /// <summary>A transfer or a delete is running; a second one is refused meanwhile</summary>
+        internal bool FileOperationInProgress => fileOperationInProgress;
         bool closingSaved;
         readonly HashSet<DataGridRow> realizedRows = new();
         static readonly HashSet<string> ExecutableExtensions = new(
@@ -120,7 +123,8 @@ namespace search
                     ".yaml", ".yml", ".md", ".cs", ".xaml", ".csproj", ".sln", ".ps1",
                     ".bat", ".cmd", ".html", ".htm", ".sql", ".prn" },
             StringComparer.OrdinalIgnoreCase);
-        static readonly TimeSpan ProgressDialogDelay = TimeSpan.FromSeconds(1);
+        /// <summary>A quick operation finishes without a progress window (the UI tests show it at once)</summary>
+        internal static TimeSpan ProgressDialogDelay = TimeSpan.FromSeconds(1);
         static readonly IBrush DirectoryBrush = Brushes.Blue;
         static readonly IBrush FoundBrush = Brushes.Green;
         static readonly IBrush MissingBrush = Brushes.Red;

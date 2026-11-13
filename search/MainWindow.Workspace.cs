@@ -201,12 +201,27 @@ namespace search
             MimeTypes = new[] { "application/json" }
         };
 
+        /// <summary>
+        /// The file chosen in the save or open dialog, null when it was cancelled. The UI tests
+        /// answer the system dialog themselves.
+        /// </summary>
+        internal Func<FilePickerSaveOptions, Task<string>> PickExportFile;
+        internal Func<FilePickerOpenOptions, Task<string>> PickImportFile;
+
+        async Task<string> ExportFile(FilePickerSaveOptions options) => PickExportFile != null
+            ? await PickExportFile(options)
+            : (await StorageProvider.SaveFilePickerAsync(options))?.TryGetLocalPath();
+
+        async Task<string> ImportFile(FilePickerOpenOptions options) => PickImportFile != null
+            ? await PickImportFile(options)
+            : (await StorageProvider.OpenFilePickerAsync(options))?.FirstOrDefault()?.TryGetLocalPath();
+
         async void ExportWorkspace_Click(object sender, RoutedEventArgs e)
         {
-            IStorageFile file;
+            string path;
             try
             {
-                file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+                path = await ExportFile(new FilePickerSaveOptions
                 {
                     Title = L.Text("Export pinned filters and targets"),
                     SuggestedFileName = "file-search-manager.winsearch-settings.json",
@@ -220,7 +235,6 @@ namespace search
                 Model.Status = ex.Message;
                 return;
             }
-            var path = file?.TryGetLocalPath();
             if (path == null) return;
             try
             {
@@ -235,10 +249,10 @@ namespace search
 
         async void ImportWorkspace_Click(object sender, RoutedEventArgs e)
         {
-            IReadOnlyList<IStorageFile> files;
+            string path;
             try
             {
-                files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                path = await ImportFile(new FilePickerOpenOptions
                 {
                     Title = L.Text("Import pinned filters and targets"),
                     AllowMultiple = false,
@@ -250,7 +264,6 @@ namespace search
                 Model.Status = ex.Message;
                 return;
             }
-            var path = files?.FirstOrDefault()?.TryGetLocalPath();
             if (path == null) return;
             try
             {
@@ -688,7 +701,7 @@ namespace search
                 WorkingDirectory = IOPath.GetDirectoryName(executable)
             };
             foreach (var path in paths) start.ArgumentList.Add(path);
-            Process.Start(start);
+            ProcessLauncher.Start(start);
         }
     }
 }

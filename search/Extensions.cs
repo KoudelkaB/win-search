@@ -62,7 +62,7 @@ namespace search
                 }
                 try
                 {
-                    return Process.Start(new ProcessStartInfo
+                    return ProcessLauncher.Start(new ProcessStartInfo
                     {
                         FileName = name,
                         Arguments = args,
@@ -81,7 +81,7 @@ namespace search
             var directExecutable = File.Exists(name) &&
                 (extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
                  extension.Equals(".com", StringComparison.OrdinalIgnoreCase));
-            return Process.Start(new ProcessStartInfo
+            return ProcessLauncher.Start(new ProcessStartInfo
             {
                 FileName = name,
                 Arguments = args,
@@ -218,6 +218,22 @@ namespace search
         };
 
         public static string ReadTill(this IEnumerable<Key> e, params Key[] stoppers) => e.GetEnumerator().ReadTill(stoppers);
+
+        /// <summary>
+        /// The keys of a sequence to read one by one. Past the last key Current is Key.None:
+        /// the readers ask how a typed value ended, and an array's enumerator throws instead.
+        /// </summary>
+        public static IEnumerator<Key> ReadKeys(this IEnumerable<Key> keys) => new KeyReader(keys.GetEnumerator());
+
+        sealed class KeyReader(IEnumerator<Key> keys) : IEnumerator<Key>
+        {
+            bool ended;
+            public Key Current => ended ? Key.None : keys.Current;
+            object System.Collections.IEnumerator.Current => Current;
+            public bool MoveNext() => !ended && !(ended = !keys.MoveNext());
+            public void Reset() { keys.Reset(); ended = false; }
+            public void Dispose() => keys.Dispose();
+        }
 
         /// <summary>
         /// Read until one of the given keys is encountered or the end
