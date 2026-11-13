@@ -398,11 +398,12 @@ namespace search
 
         void ConfigureDragAndDrop()
         {
-            //The bar shows the zones; it is not a drop spot itself
+            //The bar shows the zones; it is not a drop spot itself. Drag events only bubble
+            //(a tunnel handler never runs), and the zones inside mark them handled
             TargetBar.AddHandler(DragDrop.DragOverEvent, (_, e) =>
             {
                 if (GetDropSources(e).Length > 0) ShowBasketDropOverlay();
-            }, RoutingStrategies.Tunnel);
+            }, RoutingStrategies.Bubble, handledEventsToo: true);
             TargetBar.AddHandler(DragDrop.DragOverEvent, (_, e) =>
             {
                 e.DragEffects = DragDropEffects.None;
