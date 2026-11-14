@@ -296,12 +296,17 @@ namespace search.Tests
 
         /// <summary>
         /// The one item the test recycled is in the bin, and out of it again. Skipped where this
-        /// process may not read the bin - the move itself was checked before.
+        /// process may not read the bin, or does not find there what it recycles itself (a
+        /// sandbox hiding the bin) - the move itself was checked before. An item missing from a
+        /// bin that works is a failure: the app deleted it for good.
         /// </summary>
         public void AssertOneRecycled()
         {
             var purged = PurgeRecycled();
             Assert.SkipWhen(purged == null, "This process cannot read the Recycle Bin, so the recycled item could not be checked or removed from it");
+            if (purged != 1)
+                Assert.SkipUnless(RecycleBin.SeesWhatIsRecycled(Root),
+                    "This process does not find in the Recycle Bin what it recycles, so the recycled item could not be checked or removed from it");
             Assert.Equal(1, purged);
         }
 

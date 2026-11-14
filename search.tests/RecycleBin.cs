@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using search.Models;
 
@@ -31,11 +32,11 @@ namespace search.Tests
             var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
             if (sid == null) return null;
             var bin = Path.Combine(Path.GetPathRoot(folder), "$Recycle.Bin", sid);
-            //Asked right after a recycle, which creates the folder: a folder this process does
-            //not find is one it does not see (a sandbox hides it), not an empty bin
+            //No folder: nothing was recycled on this drive - or a sandbox hides the folder
+            //(SeesWhatIsRecycled tells which). Directory.Exists would say false for both.
             string[] infos;
             try { infos = Directory.GetFiles(bin, "$I*"); }
-            catch (DirectoryNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return 0; }
             catch (UnauthorizedAccessException) { return null; }
             var removed = 0;
             foreach (var info in infos)
@@ -53,6 +54,48 @@ namespace search.Tests
             }
             return removed;
         }
+
+        /// <summary>
+        /// Whether this process finds in the bin what is recycled: a file of its own goes there
+        /// through the shell, independently of the app's code, and is looked for (and removed).
+        /// False where a sandbox hides the bin - the file then stays in it, named for what it
+        /// is - and on a drive whose bin deletes for good. The Linux trash of a test is in its
+        /// own folder: always seen.
+        /// </summary>
+        public static bool SeesWhatIsRecycled(string root)
+        {
+            if (!OperatingSystem.IsWindows()) return true;
+            var folder = Directory.CreateDirectory(Path.Combine(root, "bin-check")).FullName;
+            var probe = Path.Combine(folder, "win-search-tests-recycle-bin-check.txt");
+            File.WriteAllText(probe, "A test checked whether it sees the Recycle Bin. This file may be deleted.");
+            var operation = new FileOperation
+            {
+                Function = FO_DELETE,
+                From = probe + "\0", //A list ended by two nulls: the marshaller adds the second
+                Flags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI
+            };
+            if (SHFileOperation(ref operation) != 0 || File.Exists(probe)) return false;
+            return Purge(folder) == 1;
+        }
+
+        const uint FO_DELETE = 3;
+        const ushort FOF_SILENT = 0x4, FOF_NOCONFIRMATION = 0x10, FOF_ALLOWUNDO = 0x40, FOF_NOERRORUI = 0x400;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct FileOperation
+        {
+            public IntPtr Window;
+            public uint Function;
+            public string From;
+            public string To;
+            public ushort Flags;
+            public bool AnyAborted;
+            public IntPtr NameMappings;
+            public string ProgressTitle;
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern int SHFileOperation(ref FileOperation operation);
 
         /// <summary>
         /// The original path in a $I file: Windows 10 writes version 2 (the path's length,
