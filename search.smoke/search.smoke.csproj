@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Smoke tests over the real, published build: the app is started as its own process with a
+    data folder of its own and driven from outside - through UI Automation on Windows, through
+    the X server (xdotool, xclip) on Linux. Not part of search.tests: run them on purpose,
+    before a release (dotnet test search.smoke).
+  -->
+  <PropertyGroup>
+    <TargetFramework Condition="$([MSBuild]::IsOSPlatform('Windows'))">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net10.0</TargetFramework>
+    <RootNamespace>search.Smoke</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- xunit v3 builds the tests as an executable -->
+    <OutputType>Exe</OutputType>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <DefineConstants>$(DefineConstants);WINDOWS_HOST</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+  </ItemGroup>
+
+  <!-- The published app lives under bin/app; it is the subject, not a part of this build -->
+  <ItemGroup>
+    <Compile Remove="bin/**" />
+  </ItemGroup>
+
+</Project>

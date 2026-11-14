@@ -30,9 +30,17 @@ namespace search
         public static string Role { get; private set; } = "UI";
         public static bool OpenHelpRequested { get; private set; }
 
+        /// <summary>The environment variable naming another folder for all user data</summary>
+        public const string DataFolderVariable = "WIN_SEARCH_DATA";
+
         [STAThread]
         public static int Main(string[] args)
         {
+            // An automated run (the smoke tests over the published build) keeps its settings,
+            // histories, index caches and logs in a folder of its own, apart from the user's
+            if (Environment.GetEnvironmentVariable(DataFolderVariable) is { Length: > 0 } data)
+                UserDataPaths.UseRootForCurrentProcess(data);
+
             if (OperatingSystem.IsWindows())
             {
                 using (var identity = WindowsIdentity.GetCurrent())
