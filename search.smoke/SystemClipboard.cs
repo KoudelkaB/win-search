@@ -15,8 +15,7 @@ namespace search.Smoke
     /// </summary>
     internal static class SystemClipboard
     {
-        const uint CF_BITMAP = 2, CF_METAFILEPICT = 3, CF_PALETTE = 9, CF_UNICODETEXT = 13, CF_ENHMETAFILE = 14, CF_HDROP = 15,
-            GMEM_MOVEABLE = 0x0002;
+        const uint CF_UNICODETEXT = 13, CF_HDROP = 15, GMEM_MOVEABLE = 0x0002;
         static readonly uint DropEffectFormat = RegisterClipboardFormat("Preferred DropEffect");
 
         public static string[] Files() => Read(() =>
@@ -73,51 +72,8 @@ namespace search.Smoke
             Write(() => SetClipboardData(CF_UNICODETEXT, memory));
         }
 
-        /// <summary>
-        /// Everything on the clipboard that can be copied - text in all its forms, file lists,
-        /// images as DIB (Windows offers them beside the bitmap), the formats of other programs,
-        /// vector pictures as the bits of their enhanced metafile (Windows offers one beside an
-        /// old metafile picture). The bitmap, the old metafile and the palette are GDI handles
-        /// that Windows makes again from those forms; owner-drawn formats cannot be kept.
-        /// </summary>
-        public static (uint Format, byte[] Data)[] Snapshot() => Read(() =>
-        {
-            var formats = new List<(uint, byte[])>();
-            for (uint format = 0; (format = EnumClipboardFormats(format)) != 0;)
-            {
-                if (format is CF_BITMAP or CF_METAFILEPICT or CF_PALETTE or (>= 0x80 and <= 0x8E) or (>= 0x300 and <= 0x3FF)) continue;
-                var data = GetClipboardData(format);
-                if (format == CF_ENHMETAFILE)
-                {
-                    var length = data == IntPtr.Zero ? 0 : GetEnhMetaFileBits(data, 0, null);
-                    if (length == 0) continue;
-                    var bits = new byte[length];
-                    if (GetEnhMetaFileBits(data, length, bits) == length) formats.Add((format, bits));
-                    continue;
-                }
-                var size = data == IntPtr.Zero ? 0 : (long)GlobalSize(data);
-                if (size == 0) continue;
-                var pointer = GlobalLock(data);
-                if (pointer == IntPtr.Zero) continue;
-                try
-                {
-                    var bytes = new byte[size];
-                    Marshal.Copy(pointer, bytes, 0, bytes.Length);
-                    formats.Add((format, bytes));
-                }
-                finally { GlobalUnlock(data); }
-            }
-            return formats.ToArray();
-        });
-
-        /// <summary>Put a snapshot back (an empty one leaves the clipboard empty)</summary>
-        public static void Restore((uint Format, byte[] Data)[] snapshot) => Write(() =>
-        {
-            //The clipboard owns what it is given: the metafile as well as the memory
-            foreach (var (format, data) in snapshot)
-                SetClipboardData(format, format == CF_ENHMETAFILE ? SetEnhMetaFileBits((uint)data.Length, data) : Global(data));
-            return IntPtr.Zero;
-        });
+        /// <summary>Nothing on the clipboard, so whatever is there next was put there since</summary>
+        public static void Empty() => Write(() => IntPtr.Zero);
 
         static IntPtr Global(byte[] bytes)
         {
@@ -172,8 +128,6 @@ namespace search.Smoke
         static extern IntPtr CreateWindowEx(uint exStyle, string className, string name, uint style, int x, int y, int width, int height,
             IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
         [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr window);
-        [DllImport("user32.dll")] static extern uint EnumClipboardFormats(uint format);
-        [DllImport("kernel32.dll")] static extern UIntPtr GlobalSize(IntPtr memory);
         [DllImport("user32.dll", SetLastError = true)] static extern bool OpenClipboard(IntPtr owner);
         [DllImport("user32.dll")] static extern bool CloseClipboard();
         [DllImport("user32.dll")] static extern bool EmptyClipboard();
@@ -181,8 +135,6 @@ namespace search.Smoke
         [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint format, IntPtr memory);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFile(IntPtr drop, uint index, StringBuilder file, uint size);
-        [DllImport("gdi32.dll")] static extern uint GetEnhMetaFileBits(IntPtr metafile, uint size, byte[] data);
-        [DllImport("gdi32.dll")] static extern IntPtr SetEnhMetaFileBits(uint size, byte[] data);
         [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
         [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);
         [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr memory);

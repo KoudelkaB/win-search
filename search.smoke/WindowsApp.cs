@@ -22,7 +22,8 @@ namespace search.Smoke
     /// <summary>
     /// The published app started once for the Windows smoke tests, with its own data folder
     /// and a work folder of files named after this run's token, driven through UI Automation.
-    /// The keyboard and the mouse are real: leave them alone while the tests run.
+    /// The keyboard and the mouse are real: leave them alone while the tests run. The tests use
+    /// the clipboard and leave it as the last one did - what it held before is not put back.
     /// </summary>
     public sealed class WindowsApp : IAsyncLifetime
     {
@@ -39,7 +40,6 @@ namespace search.Smoke
         public Application App { get; private set; }
         public Window Main { get; private set; }
 
-        (uint Format, byte[] Data)[] clipboard;
         Process process;
         readonly WindowsApp earlier;
 
@@ -77,7 +77,6 @@ namespace search.Smoke
                 PublishedApp.PrepareData(Data, Work);
             }
             BeforeStart?.Invoke(this);
-            clipboard = SystemClipboard.Snapshot();
 
             var exe = PublishedApp.Executable;
             //"UI": never the elevated helper, so never a UAC prompt
@@ -118,7 +117,6 @@ namespace search.Smoke
                 App.Dispose();
                 Automation.Dispose();
             }
-            if (clipboard != null) SystemClipboard.Restore(clipboard);
             if (!KeepFolders) DeleteFolders();
             return ValueTask.CompletedTask;
         }

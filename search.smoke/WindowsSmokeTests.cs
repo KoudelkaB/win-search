@@ -250,7 +250,7 @@ namespace search.Smoke
                 Live, "the new row and the deleted one gone");
 
             Assert.Contains("Selected: 2", app.Texts);
-            SystemClipboard.Restore(Array.Empty<(uint, byte[])>());
+            SystemClipboard.Empty();
             app.Press(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_C);
             var copied = await WindowsApp.WaitFor(() => SystemClipboard.Files() is { Length: > 0 } f ? f : null,
                 TimeSpan.FromSeconds(10), "files on the clipboard");

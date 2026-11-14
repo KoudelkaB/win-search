@@ -13,6 +13,8 @@ namespace search.Smoke
     /// The published app started once for the Linux smoke tests on an X display (xvfb-run
     /// or a desktop), with its own data folder. It is driven by real keys only; what it did
     /// is read from the clipboard, the disk and its windows - no accessibility bus needed.
+    /// Run them under xvfb-run on a desktop: on the desktop's own display they take its
+    /// keyboard and clipboard. What the clipboard held before is not put back.
     /// </summary>
     public sealed class LinuxApp : IAsyncLifetime
     {
@@ -31,9 +33,6 @@ namespace search.Smoke
         /// <summary>The keyboard is in the results, not in the filter box (Right Shift switches)</summary>
         bool inResults;
 
-        /// <summary>The clipboard before the tests (they use it), put back at the end</summary>
-        (string Target, byte[] Data)? clipboard;
-
         public async ValueTask InitializeAsync()
         {
             if ((Missing = X11.Missing()) != null) return;
@@ -45,7 +44,6 @@ namespace search.Smoke
             Before = Path.Combine(Work, $"{Token}-before.txt");
             File.WriteAllText(Before, $"smoke {Token} before");
             PublishedApp.PrepareData(Data, Work);
-            clipboard = X11.SaveClipboard();
 
             var exe = PublishedApp.Executable;
             var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
@@ -63,7 +61,6 @@ namespace search.Smoke
                 if (!Process.WaitForExit(15000)) Process.Kill(entireProcessTree: true);
             }
             Process.Dispose();
-            X11.RestoreClipboard(clipboard);
             PublishedApp.Delete(Root);
             PublishedApp.Delete(Work);
             return ValueTask.CompletedTask;
