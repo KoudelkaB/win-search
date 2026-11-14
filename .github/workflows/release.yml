@@ -97,6 +97,14 @@ jobs:
           path: installer/Output/FileSearchManager-Setup-${{ env.VERSION }}.exe
           if-no-files-found: error
 
+      # The app folder the installer packed, for the smoke tests (not a release file)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-app
+          path: publish/app
+          if-no-files-found: error
+          retention-days: 1
+
   linux:
     needs: version
     runs-on: ubuntu-latest
@@ -224,22 +232,34 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # The packages build meanwhile; nothing is published unless both test suites pass
+  # Nothing is published unless both test suites pass. The headless tests run while the
+  # packages build; the smoke tests wait for them and drive the very build to be released -
+  # its web apps are the latest singleHtmlApps, which a build of the pinned commit would miss.
   tests:
     uses: ./.github/workflows/tests.yml
 
   smoke:
+    needs: [windows, linux]
     uses: ./.github/workflows/smoke.yml
+    with:
+      windows-app: windows-app
+      linux-app: linux
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, linux, tests, smoke]
     runs-on: ubuntu-latest
     steps:
+      # The release files only, by name: windows-app is the smoke tests' copy of the app folder
       - uses: actions/download-artifact@v8
         with:
+          name: windows
           path: dist
-          merge-multiple: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux
+          path: dist
 
       - name: Generate checksums
         shell: bash

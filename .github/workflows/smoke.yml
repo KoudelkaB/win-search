@@ -2,11 +2,21 @@ name: smoke
 
 # The smoke tests over the published build (search.smoke): the app runs as its own process
 # with a data folder of its own and is driven from outside - UI Automation on Windows, the
-# X server (Xvfb, xdotool, xclip) on Linux. Started by hand, or called by another workflow
-# before it releases.
+# X server (Xvfb, xdotool, xclip) on Linux. Started by hand, the tests publish the app from
+# this commit; called by the release workflow, they test the very build it releases (its web
+# apps come from the latest singleHtmlApps, not the pinned commit).
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      windows-app:
+        description: An artifact of the calling run holding the published Windows app folder (FileSearchManager.exe at its top)
+        type: string
+        default: ''
+      linux-app:
+        description: An artifact of the calling run holding the portable FileSearchManager-*-linux-x64.tar.gz
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -23,6 +33,21 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+
+      - name: The build to release
+        if: inputs.windows-app != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.windows-app }}
+          path: ${{ runner.temp }}/app
+
+      - name: Test that build
+        if: inputs.windows-app != ''
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'app\FileSearchManager.exe'
+          if (-not (Test-Path $exe)) { Write-Error "The artifact ${{ inputs.windows-app }} has no FileSearchManager.exe"; exit 1 }
+          "WIN_SEARCH_APP=$exe" >> $env:GITHUB_ENV
 
       # The runner is an administrator: the app reads C:'s $MFT itself, no service needed.
       # CI=true turns "could not get the foreground" from a skip into a failure.
@@ -46,6 +71,29 @@ jobs:
 
       - name: X server tools
         run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip wmctrl openbox
+
+      - name: The build to release
+        if: inputs.linux-app != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.linux-app }}
+          path: ${{ runner.temp }}/release
+
+      # The portable tar.gz as users unpack it (an artifact's own zip would drop the execute bits)
+      - name: Test that build
+        if: inputs.linux-app != ''
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/release/FileSearchManager-*-linux-x64.tar.gz)
+          if (( ${#archives[@]} != 1 )); then
+            echo "::error::the artifact ${{ inputs.linux-app }} holds ${#archives[@]} portable archives, not one"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "${archives[0]}" -C "$RUNNER_TEMP/app"
+          test -x "$RUNNER_TEMP/app/file-search-manager/FileSearchManager"
+          echo "WIN_SEARCH_APP=$RUNNER_TEMP/app/file-search-manager/FileSearchManager" >> "$GITHUB_ENV"
 
       # A small file system of its own for the files the tests create: the app indexes only
       # that mount, so the load takes a moment instead of walking the whole runner image
