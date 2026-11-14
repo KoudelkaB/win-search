@@ -410,7 +410,8 @@ namespace search.Tests
                 catch (IOException) { }
                 await Task.Delay(25);
             }
-            Assert.Fail("The expected state was not reached in 5 s; status: " + Status);
+            Assert.Fail("The expected state was not reached in 5 s; status: " + Status + "; open: "
+                + string.Join(", ", Window.OwnedWindows.Where(w => w.IsVisible).Select(w => $"{w.GetType().Name} \"{w.Title}\"")));
         }
 
         /// <summary>No dialog is left open and no transfer is still running</summary>

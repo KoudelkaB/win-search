@@ -245,7 +245,7 @@ namespace search.Models
             }
             catch (Exception e)
             {
-                errors.Add(e.Message);
+                errors.Add(Naming(e.Message, file));
                 return errors;
             }
             try
@@ -315,16 +315,23 @@ namespace search.Models
                 catch (Exception e)
                 {
                     $"elevated move failed {e}".Debug();
-                    errors.Add(e.Message);
+                    errors.Add(Naming(e.Message, file));
                 }
             }
             catch (Exception e)
             {
                 $"Copy failed {e}".Debug();
-                errors.Add(e.Message);
+                errors.Add(Naming(e.Message, file));
             }
             return errors;
         }
+
+        /// <summary>
+        /// The error with the file it is about: a sharing violation says only "The process
+        /// cannot access the file because it is being used by another process", not which one
+        /// </summary>
+        internal static string Naming(string error, string file)
+            => error.Contains(file, StringComparison.OrdinalIgnoreCase) ? error : $"{file}: {error}";
 
         static List<string> CopyDirectoryLink(
             DirectoryInfo source,

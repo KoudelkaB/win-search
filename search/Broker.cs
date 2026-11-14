@@ -101,14 +101,15 @@ namespace search
                 try
                 {
                     server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1);
-                    Process.Start(new ProcessStartInfo
+                    //Through ProcessLauncher: the UI tests record the offer instead of a UAC prompt
+                    _ = ProcessLauncher.Start(new ProcessStartInfo
                     {
                         FileName = Environment.ProcessPath,
                         Arguments = $"--broker {pipeName}",
                         Verb = "runas", // Blocks this background task until the UAC prompt is answered
                         UseShellExecute = true,
                         CreateNoWindow = true
-                    });
+                    }) ?? throw new InvalidOperationException("The elevated helper was not started.");
                     elevationAccepted = true;
                     try { StartupElevationAccepted?.Invoke(); }
                     catch (Exception e) { $"broker elevation notification failed: {e.Message}".Debug(); }
