@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Text;
 
 namespace search.Smoke
 {
@@ -56,17 +58,68 @@ namespace search.Smoke
             Try("xclip", $"-selection clipboard -o{(target == null ? "" : $" -t {target}")}").Output;
 
         /// <summary>Own the clipboard with this content (xclip keeps serving it in the background)</summary>
-        public static void SetClipboard(string text, string target = null)
+        public static void SetClipboard(string text, string target = null) => SetClipboard(Encoding.UTF8.GetBytes(text), target);
+
+        static void SetClipboard(byte[] data, string target)
         {
-            var start = new ProcessStartInfo("xclip", $"-selection clipboard -i{(target == null ? "" : $" -t {target}")}")
+            var start = new ProcessStartInfo("xclip") { RedirectStandardInput = true, UseShellExecute = false };
+            foreach (var argument in new[] { "-selection", "clipboard", "-i" }) start.ArgumentList.Add(argument);
+            if (target != null)
             {
-                RedirectStandardInput = true,
-                UseShellExecute = false
-            };
+                start.ArgumentList.Add("-t");
+                start.ArgumentList.Add(target);
+            }
             using var process = Process.Start(start);
-            process.StandardInput.Write(text);
+            process.StandardInput.BaseStream.Write(data);
             process.StandardInput.Close();
             process.WaitForExit(5000);
+        }
+
+        /// <summary>
+        /// The forms kept of what the clipboard holds, best first: xclip serves a single form, so
+        /// files stay files (Nautilus' list, else the URI list) and an image an image, at the cost
+        /// of the text the owner offered beside them
+        /// </summary>
+        static readonly string[] Kept =
+        {
+            "x-special/gnome-copied-files", "text/uri-list", "image/png",
+            "UTF8_STRING", "text/plain;charset=utf-8", "STRING", "text/plain"
+        };
+
+        /// <summary>Not content: what X and clipboard managers ask an owner about it</summary>
+        static readonly string[] Meta = { "TARGETS", "TIMESTAMP", "MULTIPLE", "SAVE_TARGETS", "DELETE", "INSERT_SELECTION", "INSERT_PROPERTY" };
+
+        /// <summary>The clipboard's content in its best form, null when nobody owns the clipboard</summary>
+        public static (string Target, byte[] Data)? SaveClipboard()
+        {
+            var listing = Try("xclip", "-selection clipboard -o -t TARGETS");
+            if (listing.ExitCode != 0) return null;
+            var targets = listing.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var target = Kept.FirstOrDefault(targets.Contains) ?? targets.FirstOrDefault(t => !Meta.Contains(t));
+            if (target == null) return null;
+            var start = new ProcessStartInfo("xclip") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (var argument in new[] { "-selection", "clipboard", "-o", "-t", target }) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start);
+            using var data = new MemoryStream();
+            var copy = process.StandardOutput.BaseStream.CopyToAsync(data);
+            _ = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(10000))
+            {
+                process.Kill();
+                return null;
+            }
+            copy.Wait();
+            return process.ExitCode == 0 ? (target, data.ToArray()) : null;
+        }
+
+        /// <summary>
+        /// Put saved content back; with none, an empty text owns the clipboard, so nothing a
+        /// test put there can be pasted afterwards
+        /// </summary>
+        public static void RestoreClipboard((string Target, byte[] Data)? saved)
+        {
+            if (saved is { } content) SetClipboard(content.Data, content.Target);
+            else SetClipboard(Array.Empty<byte>(), null);
         }
 
         static void Run(string program, string arguments) => PublishedApp.Run(program, arguments, timeoutSeconds: 30);

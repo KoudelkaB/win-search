@@ -31,10 +31,11 @@ namespace search.Tests
             var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
             if (sid == null) return null;
             var bin = Path.Combine(Path.GetPathRoot(folder), "$Recycle.Bin", sid);
-            //Directory.Exists says false for a folder this process may not open as well
+            //Asked right after a recycle, which creates the folder: a folder this process does
+            //not find is one it does not see (a sandbox hides it), not an empty bin
             string[] infos;
             try { infos = Directory.GetFiles(bin, "$I*"); }
-            catch (DirectoryNotFoundException) { return 0; }
+            catch (DirectoryNotFoundException) { return null; }
             catch (UnauthorizedAccessException) { return null; }
             var removed = 0;
             foreach (var info in infos)

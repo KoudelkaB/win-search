@@ -15,7 +15,8 @@ namespace search.Smoke
     /// </summary>
     internal static class SystemClipboard
     {
-        const uint CF_UNICODETEXT = 13, CF_HDROP = 15, GMEM_MOVEABLE = 0x0002;
+        const uint CF_BITMAP = 2, CF_METAFILEPICT = 3, CF_PALETTE = 9, CF_UNICODETEXT = 13, CF_ENHMETAFILE = 14, CF_HDROP = 15,
+            GMEM_MOVEABLE = 0x0002;
         static readonly uint DropEffectFormat = RegisterClipboardFormat("Preferred DropEffect");
 
         public static string[] Files() => Read(() =>
@@ -73,18 +74,27 @@ namespace search.Smoke
         }
 
         /// <summary>
-        /// Everything on the clipboard that is plain memory - text in all its forms, file lists,
-        /// images as DIB (Windows offers them beside the bitmap), the formats of other programs.
-        /// GDI handles (bitmap, metafiles, palette) and owner-drawn formats cannot be copied;
-        /// their memory forms are enough to get the content back.
+        /// Everything on the clipboard that can be copied - text in all its forms, file lists,
+        /// images as DIB (Windows offers them beside the bitmap), the formats of other programs,
+        /// vector pictures as the bits of their enhanced metafile (Windows offers one beside an
+        /// old metafile picture). The bitmap, the old metafile and the palette are GDI handles
+        /// that Windows makes again from those forms; owner-drawn formats cannot be kept.
         /// </summary>
         public static (uint Format, byte[] Data)[] Snapshot() => Read(() =>
         {
             var formats = new List<(uint, byte[])>();
             for (uint format = 0; (format = EnumClipboardFormats(format)) != 0;)
             {
-                if (format is 2 or 3 or 9 or 14 or (>= 0x80 and <= 0x8E) or (>= 0x300 and <= 0x3FF)) continue;
+                if (format is CF_BITMAP or CF_METAFILEPICT or CF_PALETTE or (>= 0x80 and <= 0x8E) or (>= 0x300 and <= 0x3FF)) continue;
                 var data = GetClipboardData(format);
+                if (format == CF_ENHMETAFILE)
+                {
+                    var length = data == IntPtr.Zero ? 0 : GetEnhMetaFileBits(data, 0, null);
+                    if (length == 0) continue;
+                    var bits = new byte[length];
+                    if (GetEnhMetaFileBits(data, length, bits) == length) formats.Add((format, bits));
+                    continue;
+                }
                 var size = data == IntPtr.Zero ? 0 : (long)GlobalSize(data);
                 if (size == 0) continue;
                 var pointer = GlobalLock(data);
@@ -103,7 +113,9 @@ namespace search.Smoke
         /// <summary>Put a snapshot back (an empty one leaves the clipboard empty)</summary>
         public static void Restore((uint Format, byte[] Data)[] snapshot) => Write(() =>
         {
-            foreach (var (format, data) in snapshot) SetClipboardData(format, Global(data));
+            //The clipboard owns what it is given: the metafile as well as the memory
+            foreach (var (format, data) in snapshot)
+                SetClipboardData(format, format == CF_ENHMETAFILE ? SetEnhMetaFileBits((uint)data.Length, data) : Global(data));
             return IntPtr.Zero;
         });
 
@@ -169,6 +181,8 @@ namespace search.Smoke
         [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint format, IntPtr memory);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFile(IntPtr drop, uint index, StringBuilder file, uint size);
+        [DllImport("gdi32.dll")] static extern uint GetEnhMetaFileBits(IntPtr metafile, uint size, byte[] data);
+        [DllImport("gdi32.dll")] static extern IntPtr SetEnhMetaFileBits(uint size, byte[] data);
         [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
         [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);
         [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr memory);
