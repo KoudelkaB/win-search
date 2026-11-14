@@ -41,19 +41,42 @@ namespace search.Smoke
 
         (uint Format, byte[] Data)[] clipboard;
         Process process;
+        readonly WindowsApp earlier;
+
+        /// <summary>
+        /// Leave the data and work folders when this session ends, for a start after it
+        /// (see the constructor that takes the earlier session)
+        /// </summary>
+        public bool KeepFolders { get; init; }
+
+        /// <summary>Runs once the data folder is prepared, before the app starts - a change of its settings</summary>
+        public Action<WindowsApp> BeforeStart { get; init; }
+
+        public WindowsApp() { }
+
+        /// <summary>A new process over the data and work folders of an earlier session that has ended</summary>
+        internal WindowsApp(WindowsApp earlier) => this.earlier = earlier; //Internal: a collection fixture has one public constructor
 
         public async ValueTask InitializeAsync()
         {
             if (!OperatingSystem.IsWindows()) return;
-            Token = "smk" + Guid.NewGuid().ToString("N")[..12];
-            Root = Path.Combine(Path.GetTempPath(), "win-search-smoke-" + Token);
-            Data = Path.Combine(Root, "data");
-            //Not under %LOCALAPPDATA% (and so not in %TEMP%): WebView2 reads no file from there
-            Work = PublishedApp.WorkFolder(Token);
-            Directory.CreateDirectory(Work);
-            Before = Path.Combine(Work, $"{Token}-before.txt");
-            File.WriteAllText(Before, $"smoke {Token} before");
-            PublishedApp.PrepareData(Data, Work);
+            if (earlier != null)
+            {
+                (Token, Root, Data, Work, Before) = (earlier.Token, earlier.Root, earlier.Data, earlier.Work, earlier.Before);
+            }
+            else
+            {
+                Token = "smk" + Guid.NewGuid().ToString("N")[..12];
+                Root = Path.Combine(Path.GetTempPath(), "win-search-smoke-" + Token);
+                Data = Path.Combine(Root, "data");
+                //Not under %LOCALAPPDATA% (and so not in %TEMP%): WebView2 reads no file from there
+                Work = PublishedApp.WorkFolder(Token);
+                Directory.CreateDirectory(Work);
+                Before = Path.Combine(Work, $"{Token}-before.txt");
+                File.WriteAllText(Before, $"smoke {Token} before");
+                PublishedApp.PrepareData(Data, Work);
+            }
+            BeforeStart?.Invoke(this);
             clipboard = SystemClipboard.Snapshot();
 
             var exe = PublishedApp.Executable;
@@ -80,22 +103,30 @@ namespace search.Smoke
 
         public ValueTask DisposeAsync()
         {
-            if (!OperatingSystem.IsWindows() || App == null) return ValueTask.CompletedTask;
-            try
+            if (!OperatingSystem.IsWindows() || Root == null) return ValueTask.CompletedTask;
+            if (App != null)
             {
-                foreach (var window in OtherWindows()) window.Close();
-                using var process = Process.GetProcessById(App.ProcessId);
-                Main.Close();
-                if (!process.WaitForExit(15000)) App.Kill();
+                try
+                {
+                    foreach (var window in OtherWindows()) window.Close();
+                    using var running = Process.GetProcessById(App.ProcessId);
+                    Main.Close();
+                    if (!running.WaitForExit(15000)) App.Kill();
+                }
+                catch (ArgumentException) { } //Exited already
+                catch { try { App.Kill(); } catch { } }
+                App.Dispose();
+                Automation.Dispose();
             }
-            catch (ArgumentException) { } //Exited already
-            catch { try { App.Kill(); } catch { } }
-            App.Dispose();
-            Automation.Dispose();
-            SystemClipboard.Restore(clipboard);
+            if (clipboard != null) SystemClipboard.Restore(clipboard);
+            if (!KeepFolders) DeleteFolders();
+            return ValueTask.CompletedTask;
+        }
+
+        public void DeleteFolders()
+        {
             PublishedApp.Delete(Root);
             PublishedApp.Delete(Work);
-            return ValueTask.CompletedTask;
         }
 
         #region Finding things
@@ -185,6 +216,27 @@ namespace search.Smoke
             Cells(row)[1].Click();
             Wait.UntilInputIsProcessed();
         }
+
+        /// <summary>Add the row of this name to the selection - a real Ctrl+click</summary>
+        public async Task SelectAlso(string name, int selected)
+        {
+            //Once only: a second Ctrl+click would take the row out again
+            var cell = Cells(Row(name) ?? throw new InvalidOperationException($"No row {name}"))[1];
+            Foreground();
+            using (Keyboard.Pressing(VirtualKeyShort.CONTROL)) cell.Click();
+            Wait.UntilInputIsProcessed();
+            await WaitUntil(() => Texts.Contains($"Selected: {selected}"), TimeSpan.FromSeconds(15), $"the row {name} added to the selection");
+        }
+
+        /// <summary>The items of a bar as their texts: pinnedItems (the pinned filters), basketItems (the targets)</summary>
+        public string[] ItemsOf(string bar) => Main.FindFirstDescendant(cf => cf.ByAutomationId(bar))
+            ?.FindAllChildren()
+            .Select(TextOf).Where(n => n.Length > 0).ToArray() ?? Array.Empty<string>();
+
+        /// <summary>The element's name, or the names inside it</summary>
+        public static string TextOf(AutomationElement element) => element.Name is { Length: > 0 } name
+            ? name
+            : string.Join(" ", element.FindAllDescendants().Select(e => e.Name).Where(n => !string.IsNullOrEmpty(n)));
 
         /// <summary>Real keys, to the app only</summary>
         public void Press(params VirtualKeyShort[] keys)

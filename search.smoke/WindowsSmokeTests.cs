@@ -195,6 +195,69 @@ namespace search.Smoke
             Assert.DoesNotContain(explorer.FindAllDescendants(), e => e.Properties.Name.ValueOrDefault?.StartsWith("Could not read") == true);
         }
 
+        /// <summary>Two files selected open side by side for comparison - one of them from Temp</summary>
+        [Fact]
+        public async Task TheHexEditorComparesTwoFilesOneFromTemp()
+        {
+            var temp = Path.Combine(app.Root, $"{app.Token}-compare.bin");
+            File.WriteAllBytes(temp, Enumerable.Range(0, 300).Select(i => (byte)i).ToArray());
+            var files = new[] { app.Before, temp };
+            var names = files.Select(Path.GetFileName).ToArray();
+            await app.ShowOnly(app.Token, shown => names.All(shown.Contains));
+            await app.SelectRow(names[0]);
+            await app.SelectAlso(names[1], 2);
+
+            app.Press(VirtualKeyShort.KEY_H);
+
+            var editor = await app.Opened("WebAppWindow", TimeSpan.FromSeconds(30));
+            //The first file is named with the size it read ("File: x (300 bytes / 0x12C)"), the
+            //second appears as what it is compared with ("vs Hit: y") - both arrived, not only
+            //their names. The grid's order decides which is first.
+            bool Shown(string[] shown, string first, string second) =>
+                shown.Any(s => s.StartsWith($"File: {Path.GetFileName(first)} ({new FileInfo(first).Length} bytes", StringComparison.Ordinal))
+                && shown.Any(s => s.Contains($"vs Hit: {Path.GetFileName(second)}", StringComparison.Ordinal));
+            await WindowsApp.WaitUntil(() =>
+            {
+                var shown = editor.FindAllDescendants().Select(e => e.Properties.Name.ValueOrDefault ?? "").ToArray();
+                return Shown(shown, files[0], files[1]) || Shown(shown, files[1], files[0]);
+            }, TimeSpan.FromSeconds(30), "both files in the hex editor");
+            Assert.DoesNotContain(editor.FindAllDescendants(), e => e.Properties.Name.ValueOrDefault?.StartsWith("Could not read") == true);
+        }
+
+        /// <summary>
+        /// Rows come and go while two are selected (a new file sorts before them, one between
+        /// them is deleted): the copy still takes the two files picked, not the rows now at
+        /// their places
+        /// </summary>
+        [Fact]
+        public async Task TheSelectionFollowsItsFilesThroughLiveChanges()
+        {
+            string Make(string part)
+            {
+                var path = Path.Combine(app.Work, $"{app.Token}-sel-{part}.txt");
+                File.WriteAllText(path, part);
+                return path;
+            }
+            var (b, c, d) = (Make("b"), Make("c"), Make("d"));
+            var picked = new[] { b, d };
+            await app.ShowOnly(app.Token, shown => new[] { b, c, d }.Select(Path.GetFileName).All(shown.Contains));
+            await app.SelectRow(Path.GetFileName(b));
+            await app.SelectAlso(Path.GetFileName(d), 2);
+
+            var a = Make("a");
+            File.Delete(c);
+            await WindowsApp.WaitUntil(() => app.Row(Path.GetFileName(a)) != null && app.Row(Path.GetFileName(c)) == null,
+                Live, "the new row and the deleted one gone");
+
+            Assert.Contains("Selected: 2", app.Texts);
+            SystemClipboard.Restore(Array.Empty<(uint, byte[])>());
+            app.Press(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_C);
+            var copied = await WindowsApp.WaitFor(() => SystemClipboard.Files() is { Length: > 0 } f ? f : null,
+                TimeSpan.FromSeconds(10), "files on the clipboard");
+            Assert.Equal(picked.Select(Path.GetFileName), copied.Select(Path.GetFileName).Order(StringComparer.OrdinalIgnoreCase));
+            Assert.All(copied, f => Assert.Equal(app.Work, Path.GetDirectoryName(f), ignoreCase: true));
+        }
+
         /// <summary>The text of the calculator's result output (its HTML id is "result")</summary>
         static string ResultOf(AutomationElement calculator)
         {
