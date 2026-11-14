@@ -31,6 +31,9 @@ namespace search.Smoke
         /// <summary>The keyboard is in the results, not in the filter box (Right Shift switches)</summary>
         bool inResults;
 
+        /// <summary>The clipboard text before the tests (they use the clipboard), put back at the end</summary>
+        string clipboard;
+
         public async ValueTask InitializeAsync()
         {
             if ((Missing = X11.Missing()) != null) return;
@@ -42,6 +45,7 @@ namespace search.Smoke
             Before = Path.Combine(Work, $"{Token}-before.txt");
             File.WriteAllText(Before, $"smoke {Token} before");
             PublishedApp.PrepareData(Data, Work);
+            clipboard = X11.Clipboard();
 
             var exe = PublishedApp.Executable;
             var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
@@ -59,6 +63,8 @@ namespace search.Smoke
                 if (!Process.WaitForExit(15000)) Process.Kill(entireProcessTree: true);
             }
             Process.Dispose();
+            //Text only: an empty clipboard stays empty
+            if (!string.IsNullOrEmpty(clipboard)) X11.SetClipboard(clipboard);
             PublishedApp.Delete(Root);
             PublishedApp.Delete(Work);
             return ValueTask.CompletedTask;

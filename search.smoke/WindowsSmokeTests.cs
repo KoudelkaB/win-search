@@ -8,8 +8,6 @@ using FlaUI.Core.Definitions;
 using FlaUI.Core.WindowsAPI;
 using Xunit;
 
-[assembly: CollectionBehavior(DisableTestParallelization = true)]
-
 namespace search.Smoke
 {
     /// <summary>
@@ -146,10 +144,13 @@ namespace search.Smoke
                 var found = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.CheckBox));
                 return found.Length == DriveInfo.GetDrives().Length ? found : null;
             }, TimeSpan.FromSeconds(10), "a check box per drive");
-            //Only the drive of the temporary folder is indexed in this run
-            var temp = Path.GetPathRoot(Path.GetTempPath());
-            var indexed = Assert.Single(boxes, b => b.AsCheckBox().IsChecked == true);
-            Assert.StartsWith(temp, indexed.Name, StringComparison.OrdinalIgnoreCase);
+            //Only the drives of the work and temporary folders are indexed in this run (one
+            //drive on a desktop; D: and C: on a GitHub runner)
+            var used = new[] { app.Work, Path.GetTempPath() }
+                .Select(p => Path.GetPathRoot(Path.GetFullPath(p))).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(r => r).ToArray();
+            var indexed = boxes.Where(b => b.AsCheckBox().IsChecked == true).Select(b => b.Name).OrderBy(n => n).ToArray();
+            Assert.Equal(used.Length, indexed.Length);
+            Assert.All(indexed, name => Assert.Contains(used, root => name.StartsWith(root, StringComparison.OrdinalIgnoreCase)));
             dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)).First(b => b.Name == "Cancel").AsButton().Invoke();
             await WindowsApp.WaitUntil(() => app.OtherWindows().Length == 0, TimeSpan.FromSeconds(10), "the dialog to close");
         }

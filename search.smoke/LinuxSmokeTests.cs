@@ -72,7 +72,9 @@ namespace search.Smoke
             var file = Path.Combine(app.Work, $"{app.Token}-rename.txt");
             File.WriteAllText(file, "rename me");
             app.Filter(Path.GetFileName(file));
-            await LinuxApp.WaitFor(() => app.SelectedName() == Path.GetFileName(file) ? "row" : null, Live, "the file's row");
+            //Nobody watches the drives without the root service: F12 walks them again
+            app.Keys("F12");
+            await LinuxApp.WaitFor(() => app.SelectedName() == Path.GetFileName(file) ? "row" : null, Load, "the file's row");
 
             app.Keys("F2");
             await Task.Delay(500);

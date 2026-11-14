@@ -12,8 +12,11 @@ namespace search.Tests
     /// </summary>
     internal static class RecycleBin
     {
-        /// <summary>Remove the items recycled from under the folder; how many there were</summary>
-        public static int Purge(string root)
+        /// <summary>
+        /// Remove the items recycled from under the folder; how many there were, null when this
+        /// process cannot read the bin (a sandbox)
+        /// </summary>
+        public static int? Purge(string root)
         {
             var folder = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             return OperatingSystem.IsWindows() ? PurgeWindows(folder) : PurgeTrash(folder);
@@ -23,14 +26,18 @@ namespace search.Tests
         /// $Recycle.Bin\{user SID} of the drive: each item is a $R… file or folder with a $I…
         /// file beside it that records where the item came from
         /// </summary>
-        static int PurgeWindows(string folder)
+        static int? PurgeWindows(string folder)
         {
             var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
-            if (sid == null) return 0;
+            if (sid == null) return null;
             var bin = Path.Combine(Path.GetPathRoot(folder), "$Recycle.Bin", sid);
-            if (!Directory.Exists(bin)) return 0;
+            //Directory.Exists says false for a folder this process may not open as well
+            string[] infos;
+            try { infos = Directory.GetFiles(bin, "$I*"); }
+            catch (DirectoryNotFoundException) { return 0; }
+            catch (UnauthorizedAccessException) { return null; }
             var removed = 0;
-            foreach (var info in Directory.EnumerateFiles(bin, "$I*"))
+            foreach (var info in infos)
             {
                 string original;
                 try { original = OriginalPath(File.ReadAllBytes(info)); }
@@ -65,7 +72,7 @@ namespace search.Tests
         /// The trash the test moved its items to (see UiScene.Recycles): files/ holds the items,
         /// info/*.trashinfo where each came from
         /// </summary>
-        static int PurgeTrash(string folder)
+        static int? PurgeTrash(string folder)
         {
             var trash = LinuxTrash.HomeTrash();
             var info = Path.Combine(trash, "info");

@@ -292,7 +292,18 @@ namespace search.Tests
         }
 
         /// <summary>Remove this test's items from the Recycle Bin for good; how many there were</summary>
-        public int PurgeRecycled() => RecycleBin.Purge(Root);
+        public int? PurgeRecycled() => RecycleBin.Purge(Root);
+
+        /// <summary>
+        /// The one item the test recycled is in the bin, and out of it again. Skipped where this
+        /// process may not read the bin - the move itself was checked before.
+        /// </summary>
+        public void AssertOneRecycled()
+        {
+            var purged = PurgeRecycled();
+            Assert.SkipWhen(purged == null, "This process cannot read the Recycle Bin, so the recycled item could not be checked or removed from it");
+            Assert.Equal(1, purged);
+        }
 
         /// <summary>The progress window appears with the operation, not a second later</summary>
         public void ShowProgressAtOnce() => MainWindow.ProgressDialogDelay = TimeSpan.Zero;

@@ -39,7 +39,7 @@ namespace search.Smoke
         public Application App { get; private set; }
         public Window Main { get; private set; }
 
-        string clipboardText;
+        (uint Format, byte[] Data)[] clipboard;
         Process process;
 
         public async ValueTask InitializeAsync()
@@ -54,7 +54,7 @@ namespace search.Smoke
             Before = Path.Combine(Work, $"{Token}-before.txt");
             File.WriteAllText(Before, $"smoke {Token} before");
             PublishedApp.PrepareData(Data, Work);
-            clipboardText = SystemClipboard.Text();
+            clipboard = SystemClipboard.Snapshot();
 
             var exe = PublishedApp.Executable;
             //"UI": never the elevated helper, so never a UAC prompt
@@ -92,7 +92,7 @@ namespace search.Smoke
             catch { try { App.Kill(); } catch { } }
             App.Dispose();
             Automation.Dispose();
-            SystemClipboard.SetText(clipboardText);
+            SystemClipboard.Restore(clipboard);
             PublishedApp.Delete(Root);
             PublishedApp.Delete(Work);
             return ValueTask.CompletedTask;

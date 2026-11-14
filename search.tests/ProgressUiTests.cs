@@ -148,7 +148,7 @@ namespace search.Tests
             Assert.Equal(L.Format("Recycled", FileOperationText.DescribeItems(new[] { scene.File })), scene.Status);
             Assert.True(File.Exists(scene.Other));
             //In the bin, not gone for good - and out of it again
-            Assert.Equal(1, scene.PurgeRecycled());
+            scene.AssertOneRecycled();
         }
 
         [AvaloniaFact]
@@ -163,7 +163,7 @@ namespace search.Tests
             scene.Click(await scene.Dialog<MessageDialog>(), "Yes");
 
             await scene.Until(() => !Directory.Exists(scene.Folder) && !scene.Window.FileOperationInProgress);
-            Assert.Equal(1, scene.PurgeRecycled());
+            scene.AssertOneRecycled();
         }
 
         /// <summary>Files big enough that the copy of all of them outlasts a click</summary>
