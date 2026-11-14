@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -38,6 +39,12 @@ namespace search
         /// </summary>
         const string HostName = "webapps.file-search-manager.example";
         const string Origin = "https://" + HostName + "/";
+
+        /// <summary>
+        /// The files the page cannot read through their handles (see ServeFile) - a host of
+        /// their own: requests to the folder mapping of HostName raise no WebResourceRequested
+        /// </summary>
+        const string FilesOrigin = "https://files.file-search-manager.example/";
 
         /// <summary>
         /// First runtime with CreateWebFileSystemFileHandle (ICoreWebView2Environment14) and
@@ -101,17 +108,29 @@ namespace search
         // "drop"   - all files in one drop event on the document (Log explorer multi-file input);
         // "logExplorer" - options for window.logExplorer.open(files, options) of the page (full
         //            paths, combine mode and a starting filter), the drop is the fallback without it.
+        // "fallback" - where the host serves a file whose handle cannot be read (+ its index,
+        //            see ServeFile).
         const string FileHandoffScript = """
             (() => {
                 if (!window.chrome || !chrome.webview) return;
                 const shown = id => { const e = document.getElementById(id); return e && getComputedStyle(e).display !== 'none'; };
                 const until = async test => { for (let i = 0; i < 1200 && !test(); i++) await new Promise(r => setTimeout(r, 50)); };
                 const transfer = files => { const dt = new DataTransfer(); files.forEach(f => dt.items.add(f)); return dt; };
+                const fetched = async (url, name) => {
+                    const response = await fetch(url, { cache: 'no-store' });
+                    if (!response.ok) throw new Error((await response.text()) || response.statusText);
+                    const modified = Date.parse(response.headers.get('Last-Modified') || '');
+                    return new File([await response.blob()], name, { lastModified: isNaN(modified) ? Date.now() : modified });
+                };
                 // A File is a snapshot: reading it fails once the file changes on disk (a log being
                 // written). Take the content at once and retry with a fresh snapshot a few times.
-                const read = async h => {
+                // Chromium gives no File for the handles of some folders (AppData with Temp,
+                // Program Files, Windows): the host serves those itself.
+                const read = async (h, fallback) => {
                     for (let attempt = 1; ; attempt++) {
-                        const file = await h.getFile();
+                        let file;
+                        try { file = await h.getFile(); }
+                        catch (error) { if (fallback) return fetched(fallback, h.name); throw error; }
                         try { return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified }); }
                         catch (error) { if (attempt >= 5 || error.name !== 'NotReadableError') throw error; }
                         await new Promise(r => setTimeout(r, 50 * attempt));
@@ -120,7 +139,7 @@ namespace search
                 chrome.webview.addEventListener('message', async e => {
                     const m = e.data || {};
                     const handles = Array.from(e.additionalObjects || []);
-                    const results = await Promise.allSettled(handles.map(h => Promise.resolve().then(() => read(h))));
+                    const results = await Promise.allSettled(handles.map((h, i) => Promise.resolve().then(() => read(h, m.fallback && m.fallback + i))));
                     const files = [], paths = [], failed = [];
                     results.forEach((r, index) => r.status === 'fulfilled'
                         ? (files.push(r.value), paths.push(((m.logExplorer || {}).paths || [])[index]))
@@ -184,6 +203,8 @@ namespace search
         readonly string[] files;
         readonly LogExplorerLoad load;
         readonly DispatcherTimer saveLayout;
+        /// <summary>Where this window's page fetches its files: FilesOrigin + this + the file's index (see ServeFile)</summary>
+        readonly string filesPath = Guid.NewGuid().ToString("N") + "/";
         Size? calculatorContentSize;
         bool closed, started, opened;
         string serverToken;
@@ -553,7 +574,12 @@ namespace search
                 SetZoom(zoom);
                 core.SetVirtualHostNameToFolderMapping(HostName,
                     Path.Combine(AppContext.BaseDirectory, "WebApps"), CoreWebView2HostResourceAccessKind.Deny);
-                if (files.Length > 0) await core.AddScriptToExecuteOnDocumentCreatedAsync(FileHandoffScript);
+                if (files.Length > 0)
+                {
+                    await core.AddScriptToExecuteOnDocumentCreatedAsync(FileHandoffScript);
+                    core.AddWebResourceRequestedFilter(FilesOrigin + filesPath + "*", CoreWebView2WebResourceContext.All);
+                    core.WebResourceRequested += ServeFile;
+                }
                 if (page == Apps.Calculator) await core.AddScriptToExecuteOnDocumentCreatedAsync(CalculatorSizeScript);
                 if (closed || shuttingDown) return;
             }
@@ -592,7 +618,7 @@ namespace search
                 {
                     var handles = files.Select(f => (object)core.Environment.CreateWebFileSystemFileHandle(
                         f, CoreWebView2FileSystemHandlePermission.ReadOnly)).ToList();
-                    core.PostWebMessageAsJson(Message, handles);
+                    core.PostWebMessageAsJson(WithFallback(Message, FilesOrigin + filesPath), handles);
                 }
                 catch (Exception ex) when (ex is NotImplementedException or InvalidCastException or MissingMethodException)
                 {
@@ -607,6 +633,104 @@ namespace search
                 view.Focus();
             };
             core.Navigate(UrlFor(page));
+        }
+
+        /// <summary>The host message with the URL the page fetches a file from when its handle cannot be read</summary>
+        internal static string WithFallback(string message, string url)
+        {
+            var json = JsonNode.Parse(message)!.AsObject();
+            json["fallback"] = url;
+            return json.ToJsonString();
+        }
+
+        /// <summary>The index of the file a fetch of Origin + filesPath + rest asks for, null for none</summary>
+        internal static int? FileIndex(string rest, int count)
+            => int.TryParse(rest, NumberStyles.None, CultureInfo.InvariantCulture, out var index) && index < count ? index : null;
+
+        /// <summary>
+        /// Chromium keeps web pages away from the files in AppData (with Temp, where the entries
+        /// of archives and the text of documents are extracted), Program Files and Windows: their
+        /// handles are created, but reading one fails with "An attempt was made to break through
+        /// the security policy of the user agent". The page fetches such a file here instead -
+        /// only this window's files, only for our own page.
+        /// </summary>
+        void ServeFile(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            var core = (CoreWebView2)sender;
+            var prefix = FilesOrigin + filesPath;
+            var uri = e.Request.Uri;
+            if (!uri.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return;
+            //The page reads the response from another origin: CORS lets our page (only) have it
+            const string AllowPage = "Access-Control-Allow-Origin: https://" + HostName;
+            CoreWebView2WebResourceResponse Text(int status, string reason, string text) => core.Environment.CreateWebResourceResponse(
+                new MemoryStream(Encoding.UTF8.GetBytes(text)), status, reason, $"Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n{AllowPage}");
+            if (!core.Source.StartsWith(Origin, StringComparison.OrdinalIgnoreCase) || FileIndex(uri[prefix.Length..], files.Length) is not int index)
+            {
+                e.Response = Text(404, "Not Found", "Not found");
+                return;
+            }
+            var path = files[index];
+            try
+            {
+                var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
+                var modified = File.GetLastWriteTimeUtc(path).ToString("R", CultureInfo.InvariantCulture);
+                e.Response = core.Environment.CreateWebResourceResponse(new ClosedAtEnd(file), 200, "OK",
+                    $"Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nLast-Modified: {modified}\r\n{AllowPage}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+            {
+                e.Response = ex is FileNotFoundException or DirectoryNotFoundException
+                    ? Text(404, "Not Found", ex.Message)
+                    : Text(403, "Forbidden", ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// A file read once from its start, closed when its end is read: the web view keeps the
+        /// stream of a response, and the file open with it, until it is collected
+        /// </summary>
+        sealed class ClosedAtEnd : Stream
+        {
+            FileStream file;
+            long end;
+
+            public ClosedAtEnd(FileStream file) => this.file = file;
+
+            public override bool CanRead => true;
+            public override bool CanSeek => true;
+            public override bool CanWrite => false;
+            public override long Length => file?.Length ?? end;
+
+            public override long Position
+            {
+                get => file?.Position ?? end;
+                set => Seek(value, SeekOrigin.Begin);
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (file == null || count == 0) return 0;
+                var read = file.Read(buffer, offset, count);
+                if (read == 0) Close();
+                return read;
+            }
+
+            public override long Seek(long offset, SeekOrigin origin) => file?.Seek(offset, origin) ?? end;
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && file != null)
+                {
+                    end = file.Position;
+                    file.Dispose();
+                    file = null;
+                }
+                base.Dispose(disposing);
+            }
+
+            public override void Flush() { }
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         }
 
         /// <summary>A message the page posted to the loopback server (Linux)</summary>

@@ -119,6 +119,33 @@ namespace search.Tests
             Assert.Equal(System.Text.Json.JsonValueKind.Null, hex.GetProperty("filter").ValueKind);
         }
 
+        [Theory]
+        [InlineData(Apps.LogExplorer)]
+        [InlineData(Apps.HexEditor)]
+        public void ThePageLearnsWhereToFetchTheFilesItsHandlesCannotRead(string page)
+        {
+            var plain = System.Text.Json.Nodes.JsonNode.Parse(WebAppWindow.MessageFor(page, new[] { @"C:\a.log" }, null))!.AsObject();
+            var message = System.Text.Json.Nodes.JsonNode.Parse(
+                WebAppWindow.WithFallback(WebAppWindow.MessageFor(page, new[] { @"C:\a.log" }, null), "https://host/files/x/"))!.AsObject();
+
+            Assert.Equal("https://host/files/x/", (string)message["fallback"]);
+            message.Remove("fallback");
+            Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(plain, message), "the rest of the message is kept");
+        }
+
+        [Theory]
+        [InlineData("0", 2, 0)]
+        [InlineData("1", 2, 1)]
+        [InlineData("2", 2, null)]
+        [InlineData("-1", 2, null)]
+        [InlineData("+1", 2, null)]
+        [InlineData("1?x", 2, null)]
+        [InlineData("../0", 2, null)]
+        [InlineData("", 2, null)]
+        [InlineData("99999999999", 2, null)]
+        public void OnlyTheWindowsOwnFilesAreServed(string rest, int count, int? index)
+            => Assert.Equal(index, WebAppWindow.FileIndex(rest, count));
+
         static INode File(string name, ulong size)
             => new FileNode(@"C:\" + name, new NodeMetadataSnapshot(false, size, System.DateTime.MinValue));
 
