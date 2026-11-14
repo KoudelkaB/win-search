@@ -224,9 +224,16 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # The packages build meanwhile; nothing is published unless both test suites pass
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  smoke:
+    uses: ./.github/workflows/smoke.yml
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux]
+    needs: [windows, linux, tests, smoke]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
