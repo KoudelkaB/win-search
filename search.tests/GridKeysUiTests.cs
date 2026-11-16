@@ -115,6 +115,107 @@ namespace search.Tests
             Assert.True(scene.Find<AutoCompleteTextBox>("filterTextBox").IsKeyboardFocusWithin);
         }
 
+        /// <summary>
+        /// Typed a filter, Right Shift to the results, Down: the first row is selected. A grid
+        /// that never had a current row (its rows came with a published list) took the arrows
+        /// and selected nothing.
+        /// </summary>
+        [AvaloniaFact]
+        public async Task FromTheFilterRightShiftAndDownSelectTheFirstRow()
+        {
+            using var scene = await UiScene.Open();
+            scene.Click(scene.Find<AutoCompleteTextBox>("filterTextBox"));
+            //A new filter publishes a fresh collection: the grid gets another ItemsSource
+            var model = (search.Models.SearchModel)scene.Window.DataContext;
+            var fresh = new search.Models.RangeObservableCollection<search.Models.INode>();
+            fresh.AddRange(new[] { scene.FileNode });
+            search.Models.SearchModel.ExchangeItems(model.BeforeItemsExchange,
+                () => typeof(search.Models.SearchModel).GetProperty(nameof(model.Items)).SetValue(model, fresh),
+                model.AfterItemsExchange);
+            scene.Settle();
+
+            scene.Keys(Key.RightShift);
+            Assert.True(scene.Grid.IsKeyboardFocusWithin);
+            scene.Keys(Key.Down);
+
+            Assert.Same(scene.FileNode, Assert.Single(scene.Selected));
+        }
+
+        /// <summary>Escape dropped the selection, the keyboard row stays the user's: the keys go on from it</summary>
+        [AvaloniaTheory]
+        [InlineData(Key.Down)]
+        [InlineData(Key.PageDown)]
+        public async Task AfterEscapeTheKeysMoveOnFromTheRow(Key key)
+        {
+            using var scene = await UiScene.Open();
+            var rows = scene.Grid.ItemsSource.Cast<search.Models.INode>().ToArray();
+            scene.ClickRow(rows[0]);
+            scene.Keys(Key.Escape);
+            Assert.Empty(scene.Selected);
+
+            scene.Keys(key);
+
+            Assert.NotSame(rows[0], Assert.Single(scene.Selected));
+        }
+
+        /// <summary>
+        /// The list refilled in place (a new filter below 4096 rows, a live change) left the
+        /// keyboard row the only row, unselected, the keyboard staying in the results: Down
+        /// had no row to go to and selected nothing, however often pressed
+        /// </summary>
+        [AvaloniaFact]
+        public async Task DownOnTheOnlyRowLeftUnselectedSelectsIt()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.Escape);
+
+            Publish(scene, scene.FileNode);
+            Assert.Empty(scene.Selected);
+            Assert.True(scene.Grid.IsKeyboardFocusWithin);
+            scene.Keys(Key.Down);
+
+            Assert.Same(scene.FileNode, Assert.Single(scene.Selected));
+        }
+
+        /// <summary>
+        /// The keyboard came to the results from the filter, nothing selected, the keyboard row
+        /// left on the list as it was refilled in place: Down selects it, not the next one
+        /// </summary>
+        [AvaloniaFact]
+        public async Task FromTheFilterAfterAnInPlaceRefillDownSelectsTheKeyboardRow()
+        {
+            using var scene = await UiScene.Open();
+            var rows = scene.Grid.ItemsSource.Cast<search.Models.INode>().ToArray();
+            scene.ClickRow(rows[0]);
+            scene.Keys(Key.Escape);
+            scene.Click(scene.Find<AutoCompleteTextBox>("filterTextBox"));
+            Publish(scene, rows);
+            Assert.Empty(scene.Selected);
+
+            scene.Keys(Key.RightShift);
+            Assert.True(scene.Grid.IsKeyboardFocusWithin);
+            scene.Keys(Key.Down);
+
+            Assert.Same(rows[0], Assert.Single(scene.Selected));
+        }
+
+        /// <summary>A live change refreshed the same list after the Escape: the row is still the user's</summary>
+        [AvaloniaFact]
+        public async Task AfterEscapeAndARefreshDownMovesOnFromTheRow()
+        {
+            using var scene = await UiScene.Open();
+            var rows = scene.Grid.ItemsSource.Cast<search.Models.INode>().ToArray();
+            scene.ClickRow(rows[1]);
+            scene.Keys(Key.Escape);
+            Assert.Empty(scene.Selected);
+
+            Publish(scene, rows);
+            scene.Keys(Key.Down);
+
+            Assert.Same(rows[2], Assert.Single(scene.Selected));
+        }
+
         #endregion
 
         #region Delete
@@ -219,9 +320,165 @@ namespace search.Tests
             Assert.Same(scene.FileNode, Assert.Single(scene.Selected));
         }
 
+        /// <summary>
+        /// A refresh lands while the name is typed (a rescan, a live change the service
+        /// reports): the grid regenerates its rows, the editor of the old row goes away. The
+        /// half-typed name was committed then, or the edit was simply gone.
+        /// </summary>
+        [AvaloniaFact]
+        public async Task ARefreshWhileTypingKeepsTheEditorAndItsText()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Type("half");
+
+            Publish(scene, scene.FileNode, scene.OtherNode, scene.FolderNode);
+
+            var editor = await Editor(scene);
+            Assert.Equal("half.txt", editor.Text);
+            Assert.True(editor.IsKeyboardFocusWithin);
+            Assert.True(File.Exists(scene.File));
+            scene.Type("-done");
+            scene.Keys(Key.Enter);
+            Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(scene.File), "half-done.txt")));
+            Assert.False(File.Exists(scene.File));
+        }
+
+        [AvaloniaFact]
+        public async Task ARefreshWithoutTheRowEndsTheEditWithoutRenaming()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Type("half");
+
+            Publish(scene, scene.OtherNode, scene.FolderNode);
+
+            Assert.DoesNotContain(scene.Grid.GetVisualDescendants().OfType<TextBox>(),
+                t => t.Name == "InlineNameEditor" && t.IsVisible);
+            Assert.True(File.Exists(scene.File));
+            Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(scene.File), "half.txt")));
+        }
+
+        [AvaloniaFact]
+        public async Task ARefreshThatPushesTheRowOutOfViewBringsTheEditBack()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Type("half");
+
+            var folder = Path.GetDirectoryName(scene.File);
+            var above = Enumerable.Range(0, 300)
+                .Select(i => (search.Models.INode)new UiScene.PathNode(Path.Combine(folder, $"above{i:000}.txt"), FileAttributes.Normal));
+            Publish(scene, above.Append(new UiScene.PathNode(scene.File, FileAttributes.Normal)).ToArray());
+
+            var editor = await Editor(scene);
+            Assert.Equal("half.txt", editor.Text);
+            Assert.True(editor.IsKeyboardFocusWithin);
+        }
+
+        /// <summary>
+        /// The second list came before the edit was back, with another item object for the
+        /// same file (a rescan)
+        /// </summary>
+        [AvaloniaFact]
+        public async Task TwoRefreshesInARowKeepTheEdit()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Type("half");
+
+            Exchange(scene, scene.FileNode, scene.OtherNode);
+            var again = new UiScene.PathNode(scene.File, FileAttributes.Normal);
+            Exchange(scene, again, scene.OtherNode);
+            scene.Settle();
+
+            var editor = await Editor(scene);
+            Assert.Equal("half.txt", editor.Text);
+            Assert.True(editor.IsKeyboardFocusWithin);
+        }
+
+        /// <summary>
+        /// The first list pushed the row out of view; the second came while the row was being
+        /// brought back, with another item object for the file
+        /// </summary>
+        [AvaloniaFact]
+        public async Task ARefreshWhileTheRowIsBroughtBackKeepsTheEdit()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Type("half");
+
+            var folder = Path.GetDirectoryName(scene.File);
+            search.Models.INode[] Above() => Enumerable.Range(0, 300)
+                .Select(i => (search.Models.INode)new UiScene.PathNode(Path.Combine(folder, $"above{i:000}.txt"), FileAttributes.Normal))
+                .ToArray();
+            Exchange(scene, Above().Append(scene.FileNode).ToArray());
+            //Queued after the first step of the resume: it runs while the row is on its way back
+            Avalonia.Threading.Dispatcher.UIThread.Post(
+                () => Exchange(scene, Above().Append(new UiScene.PathNode(scene.File, FileAttributes.Normal)).ToArray()),
+                Avalonia.Threading.DispatcherPriority.Loaded);
+            scene.Settle();
+
+            var editor = await Editor(scene);
+            Assert.Equal("half.txt", editor.Text);
+            Assert.True(editor.IsKeyboardFocusWithin);
+        }
+
+        /// <summary>
+        /// The click elsewhere ended the edit, its commit still queued when the new list came:
+        /// the name is taken and the keyboard stays where the user went
+        /// </summary>
+        [AvaloniaFact]
+        public async Task ARefreshAfterAClickOutOfTheEditorRenames()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Type("half");
+
+            var filter = scene.Find<AutoCompleteTextBox>("filterTextBox");
+            filter.Focus();
+            Exchange(scene, scene.FileNode, scene.OtherNode, scene.FolderNode);
+            scene.Settle();
+
+            Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(scene.File), "half.txt")));
+            Assert.False(File.Exists(scene.File));
+            Assert.DoesNotContain(scene.Grid.GetVisualDescendants().OfType<TextBox>(),
+                t => t.Name == "InlineNameEditor" && t.IsVisible);
+            Assert.True(filter.IsKeyboardFocusWithin);
+        }
+
+        /// <summary>A new result list published the way the model does it: one Reset</summary>
+        static void Publish(UiScene scene, params search.Models.INode[] rows)
+        {
+            Exchange(scene, rows);
+            scene.Settle();
+        }
+
+        /// <summary>The publication alone, the dispatcher not run after it</summary>
+        static void Exchange(UiScene scene, params search.Models.INode[] rows)
+        {
+            var model = (search.Models.SearchModel)scene.Window.DataContext;
+            search.Models.SearchModel.ExchangeItems(model.BeforeItemsExchange,
+                () => ((search.Models.RangeObservableCollection<search.Models.INode>)model.Items).ReplaceRange(rows),
+                model.AfterItemsExchange);
+        }
+
         [AvaloniaTheory]
         [InlineData("b.txt", "AlreadyExists")]
-        [InlineData("a?.txt", "InvalidName")]
+        //"/" is the separator everywhere; "?" or "|" are valid names on Linux
+        [InlineData("a/b.txt", "InvalidName")]
         public async Task ANameThatCannotBeUsedKeepsTheEditorOpenAndMarked(string name, string reason)
         {
             using var scene = await UiScene.Open();
@@ -238,6 +495,27 @@ namespace search.Tests
             Assert.True(File.Exists(scene.File));
             Assert.Equal("other", File.ReadAllText(scene.Other));
             scene.Keys(Key.Escape);
+        }
+
+        /// <summary>The name is still refused after the rows were refreshed: the editor says so still</summary>
+        [AvaloniaFact]
+        public async Task ARefreshKeepsTheMarkOfARefusedName()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            scene.Keys(Key.F2);
+            await Editor(scene);
+            scene.Retype("b.txt");
+            scene.Keys(Key.Enter);
+
+            Publish(scene, scene.FileNode, scene.OtherNode, scene.FolderNode);
+
+            var editor = await Editor(scene);
+            Assert.Equal("b.txt", editor.Text);
+            Assert.Equal(Brushes.IndianRed, editor.BorderBrush);
+            Assert.Equal(L.Format("AlreadyExists", "b.txt"), ToolTip.GetTip(editor));
+            scene.Keys(Key.Escape);
+            Assert.True(File.Exists(scene.File));
         }
 
         [AvaloniaFact]
@@ -309,7 +587,7 @@ namespace search.Tests
             scene.ClickRow(scene.FolderNode);
             scene.Keys(Key.M);
             await scene.Until(() => box.IsKeyboardFocusWithin);
-            scene.Type("a|b");
+            scene.Type("a/b"); //Not a name on any platform ("|" is one on Linux)
 
             scene.Keys(Key.Enter);
             Assert.True(bar.IsVisible);

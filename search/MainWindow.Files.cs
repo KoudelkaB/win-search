@@ -947,7 +947,83 @@ namespace search
             Dispatcher.UIThread.Post(() => StartInlineRename(node), DispatcherPriority.Loaded);
         }
 
-        void StartInlineRename(INode node)
+        /// <summary>
+        /// The edit a publication of the results interrupted: its item, text, selection and the
+        /// reason a name typed was refused (null for none)
+        /// </summary>
+        (INode Node, string Text, int SelectionStart, int SelectionEnd, string Refusal)? suspendedInlineRename;
+
+        /// <summary>
+        /// A new result list is about to replace the rows (a rescan, a live change). The grid
+        /// regenerates them and the editor of the old row goes away - losing the focus, it
+        /// committed the half-typed name. Keep the edit aside instead, nothing is renamed.
+        /// </summary>
+        void SuspendInlineRename()
+        {
+            if (inlineRenameEditor == null || inlineRenameNode == null) return;
+            var editor = inlineRenameEditor;
+            //The keyboard already left the editor (a click elsewhere), its LostFocus commit is
+            //still queued: commit now, before the rows go. Kept aside, the edit would come
+            //back and take the keyboard from where the user went. A refused name stays edited.
+            if (!editor.IsKeyboardFocusWithin && FinishInlineRename(commit: true)) return;
+            suspendedInlineRename = (inlineRenameNode, editor.Text, editor.SelectionStart, editor.SelectionEnd,
+                ToolTip.GetTip(editor) as string);
+            //Cleared first: hiding the focused editor raises LostFocus, which now finds no edit
+            var display = inlineRenameDisplay;
+            inlineRenameNode = null;
+            inlineRenameEditor = null;
+            inlineRenameDisplay = null;
+            editor.IsVisible = false;
+            if (display != null) display.IsVisible = true;
+        }
+
+        /// <summary>
+        /// The new rows are in: the edit goes on in the row of its item, with what was typed.
+        /// Gone from the results (deleted, filtered out), the edit ends without a rename.
+        /// </summary>
+        void ResumeInlineRename()
+        {
+            if (suspendedInlineRename == null) return;
+            //The row is realized by the layout pass of the new list. The edit stays aside until
+            //the editor is back: a publication before that finds no editor and keeps it, and
+            //only its own resume goes on - the steps of the one before see a newer one and stop.
+            var resume = ++inlineRenameResume;
+            Dispatcher.UIThread.Post(() => ContinueInlineRename(resume, scrollIfAway: true), DispatcherPriority.Loaded);
+        }
+
+        /// <summary>Which resume of the suspended edit is the current one</summary>
+        int inlineRenameResume;
+
+        void ContinueInlineRename(int resume, bool scrollIfAway)
+        {
+            if (resume != inlineRenameResume || suspendedInlineRename is not { } edit) return;
+            //The item is looked up in the rows there are now: the list may be another by now
+            var node = inlineRenameEditor != null ? null
+                : Model.Items.Contains(edit.Node) ? edit.Node
+                : Model.Items.FirstOrDefault(n => string.Equals(n.FullName, edit.Node.FullName, PathText.Comparison));
+            //Another edit started meanwhile, or the item is gone: nothing to bring back
+            if (node == null)
+            {
+                suspendedInlineRename = null;
+                return;
+            }
+            if (RowFor(node) == null && scrollIfAway)
+            {
+                //The new rows pushed it out of view: the edited row is brought back, the edit
+                //goes on there once it is realized
+                filesView.ScrollIntoView(node, null);
+                Dispatcher.UIThread.Post(() => ContinueInlineRename(resume, scrollIfAway: false), DispatcherPriority.Loaded);
+                return;
+            }
+            //Not shown after all, the status says so
+            suspendedInlineRename = null;
+            StartInlineRename(node, edit.Text, edit.SelectionStart, edit.SelectionEnd, edit.Refusal);
+        }
+
+        void StartInlineRename(INode node) => StartInlineRename(node, null, 0, -1, null);
+
+        /// <param name="refusal">Why the name in the text was refused: the edit comes back marked</param>
+        void StartInlineRename(INode node, string text, int selectionStart, int selectionEnd, string refusal)
         {
             if (RowFor(node) is not DataGridRow row)
             {
@@ -961,14 +1037,16 @@ namespace search
             inlineRenameNode = node;
             inlineRenameEditor = editor;
             inlineRenameDisplay = display;
-            editor.Text = node.Name;
+            editor.Text = text ?? node.Name;
+            //The editor of a row serves every item it shows: no mark of another edit
             editor.ClearValue(TextBox.BorderBrushProperty);
             ToolTip.SetTip(editor, null);
+            if (refusal != null) MarkRefused(editor, refusal);
             display.IsVisible = false;
             editor.IsVisible = true;
             editor.Focus();
-            editor.SelectionStart = 0;
-            editor.SelectionEnd = IOPath.GetFileNameWithoutExtension(node.Name).Length;
+            editor.SelectionStart = text == null ? 0 : selectionStart;
+            editor.SelectionEnd = text == null ? IOPath.GetFileNameWithoutExtension(node.Name).Length : selectionEnd;
         }
 
         void InlineNameEditor_KeyDown(object sender, KeyEventArgs e)
@@ -1028,12 +1106,14 @@ namespace search
             finishingInlineRename = true;
             try
             {
+                //Enter, Escape: back to the rows. A click elsewhere ended it: the keyboard stays there.
+                var hadKeyboard = editor.IsKeyboardFocusWithin;
                 editor.IsVisible = false;
                 if (inlineRenameDisplay != null) inlineRenameDisplay.IsVisible = true;
                 inlineRenameNode = null;
                 inlineRenameEditor = null;
                 inlineRenameDisplay = null;
-                filesView.Focus();
+                if (hadKeyboard) filesView.Focus();
                 return true;
             }
             finally { finishingInlineRename = false; }
@@ -1042,10 +1122,16 @@ namespace search
         bool RejectInlineRename(string message)
         {
             Model.Status = message;
-            inlineRenameEditor.BorderBrush = Brushes.IndianRed;
-            ToolTip.SetTip(inlineRenameEditor, message);
+            MarkRefused(inlineRenameEditor, message);
             Dispatcher.UIThread.Post(() => inlineRenameEditor?.Focus(), DispatcherPriority.Input);
             return false;
+        }
+
+        /// <summary>The editor holds a name that cannot be used, and says why</summary>
+        static void MarkRefused(TextBox editor, string message)
+        {
+            editor.BorderBrush = Brushes.IndianRed;
+            ToolTip.SetTip(editor, message);
         }
 
         #endregion

@@ -775,6 +775,31 @@ namespace search
                 GridSelection.ReplaceKeyboardRange(filesView);
         }
 
+        /// <summary>
+        /// Nothing selected, an arrow: the keyboard row is selected, the grid does not move off
+        /// it first - where the row is not one the user is going on from (the keyboard just
+        /// came to the results, or they got another list: Right Shift from the filter and Down
+        /// selected the second row), and where the arrow has no row to move to (the filter
+        /// left one row: the grid selected nothing at all). Otherwise (Escape cleared the
+        /// selection in the results) the grid moves on from the row as it does.
+        /// True when the key did its work.
+        /// </summary>
+        bool SelectKeyboardRow(Key key)
+        {
+            if (filesView.SelectedItems.Count > 0 || Model.Items.Count == 0) return false;
+            var index = GridSelection.CurrentRowIndex(filesView);
+            var known = index >= 0 && index < Model.Items.Count;
+            var atEdge = !known || (key == Key.Down ? index == Model.Items.Count - 1 : index == 0);
+            if (!keyboardRowUntouched && !atEdge) return false;
+            if (!known) index = 0;
+            var row = Model.Items[index];
+            filesView.SelectedItem = row;
+            activeSelectedNode = row;
+            GridSelection.MoveKeyboardRow(filesView, index);
+            filesView.ScrollIntoView(row, null);
+            return true;
+        }
+
         void ListView_KeyDown(object sender, KeyEventArgs e)
         {
             if (IsInlineEditorEvent(e))
@@ -789,7 +814,14 @@ namespace search
                 case Key.Left:
                 case Key.Right:
                     // Grid navigation keys
-                    if (filesViewCmd.TryUseModifiersForNavigation()) return;
+                    if (filesViewCmd.TryUseModifiersForNavigation())
+                    {
+                        //Page keys keep their page: from the first row they select a page further
+                        if (key is Key.Up or Key.Down && e.KeyModifiers == KeyModifiers.None && SelectKeyboardRow(key))
+                            e.Handled = true;
+                        keyboardRowUntouched = false;
+                        return;
+                    }
                     break;
                 case Key.F4 when e.KeyModifiers.HasFlag(KeyModifiers.Alt):
                     // Leave Alt+F4 to the system so the window can close

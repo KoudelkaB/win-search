@@ -443,7 +443,7 @@ namespace search.Tests
             try { Directory.Delete(Root, recursive: true); } catch { }
         }
 
-        sealed class PathNode(string path, FileAttributes attributes) : INode
+        internal sealed class PathNode(string path, FileAttributes attributes) : INode
         {
             public override string Name => Path.GetFileName(path);
             public override string FullName => path;

@@ -39,6 +39,12 @@ namespace search
             TextBox.AddHandler(KeyDownEvent, AutoTextBox_KeyDown, RoutingStrategies.Tunnel);
             TextBox.TextChanged += AutoTextBox_TextChanged;
             TextBox.GotFocus += AutoTextBox_GotFocus;
+            //Light dismiss closes the list on a click only. The keyboard leaving the box (Right
+            //Shift to the results, Tab) left it open, taking the arrows meant elsewhere.
+            TextBox.LostFocus += (_, __) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (!TextBox.IsKeyboardFocusWithin && !autoList.IsKeyboardFocusWithin) CloseList();
+            });
             autoList.AddHandler(PointerReleasedEvent, (_, e) =>
             {
                 if (e.InitialPressMouseButton != MouseButton.Left) return;

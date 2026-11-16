@@ -96,6 +96,95 @@ namespace search.Tests
             help.Close();
         }
 
+        /// <summary>
+        /// The help is shown and closed at once: the window manager never deactivated the main
+        /// window, no Activated follows, and the focus the help took went away with it (X11).
+        /// The keys go to the filter again.
+        /// </summary>
+        [AvaloniaFact]
+        public async Task ClosingTheHelpGivesTheKeyboardBackToTheFilter()
+        {
+            using var scene = await UiScene.Open();
+            var filter = scene.Find<AutoCompleteTextBox>("filterTextBox");
+            scene.Click(filter);
+
+            scene.Keys(Key.F1);
+            var help = await scene.Dialog<HelpWindow>();
+            //The help took the keyboard and drops it as it closes (X11): nothing of the main
+            //window has the focus, the main window stayed active
+            scene.Window.Focus();
+            help.Close();
+            scene.Settle();
+
+            await scene.Until(() => filter.IsKeyboardFocusWithin);
+        }
+
+        [AvaloniaFact]
+        public async Task ClosingTheHelpOpenedFromTheResultsGivesTheKeyboardBackToThem()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+
+            scene.Keys(Key.F1);
+            var help = await scene.Dialog<HelpWindow>();
+            scene.Window.Focus();
+            help.Close();
+            scene.Settle();
+
+            await scene.Until(() => scene.Grid.IsKeyboardFocusWithin);
+        }
+
+        /// <summary>
+        /// Another window of ours closing (a copy's progress) under the open help: the main
+        /// window does not take the keyboard from it. (Where the keyboard of the help goes as a
+        /// window closes is the platform's: the headless one drops it.)
+        /// </summary>
+        [AvaloniaFact]
+        public async Task AnotherWindowClosingUnderTheHelpDoesNotTakeItsKeyboard()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            var progress = new Window { Width = 100, Height = 50 };
+            progress.Show(scene.Window);
+            scene.Keys(Key.F1);
+            var help = await scene.Dialog<HelpWindow>();
+            help.Activate();
+            scene.Settle();
+            Assert.True(help.IsActive);
+
+            progress.Close();
+            scene.Settle();
+
+            Assert.False(scene.Grid.IsKeyboardFocusWithin);
+            Assert.Null(scene.Window.FocusManager?.GetFocusedElement());
+            help.Close();
+        }
+
+        /// <summary>The same under a window of the app with no owner (a calculator)</summary>
+        [AvaloniaFact]
+        public async Task AProgressClosingUnderAWindowWithoutOwnerDoesNotTakeItsKeyboard()
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+            var progress = new Window { Width = 100, Height = 50 };
+            progress.Show(scene.Window);
+            var calculator = new Window { Width = 200, Height = 100 };
+            calculator.Show();
+            try
+            {
+                calculator.Activate();
+                scene.Settle();
+                Assert.True(calculator.IsActive);
+
+                progress.Close();
+                scene.Settle();
+
+                Assert.False(scene.Grid.IsKeyboardFocusWithin);
+                Assert.Null(scene.Window.FocusManager?.GetFocusedElement());
+            }
+            finally { calculator.Close(); }
+        }
+
         [AvaloniaFact]
         public async Task HelpSearchBoxTakesTheFocusOnCtrlF()
         {

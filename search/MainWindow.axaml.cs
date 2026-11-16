@@ -89,6 +89,16 @@ namespace search
         PinnedFilter editingPinnedFilter;
         string editingPinnedOriginalName;
         bool finishingPinnedEdit;
+        /// <summary>The element of this window that last got the keyboard</summary>
+        Control lastFocused;
+        /// <summary>The windows of the app open since this one was made</summary>
+        readonly HashSet<Window> openWindows = new();
+        /// <summary>
+        /// The grid's keyboard row is not one the user is going on from: the keyboard came to
+        /// the results with nothing selected, or another list replaced the rows - not moved or
+        /// selected since
+        /// </summary>
+        bool keyboardRowUntouched = true;
         INode inlineRenameNode;
         TextBox inlineRenameEditor;
         TextBlock inlineRenameDisplay;
@@ -412,9 +422,20 @@ namespace search
             // Save filter to history on any command
             filesViewCmd.OnCommand += () => filters.Used(filterTextBox.Text);
             filesViewCmd.nodes = SelectedNodes;
+            //Another collection (a new filter): the grid starts over on its first row, unselected.
+            //The keyboard coming to the results (Right Shift from the filter) with nothing
+            //selected starts there too. The same list refreshed (a live change) keeps the row.
+            filesView.PropertyChanged += (o, e) =>
+            {
+                if (e.Property == DataGrid.ItemsSourceProperty
+                    || e.Property == IsKeyboardFocusWithinProperty && filesView.IsKeyboardFocusWithin
+                        && filesView.SelectedItems.Count == 0)
+                    keyboardRowUntouched = true;
+            };
             filesView.SelectionChanged += (o, e) =>
             {
                 SelectedCount = filesView.SelectedItems.Count;
+                if (SelectedCount > 0) keyboardRowUntouched = false;
                 if (!restoringSelection)
                 {
                     pickedSelection = null;
@@ -452,6 +473,34 @@ namespace search
             };
             // Drives nobody watches (Linux) catch up on what changed while the user was away
             Activated += (o, e) => Model.RefreshUnwatchedDrives();
+
+            // Back from another window (the help, a dialog) the keys go where they went before.
+            // On X11 the window is activated with no element focused: typed text went nowhere
+            // until a click.
+            // Followed all the time: when the window loses the keyboard (a deactivation, a
+            // window shown and closed in a moment without one) the element may have lost it already.
+            AddHandler(GotFocusEvent, (o, e) =>
+            {
+                if (e.Source is Control focused && focused != this) lastFocused = focused;
+            }, RoutingStrategies.Bubble, handledEventsToo: true);
+            Activated += (o, e) => Dispatcher.UIThread.Post(() => RestoreFocusAfterActivation(null), DispatcherPriority.Background);
+            // A window of ours closed (the help, a dialog). Shown and closed in a moment, it never
+            // made the window manager deactivate this one: no Activated follows, while the focus
+            // it took went away with it.
+            // Every window of the app is known: one without an owner (a calculator) keeps the
+            // keyboard too.
+            var windowOpened = WindowOpenedEvent.AddClassHandler<Window>((window, _) => openWindows.Add(window));
+            var windowClosed = WindowClosedEvent.AddClassHandler<Window>((window, _) =>
+            {
+                openWindows.Remove(window);
+                if (window.Owner == this)
+                    Dispatcher.UIThread.Post(() => RestoreFocusAfterActivation(window), DispatcherPriority.Background);
+            });
+            Closed += (o, e) =>
+            {
+                windowOpened.Dispose();
+                windowClosed.Dispose();
+            };
         }
 
         /// <summary>
@@ -459,6 +508,28 @@ namespace search
         /// the folders on Linux, where "Refresh from NTFS" would only confuse
         /// </summary>
         static string F12Hint => OperatingSystem.IsWindows() ? "HintF12" : "HintF12Rescan";
+
+        /// <summary>
+        /// Nothing of this window focused: the element of before gets the keyboard back, the
+        /// filter when that one is gone. The focus can still sit in the closing help, about to
+        /// be dropped with it. Focus the platform restored in this window is left alone, and so
+        /// is the keyboard of another window of the app still open, owned or not (a copy's
+        /// progress closing under the help or a calculator). <paramref name="closed"/>: the
+        /// window that just closed.
+        /// </summary>
+        void RestoreFocusAfterActivation(Window closed)
+        {
+            if (HasFocusHere() || openWindows.Any(w => w != this && w != closed && w.IsVisible && w.IsActive)) return;
+            var target = lastFocused;
+            if (target is { IsEffectivelyVisible: true, IsEffectivelyEnabled: true, Focusable: true }
+                && TopLevel.GetTopLevel(target) == this && target.Focus()) return;
+            //Its own Focus: the box is a user control, its inner text box takes the keys
+            filterTextBox.Focus();
+        }
+
+        /// <summary>An element of this window has the keyboard (the window itself does not count)</summary>
+        bool HasFocusHere() => FocusManager?.GetFocusedElement() is Control focused && focused != this
+            && TopLevel.GetTopLevel(focused) == this;
 
         IEnumerable<INode> SelectedNodes()
             => filesView.SelectedItems?.OfType<INode>().ToArray() ?? Enumerable.Empty<INode>();
@@ -476,6 +547,7 @@ namespace search
             var restoreKeyboardFocus = false;
             Model.BeforeItemsExchange = () =>
             {
+                SuspendInlineRename();
                 restoringSelection = true;
                 picked = pickedSelection;
                 pickedSelection = null;
@@ -537,6 +609,7 @@ namespace search
                     restoringSelection = false;
                     SelectedCount = filesView.SelectedItems.Count;
                     ReconcileSelectionCycleAfterPublication(survivors);
+                    ResumeInlineRename();
                 }
             };
             Model.UIRefreshRequested += () => Dispatcher.UIThread.Invoke(() =>

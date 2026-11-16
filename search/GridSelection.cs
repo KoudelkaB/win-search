@@ -114,6 +114,16 @@ namespace search
         }
 
         /// <summary>
+        /// The keyboard row of the grid, -1 for none or where the grid does not tell. The
+        /// result list has no groups, so a slot is the row index.
+        /// </summary>
+        public static int CurrentRowIndex(DataGrid grid)
+        {
+            try { return currentSlot == null ? -1 : (int)currentSlot.GetValue(grid); }
+            catch { return -1; }
+        }
+
+        /// <summary>
         /// Move the keyboard row (the anchor of Shift+arrows) without touching the selection.
         /// False when the grid does not support it - the caller then only scrolls.
         /// </summary>

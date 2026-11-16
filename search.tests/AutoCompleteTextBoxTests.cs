@@ -71,6 +71,32 @@ namespace search.Tests
         }
 
         /// <summary>
+        /// The keyboard leaves the box without a click (Right Shift to the results, Tab): the
+        /// list closes. Left open it kept taking the arrows meant for the results.
+        /// </summary>
+        [AvaloniaFact]
+        public void TheListClosesWhenTheKeyboardMovesElsewhere()
+        {
+            var box = new AutoCompleteTextBox { SuggestionList = () => new[] { "first term", "second term" } };
+            var other = new TextBox();
+            var window = new Window { Content = new StackPanel { Children = { box, other } }, Width = 300, Height = 200 };
+            try
+            {
+                window.Show();
+                Type(window, box, "term");
+                Assert.True(box.IsListOpen);
+
+                other.Focus();
+                Dispatcher.UIThread.RunJobs();
+
+                Assert.False(box.IsListOpen);
+                Press(window, Key.Down);
+                Assert.False(box.IsListOpen);
+            }
+            finally { window.Close(); }
+        }
+
+        /// <summary>
         /// A box in a shown window whose owner handles Enter before the inner text box, as in
         /// MainWindow. The test gets the text the last Enter used.
         /// </summary>
