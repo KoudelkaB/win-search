@@ -2,6 +2,7 @@
 //! Extract / Unique / Join pipeline. The engine is `logexplorer-core`; this crate is its UI.
 
 pub mod app;
+pub mod clipboard;
 pub mod panels;
 pub mod storage;
 pub mod theme;

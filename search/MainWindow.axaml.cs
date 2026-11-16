@@ -182,7 +182,7 @@ namespace search
             // The runtime check reads the installed WebView2 version - kept off the first render
             Opened += (_, __) => Dispatcher.UIThread.Post(() =>
             {
-                showInFilesButton.IsVisible = WebAppWindow.IsAvailable;
+                showInFilesButton.IsVisible = Apps.LogExplorerAvailable;
                 calculatorButton.IsVisible = WebAppWindow.IsBrowserAvailable;
                 PrewarmWebAppsAfterLoad();
             }, DispatcherPriority.ApplicationIdle);
@@ -359,9 +359,9 @@ namespace search
                 FileApplications.DiffCommand(async (n,a) => await OpenDiff(n)),
                 (Key.H, "Hex editor / compare", n => (n.IsCount(1) || n.IsCount(2)) && n.All(x => !x.IsDirectory) && WebAppWindow.IsAvailable,
                     async (n,a) => await Open(Apps.HexEditor, n.ToArray())),
-                (Key.L, "Log explorer", n => n.AtLeast(1) && WebAppWindow.IsAvailable,
+                (Key.L, "Log explorer", n => n.AtLeast(1) && Apps.LogExplorerAvailable,
                     async (n,a) => await Open(Apps.LogExplorer, Model.ToTextNodes(n.ToArray()).ToArray())),
-                (Key.G, "Show in files", n => Model.HasFound && WebAppWindow.IsAvailable, async (n,a) => await ShowInFiles()),
+                (Key.G, "Show in files", n => Model.HasFound && Apps.LogExplorerAvailable, async (n,a) => await ShowInFiles()),
                 //Enter filters into folders and archives; a selection without any is opened instead
                 (Key.Enter, $"{L.Text("Filter folders")} / {L.Text("Open")}", async (n,a)=> await FilterFolders(n.ToArray())),
                 (Key.Delete, "Recycle", async (n,a)=>await Delete(n)),

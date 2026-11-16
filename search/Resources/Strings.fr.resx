@@ -44,6 +44,12 @@ Fichiers : {0}
 Taille totale : {1}
 
 Les ouvrir quand même ?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>L'explorateur de journaux charge les fichiers en mémoire, et ceux-ci risquent de ne pas y tenir.
+
+Fichiers : {0}
+Taille totale : {1}
+
+Les ouvrir quand même ?</value></data>
   <data name="new name" xml:space="preserve"><value>nouveau nom</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Modifier l'heure du dernier accès</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} éléments</value></data>

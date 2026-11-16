@@ -44,6 +44,12 @@ Archivos: {0}
 Tamaño total: {1}
 
 ¿Abrirlos de todos modos?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>El explorador de registros carga los archivos en memoria, y puede que estos no quepan en ella.
+
+Archivos: {0}
+Tamaño total: {1}
+
+¿Abrirlos de todos modos?</value></data>
   <data name="new name" xml:space="preserve"><value>nuevo nombre</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Cambiar hora de último acceso</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} elementos</value></data>

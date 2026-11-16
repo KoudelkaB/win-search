@@ -648,7 +648,7 @@ namespace search
                 : "add selected as targets"), contextTargetColumn == "Folder" ? "Alt+F" : "Alt+N");
             PopulateOpenWith(nodes);
             foreach (var item in foundItems)
-                item.IsVisible = Model.HasFound && (item is not MenuItem m || m != foundItems[1] || WebAppWindow.IsAvailable);
+                item.IsVisible = Model.HasFound && (item is not MenuItem m || m != foundItems[1] || Apps.LogExplorerAvailable);
             var canZip = nodes.Length > 0 &&
                 nodes.All(n => File.Exists(n.FullName) || Directory.Exists(n.FullName));
             zipItem.IsEnabled = canZip;
@@ -710,8 +710,8 @@ namespace search
                 openWith.Items.Add(item);
             }
 
-            // The built-in Log explorer falls back to a text editor without a web view.
-            Add(WebAppWindow.IsAvailable ? L.Text("Log explorer") : OperatingSystem.IsWindows() ? "Notepad" : L.Text("Edit"),
+            // The built-in Log explorer falls back to a text editor without its program or a web view.
+            Add(Apps.LogExplorerAvailable ? L.Text("Log explorer") : OperatingSystem.IsWindows() ? "Notepad" : L.Text("Edit"),
                 Key.T, Apps.TextViever, TextExtensions.Contains);
             Add("Ghostscript", Key.G, Apps.GhostScript,
                 extension => extension.Equals(".ps", StringComparison.OrdinalIgnoreCase) ||

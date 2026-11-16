@@ -341,6 +341,22 @@ fn help_opens_with_f1_and_closes_with_escape() {
 }
 
 #[test]
+fn help_closes_with_its_cross_and_with_ok() {
+    let mut harness = start();
+    for button in ["Close help", "OK"] {
+        harness.get_by_label("Help and shortcuts (F1)").click();
+        harness.run();
+        assert!(harness.state().help_open);
+        // OK is at the end of the text, below what the window shows
+        harness.get_by_label(button).scroll_to_me();
+        harness.run();
+        harness.get_by_label(button).click();
+        harness.run();
+        assert!(!harness.state().help_open, "{button} closes the help");
+    }
+}
+
+#[test]
 fn the_ui_speaks_the_requested_language() {
     let harness = start_with(options("cs"));
     for label in ["Operace", "⊕ Filtr", "Není načten žádný zdroj", "Profily"] {
@@ -365,4 +381,67 @@ fn a_bad_pattern_is_reported_and_the_view_stays() {
     pattern.type_text(r"\d+)\]");
     harness.run();
     assert_eq!(rows(&harness), ["4711", "4711", "4712", "4712", "4713"]);
+}
+
+/// A clipboard for the tests of the keys the app translates itself (as it does on Windows)
+struct FakeClipboard(Option<logexplorer::clipboard::Pasted>);
+
+impl logexplorer::clipboard::ClipboardSource for FakeClipboard {
+    fn read(&mut self) -> logexplorer::clipboard::Pasted {
+        self.0.take().unwrap_or(logexplorer::clipboard::Pasted::Empty)
+    }
+}
+
+#[test]
+fn files_copied_in_a_file_manager_are_opened_by_paste() {
+    let files = Files::new();
+    let (a, b) = (files.write("a.log", "a1\na2"), files.write("b with space.log", "b1"));
+
+    // Linux: the file manager offers the paths as text, plain or as file:// addresses
+    let mut harness = start();
+    harness.event(egui::Event::Paste(format!("{}\n", a.display())));
+    harness.run();
+    assert_eq!(rows(&harness), ["a1", "a2"]);
+    harness.get_by_label("a.log");
+    let address = format!("file://{}", b.to_string_lossy().replace(' ', "%20"));
+    harness.event(egui::Event::Paste(address));
+    harness.run();
+    harness.get_by_label("How should the new files be loaded?");
+    harness.get_by_label("Append").click();
+    harness.run();
+    assert_eq!(rows(&harness), ["a1", "a2", "b1"]);
+
+    // Windows: Explorer offers a file list only, read when Ctrl+V is pressed
+    let mut harness = start();
+    harness.state_mut().clipboard_source = Box::new(FakeClipboard(Some(logexplorer::clipboard::Pasted::Files(vec![a.clone(), b.clone()]))));
+    key_with(&mut harness, egui::Modifiers::COMMAND, Key::V);
+    harness.get_by_label("How should the files be combined?");
+    harness.get_by_label("Concat").click();
+    harness.run();
+    assert_eq!(rows(&harness), ["a1", "a2", "b1"]);
+}
+
+#[test]
+fn the_clipboard_keys_work_when_the_app_handles_them_itself() {
+    let (mut harness, _files) = with_sample();
+    // Ctrl+V of text while a field has the keyboard goes into the field
+    key(&mut harness, Key::F);
+    let field = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    field.focus();
+    harness.run();
+    harness.state_mut().clipboard_source = Box::new(FakeClipboard(Some(logexplorer::clipboard::Pasted::Text("payments".into()))));
+    key_with(&mut harness, egui::Modifiers::COMMAND, Key::V);
+    assert_eq!(rows(&harness).len(), 2);
+    assert_eq!(harness.state().source.as_ref().unwrap().name, "sample.log");
+
+    // In the file view Ctrl+C copies the selection and Ctrl+V loads the text as a source
+    let pos = text_at(&harness, 0, "START");
+    click(&mut harness, pos);
+    // (the press alone: the harness runs a frame for every queued event, and the copied
+    // text is in the output of the frame of the press)
+    harness.event(egui::Event::Key { key: Key::C, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    assert_eq!(copied(&mut harness).as_deref(), Some("START"));
+    harness.state_mut().clipboard_source = Box::new(FakeClipboard(Some(logexplorer::clipboard::Pasted::Text("pasted row".into()))));
+    key_with(&mut harness, egui::Modifiers::COMMAND, Key::V);
+    harness.get_by_label("How should the new files be loaded?");
 }

@@ -245,6 +245,8 @@ namespace search
                 OpenOverride(page, files, load);
                 return;
             }
+            //Log explorer is a program of its own where the build ships it (see NativeLogExplorer)
+            if (page == Apps.LogExplorer && NativeLogExplorer.TryOpen(files, load)) return;
             if (!OperatingSystem.IsWindows() && linuxHost.Value != LinuxHost.Embedded)
             {
                 OpenOutside(page, files, load);

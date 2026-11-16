@@ -44,6 +44,12 @@ Dateien: {0}
 Gesamtgröße: {1}
 
 Trotzdem öffnen?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>Der Log-Explorer lädt die Dateien in den Speicher, und diese passen möglicherweise nicht hinein.
+
+Dateien: {0}
+Gesamtgröße: {1}
+
+Trotzdem öffnen?</value></data>
   <data name="new name" xml:space="preserve"><value>neuer Name</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Letzte Zugriffszeit ändern</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} Elemente</value></data>

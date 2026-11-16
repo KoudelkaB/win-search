@@ -99,6 +99,45 @@ namespace search.Smoke
             await Loaded();
         }
 
+        /// <summary>
+        /// Where the build ships the native Log explorer (logexplorer/), L opens the file in
+        /// that program: its window is titled with the file and shows the file's rows.
+        /// </summary>
+        [Fact]
+        public async Task LOpensTheFileInTheNativeLogExplorer()
+        {
+            var program = Path.Combine(Path.GetDirectoryName(PublishedApp.Executable), "LogExplorer", "logexplorer");
+            Assert.SkipUnless(File.Exists(program), "This build has no native Log explorer: L opens the HTML page");
+            await Loaded();
+            var name = Path.GetFileName(app.Before);
+            app.Filter(name);
+            //Reading the name leaves the keyboard on the file's row
+            await LinuxApp.WaitFor(() => app.SelectedName() == name ? "row" : null, Live, "the file's row");
+
+            app.Keys("l");
+
+            var title = $"^{System.Text.RegularExpressions.Regex.Escape(name)} - Log Explorer$";
+            var window = await LinuxApp.WaitFor(() => X11.FindWindow(title), TimeSpan.FromSeconds(30), "the Log explorer window");
+            try
+            {
+                var expected = File.ReadAllText(app.Before).Replace("\r\n", "\n").TrimEnd('\n');
+                await LinuxApp.WaitUntil(() =>
+                {
+                    X11.Activate(window);
+                    X11.Key("ctrl+a");
+                    X11.Key("ctrl+c");
+                    return X11.Clipboard().Replace("\r\n", "\n").TrimEnd('\n') == expected;
+                }, TimeSpan.FromSeconds(20), "the rows of the file in Log explorer");
+            }
+            finally
+            {
+                X11.Close(window);
+            }
+            await LinuxApp.WaitUntil(() => X11.FindWindow(title) == null, TimeSpan.FromSeconds(10), "Log explorer to close");
+            //Back in the main window the keys reach the filter again
+            await Loaded();
+        }
+
         /// <summary>The walk is in: the file made before the start is found</summary>
         async Task Loaded()
         {

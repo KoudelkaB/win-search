@@ -57,6 +57,12 @@ Soubory: {0}
 Celková velikost: {1}
 
 Přesto je otevřít?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>Prohlížeč logů načte soubory do paměti a tyto se do ní nemusí vejít.
+
+Soubory: {0}
+Celková velikost: {1}
+
+Přesto je otevřít?</value></data>
   <data name="new name" xml:space="preserve"><value>nový název</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Změnit čas posledního přístupu</value></data>
   <data name="ItemCount" xml:space="preserve"><value>položky ({0})</value></data>

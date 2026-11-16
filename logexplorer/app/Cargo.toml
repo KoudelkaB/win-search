@@ -9,6 +9,8 @@ description = "Log Explorer: a fast log viewer with a staged Filter/Replace/Sort
 logexplorer-core = { path = "../core" }
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "system_fonts", "wgpu", "wayland", "x11"] }
 egui = "0.37"
+# The clipboard beyond text: the file list of Explorer (see clipboard.rs)
+arboard = { version = "3", default-features = false }
 rfd = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -19,3 +21,9 @@ sys-locale = "0.3"
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["eframe"] }
 tempfile = "3"
+
+# The smoke tests on Windows: real keys, the clipboard and UI Automation
+[target.'cfg(windows)'.dev-dependencies]
+arboard = { version = "3", default-features = false }
+uiautomation = "0.25"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }

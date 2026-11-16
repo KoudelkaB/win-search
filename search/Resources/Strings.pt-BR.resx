@@ -44,6 +44,12 @@ Arquivos: {0}
 Tamanho total: {1}
 
 Abrir mesmo assim?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>O explorador de logs carrega os arquivos na memória, e estes podem não caber nela.
+
+Arquivos: {0}
+Tamanho total: {1}
+
+Abrir mesmo assim?</value></data>
   <data name="new name" xml:space="preserve"><value>novo nome</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Alterar data do último acesso</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} itens</value></data>

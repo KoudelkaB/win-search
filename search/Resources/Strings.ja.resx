@@ -44,6 +44,12 @@
 合計サイズ: {1}
 
 それでも開きますか?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>ログ エクスプローラーはファイルをメモリに読み込みますが、これらはメモリに収まらない可能性があります。
+
+ファイル数: {0}
+合計サイズ: {1}
+
+それでも開きますか?</value></data>
   <data name="new name" xml:space="preserve"><value>新しい名前</value></data>
   <data name="Change last access time" xml:space="preserve"><value>最終アクセス日時を変更</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} 個の項目</value></data>

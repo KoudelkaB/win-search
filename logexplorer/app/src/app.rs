@@ -148,6 +148,10 @@ pub struct App {
     pub drop_note: Option<(String, bool)>,
     /// Text for the clipboard, taken by the UI
     pub clipboard: Option<String>,
+    /// Where pasted content is read from when the app handles the clipboard keys itself
+    pub clipboard_source: Box<dyn crate::clipboard::ClipboardSource>,
+    /// Files pasted in this frame
+    pub pasted_files: Option<Vec<PathBuf>>,
     /// A file dialog the UI should open
     pub dialog: Option<FileDialog>,
     /// The viewer asks for the keyboard
@@ -204,6 +208,8 @@ impl App {
             offer_zip: false,
             drop_note: None,
             clipboard: None,
+            clipboard_source: Box::new(crate::clipboard::SystemClipboard),
+            pasted_files: None,
             dialog: None,
             focus_viewer: false,
             viewer: Default::default(),
@@ -1148,13 +1154,19 @@ impl App {
         }
     }
 
-    /// Text from the clipboard: a profile bundle is imported, anything else is shown
+    /// Text from the clipboard: a profile bundle is imported, the files it names are opened,
+    /// anything else is shown
     pub fn paste_text(&mut self, text: String) {
         if text.is_empty() {
             return;
         }
         if let Some(bundle) = load::profile_bundle(text.as_bytes()) {
             self.import_profiles(&bundle);
+            return;
+        }
+        // Files copied in a file manager arrive as the text of their paths
+        if let Some(files) = crate::clipboard::files_named_by(&text) {
+            self.open_paths(files, None, None);
             return;
         }
         match load::source_from_text(text, "Clipboard", "Clipboard") {

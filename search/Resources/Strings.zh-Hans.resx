@@ -44,6 +44,12 @@
 总大小: {1}
 
 仍要打开吗？</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>日志浏览器会将文件载入内存，而这些文件可能超出内存容量。
+
+文件数: {0}
+总大小: {1}
+
+仍要打开吗？</value></data>
   <data name="new name" xml:space="preserve"><value>新名称</value></data>
   <data name="Change last access time" xml:space="preserve"><value>更改最后访问时间</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} 个项目</value></data>

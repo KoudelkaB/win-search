@@ -1,0 +1,100 @@
+name: logexplorer
+
+# The native Log explorer (logexplorer/, Rust). Its unit tests, the parity with the
+# JavaScript operations of the HTML app and the headless UI tests (the real window without a
+# display) run on both systems; the smoke tests drive the built program with real keys and
+# the clipboard - on Linux on an X server of its own, on Windows on the runner's desktop.
+on:
+  pull_request:
+    paths:
+      - 'logexplorer/**'
+      - '.github/workflows/logexplorer.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'logexplorer/**'
+      - '.github/workflows/logexplorer.yml'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: logexplorer-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: logexplorer
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true # the HTML app the texts and the parity fixtures are taken from
+
+      # The runner images carry rustup; the stable toolchain with the two tools the checks use
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+
+      - name: Format and lints
+        if: runner.os == 'Linux'
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      # The translations and the fixtures are generated from the pinned HTML app: a change
+      # of the app that was not carried over fails here instead of drifting apart
+      - name: Texts and parity fixtures match the HTML app
+        if: runner.os == 'Linux'
+        run: |
+          node tools/extract-translations.cjs
+          node tools/parity-fixtures.cjs
+          git diff --exit-code -- core/assets core/tests/fixtures
+
+      - name: Unit, parity and headless UI tests
+        run: cargo test --workspace
+
+  smoke-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # The X server and the tools that drive it, and Mesa's software renderers for the window
+      - name: X server tools
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip openbox libegl1 libgl1-mesa-dri mesa-vulkan-drivers
+
+      # Every test starts an X server of its own, so they run side by side.
+      # CI=true turns "could not run" from a skip into a failure.
+      - name: Smoke tests
+        env:
+          CI: 'true'
+        run: cargo test -p logexplorer --test smoke -- --ignored
+
+  # Written on Linux and only type-checked for Windows there: until it has passed on a
+  # Windows machine and here (logexplorer/WINDOWS.md), its failure does not fail the workflow.
+  smoke-windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # One window at a time: they share the desktop, the keyboard and the clipboard
+      - name: Smoke tests
+        env:
+          CI: 'true'
+        run: cargo test -p logexplorer --test smoke -- --ignored --test-threads=1

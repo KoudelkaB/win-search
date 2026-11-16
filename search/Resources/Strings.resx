@@ -198,6 +198,12 @@ Files: {0}
 Total size: {1}
 
 Open them anyway?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>Log explorer loads the files into memory, and these may not fit there.
+
+Files: {0}
+Total size: {1}
+
+Open them anyway?</value></data>
   <data name="new name" xml:space="preserve"><value>new name</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Change last access time</value></data>
   <data name="ItemCount" xml:space="preserve"><value>{0} items</value></data>

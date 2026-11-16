@@ -11,7 +11,8 @@ cargo run --release -p logexplorer -- [--combine append|zip] [--filter TEXT] [--
 ```
 
 The options are what the embedding API of the HTML app took (`window.logExplorer.open`):
-several files without asking how to combine them, and a first include filter. Profile
+several files without asking how to combine them, and a first include filter. Files can
+also be dropped into the window or pasted after copying them in a file manager. Profile
 bundles (`≡` menu → Download / Upload profiles) are interchangeable with the HTML app; the UI
 texts and their ten translations are taken from it (`tools/extract-translations.cjs`).
 
@@ -70,24 +71,35 @@ cargo run --release -p logexplorer-core --example bench -- big.log --generate 10
 ## Tests
 
 ```sh
-cargo test --workspace                                  # unit, parity and headless UI tests
-cargo test -p logexplorer --test smoke -- --ignored     # smoke tests (Linux)
+cargo test --workspace                                                      # unit, parity and headless UI tests
+cargo test -p logexplorer --test smoke -- --ignored                         # smoke tests, Linux
+cargo test -p logexplorer --test smoke -- --ignored --test-threads=1        # smoke tests, Windows
 ```
 
-- **Unit tests** (`core/src/**`): every operation, loading and encodings, typed values,
-  collation, selection, find, profiles.
+- **Unit tests** (`core/src/**`, `app/src/clipboard.rs`): every operation, loading and
+  encodings, typed values, collation, selection, find, profiles.
 - **Parity** (`core/tests/parity.rs`): pipelines run through the *JavaScript* operations of
   the HTML app (`tools/parity-fixtures.cjs` writes `fixtures/parity.json`); the Rust engine
   must give the same rows, from the same sources and original rows.
 - **Headless UI** (`app/tests/headless.rs`, egui_kittest): the whole window without a
   display or GPU, driven through its accessibility tree, the keyboard and the pointer -
   the counterpart of the Avalonia headless tests.
-- **Smoke** (`app/tests/smoke.rs`): the built binary as its own process on a private X
-  server (Xvfb, openbox, xdotool, xclip), with the real keyboard and clipboard, down to a
-  clean exit and the files it leaves - the counterpart of `search.smoke` on Linux.
+- **Smoke** (`app/tests/smoke/`): the built binary as its own process, with the real
+  keyboard and clipboard, down to a clean exit and the files it leaves - the counterpart
+  of `search.smoke`. The scenarios are shared; `linux.rs` drives a private X server (Xvfb,
+  openbox, xdotool, xclip), `windows.rs` the desktop of the session (SendInput, UI Automation).
 
-After the HTML app changes: `node tools/extract-translations.cjs` and
-`node tools/parity-fixtures.cjs`, then run the tests.
+`.github/workflows/logexplorer.yml` runs all of it, and fails when the translations or the
+parity fixtures no longer match the pinned HTML app. After the HTML app changes:
+`node tools/extract-translations.cjs` and `node tools/parity-fixtures.cjs`, then the tests.
+
+## File Search Manager
+
+A release build of this package is copied by `search/search.csproj` to `LogExplorer/` next
+to the app, and File Search Manager then opens Log explorer (L, T/F3, Show in files) in it
+instead of the HTML page (`search/NativeLogExplorer.cs`); a build without it falls back to
+the page. It asks before loading only when the files would not fit in half of the memory.
+`LinuxSmokeTests.LOpensTheFileInTheNativeLogExplorer` in `search.smoke` covers the hand-over.
 
 ## Deliberate differences from the HTML app
 
@@ -103,7 +115,9 @@ After the HTML app changes: `node tools/extract-translations.cjs` and
 
 ## Not done yet
 
-- Smoke tests on Windows (UI Automation, like `search.smoke`): the application is
-  type-checked for `x86_64-pc-windows-msvc` but has not been run there.
-- Files pasted from the clipboard (text is; files can be dropped or opened).
-- File Search Manager still opens the HTML app; the command line above is ready for it.
+- **Windows has never run it.** The application and the Windows smoke driver are type-checked
+  and linted for `x86_64-pc-windows-msvc` only. `WINDOWS.md` is the list of what to run,
+  verify and finish there (the smoke job of the workflow may fail until then).
+- **Releases do not ship it.** The release workflow, the installers and the third-party
+  notices are untouched: building the program there and listing the licences of its crates
+  are decisions still to be made (`WINDOWS.md`, "Shipping it").

@@ -284,9 +284,15 @@ namespace search
         }
 
         async Task<bool> ConfirmLogExplorerLoad(INode[] nodes)
-            => !NeedsLogExplorerConfirmation(nodes, out var count, out var bytes) ||
-               await MessageDialog.Show(this, L.Format("LogExplorerLarge", count, TransferProgressWindow.FormatBytes((long)Math.Min(bytes, long.MaxValue))),
-                   Title, MessageDialogButtons.YesNo, MessageDialogIcon.Warning) == MessageDialogResult.Yes;
+        {
+            var html = NeedsLogExplorerConfirmation(nodes, out var count, out var bytes);
+            // The native Log explorer holds the text once: it asks only whether the files fit
+            var native = NativeLogExplorer.IsAvailable;
+            if (native ? !NativeLogExplorer.NeedsConfirmation(bytes, NativeLogExplorer.MemoryBytes) : !html) return true;
+            return await MessageDialog.Show(this,
+                L.Format(native ? "LogExplorerMemory" : "LogExplorerLarge", count, TransferProgressWindow.FormatBytes((long)Math.Min(bytes, long.MaxValue))),
+                Title, MessageDialogButtons.YesNo, MessageDialogIcon.Warning) == MessageDialogResult.Yes;
+        }
 
         /// <summary>
         /// Select the shown files containing the searched text (green rows) - rows beyond the

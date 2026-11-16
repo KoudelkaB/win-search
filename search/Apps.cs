@@ -65,9 +65,15 @@ namespace search
         public const string Calculator = "calculator.html";
 
         /// <summary>
-        /// Get text viewer path - built-in Log explorer (needs a web view or a browser)
+        /// Log explorer can open files: as the native program of this build, or as the HTML
+        /// page in a web view or a browser
         /// </summary>
-        public static string TextViever => WebAppWindow.IsAvailable ? LogExplorer : Notepad;
+        public static bool LogExplorerAvailable => NativeLogExplorer.IsAvailable || WebAppWindow.IsAvailable;
+
+        /// <summary>
+        /// Get text viewer path - built-in Log explorer
+        /// </summary>
+        public static string TextViever => LogExplorerAvailable ? LogExplorer : Notepad;
 
         /// <summary>
         /// Get application for editing

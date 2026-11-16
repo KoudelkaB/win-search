@@ -44,6 +44,12 @@ Pliki: {0}
 Łączny rozmiar: {1}
 
 Otworzyć je mimo to?</value></data>
+  <data name="LogExplorerMemory" xml:space="preserve"><value>Przeglądarka logów wczytuje pliki do pamięci, a te mogą się w niej nie zmieścić.
+
+Pliki: {0}
+Łączny rozmiar: {1}
+
+Otworzyć je mimo to?</value></data>
   <data name="new name" xml:space="preserve"><value>nowa nazwa</value></data>
   <data name="Change last access time" xml:space="preserve"><value>Zmień czas ostatniego dostępu</value></data>
   <data name="ItemCount" xml:space="preserve"><value>elementy ({0})</value></data>

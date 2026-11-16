@@ -125,7 +125,12 @@ fn handle_keys(ctx: &egui::Context, app: &mut App) {
         app.help_open = true;
         return;
     }
+    let pasted_files = app.pasted_files.take();
     if typing {
+        return;
+    }
+    if let Some(files) = pasted_files {
+        app.open_paths(files, None, None);
         return;
     }
     // Ctrl+V arrives as a paste event with the text
@@ -867,11 +872,12 @@ fn status_bar(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
 fn help(ctx: &egui::Context, app: &mut App) {
     let modal = egui::Modal::new(egui::Id::unique("help")).show(ctx, |ui| {
         ui.set_width(760.0_f32.min(ui.ctx().content_rect().width() - 60.0));
-        ui.horizontal(|ui| {
-            ui.heading(app.t("How to use Log Explorer"));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| icon(ui, egui::Button::new("×"), app.t("Close help")).clicked()).inner
-        });
-        let mut close = false;
+        let mut close = ui
+            .horizontal(|ui| {
+                ui.heading(app.t("How to use Log Explorer"));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| icon(ui, egui::Button::new("×"), app.t("Close help")).clicked()).inner
+            })
+            .inner;
         egui::ScrollArea::vertical().max_height(ui.ctx().content_rect().height() - 140.0).show(ui, |ui| {
             let sections: [(&str, &[&str]); 6] = [
                 ("Loading files", &["help.load.1", "help.load.2", "help.load.3"]),
@@ -929,7 +935,7 @@ fn help(ctx: &egui::Context, app: &mut App) {
                 }
             });
             ui.add_space(8.0);
-            close = ui.button("OK").clicked();
+            close |= ui.button("OK").clicked();
         });
         close
     });
@@ -1162,6 +1168,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     app.poll_loader();
     dropped_files(&ctx, app);
     file_dialogs(&ctx, app);
+    // Before any field reads the input: the clipboard keys as cut, copy and paste
+    app.pasted_files = crate::clipboard::translate_keys(&ctx, app.clipboard_source.as_mut());
     handle_keys(&ctx, app);
     let stage = app.stage();
 
