@@ -95,6 +95,8 @@ namespace search.Smoke
             var help = await LinuxApp.WaitFor(() => X11.FindWindow("^Help$", app.Process.Id), TimeSpan.FromSeconds(20), "the help window");
             X11.Close(help);
             await LinuxApp.WaitUntil(() => X11.FindWindow("^Help$", app.Process.Id) == null, TimeSpan.FromSeconds(10), "the help to close");
+            //Back in the main window the keys reach the filter again (X11 left nothing focused)
+            await Loaded();
         }
 
         /// <summary>The walk is in: the file made before the start is found</summary>

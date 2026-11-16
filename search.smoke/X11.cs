@@ -26,7 +26,9 @@ namespace search.Smoke
         /// <summary>The visible window whose title matches, null when there is none yet</summary>
         public static string FindWindow(string titlePattern, int? processId = null)
         {
-            var result = Try("xdotool", $"search --onlyvisible {(processId is { } pid ? $"--pid {pid} " : "")}--name \"{titlePattern}\"");
+            //--all: xdotool joins the conditions with "or" by default, the process alone matched
+            //its main window - and the "help" closed was the app
+            var result = Try("xdotool", $"search --all --onlyvisible {(processId is { } pid ? $"--pid {pid} " : "")}--name \"{titlePattern}\"");
             return result.ExitCode == 0 ? result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() : null;
         }
 
@@ -38,6 +40,9 @@ namespace search.Smoke
             return focused.ExitCode == 0 ? focused.Output.Trim() : null;
         }
 
+        public static string WindowName(string window) =>
+            string.IsNullOrEmpty(window) ? "" : Try("xdotool", $"getwindowname {window}").Output.Trim();
+
         /// <summary>Make the window the one that gets the keys (without a window manager: the focus alone)</summary>
         public static void Activate(string window)
         {
@@ -45,7 +50,14 @@ namespace search.Smoke
                 Try("xdotool", $"windowfocus --sync {window}");
         }
 
-        /// <summary>Real key presses in the xdotool syntax: "ctrl+c", "F2", "Shift_R"</summary>
+        /// <summary>
+        /// Right Shift by its evdev keycode. "xdotool key Shift_R" presses Left Shift with it on
+        /// the evdev keymap of Xorg and Xvfb (it reaches Shift_R through a shifted column), and
+        /// the result list reads Left Shift, Right Shift as a SHIFT chord instead of "Focus filter".
+        /// </summary>
+        public const string RightShift = "62";
+
+        /// <summary>Real key presses in the xdotool syntax: "ctrl+c", "F2", RightShift</summary>
         public static void Key(string keys) => Run("xdotool", $"key --clearmodifiers --delay 60 {keys}");
 
         public static void Type(string text) => Run("xdotool", $"type --clearmodifiers --delay 30 -- \"{text}\"");

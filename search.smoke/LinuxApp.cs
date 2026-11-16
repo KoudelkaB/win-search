@@ -90,8 +90,9 @@ namespace search.Smoke
                 X11.Activate(Window);
                 System.Threading.Thread.Sleep(200);
             }
-            if (X11.ActiveWindow() == Window) return;
-            const string reason = "The app's window could not get the keyboard focus, so no key was sent.";
+            var active = X11.ActiveWindow();
+            if (active == Window) return;
+            var reason = $"The app's window could not get the keyboard focus, so no key was sent (focused: {active} \"{X11.WindowName(active)}\").";
             if (Environment.GetEnvironmentVariable("CI") is { Length: > 0 }) Assert.Fail(reason);
             Assert.Skip(reason);
         }
@@ -107,14 +108,14 @@ namespace search.Smoke
         public void ToFilter()
         {
             if (!inResults) return;
-            Keys("Shift_R");
+            Keys(X11.RightShift);
             inResults = false;
         }
 
         public void ToResults()
         {
             if (inResults) return;
-            Keys("Shift_R");
+            Keys(X11.RightShift);
             inResults = true;
         }
 
