@@ -29,3 +29,6 @@ obj/
 /search/SearchTerms
 /search/*.log
 /search/*.log.bak
+
+# Build output of the Rust Log Explorer (logexplorer/)
+/logexplorer/target/

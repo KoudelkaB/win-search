@@ -1,0 +1,21 @@
+[package]
+name = "logexplorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Log Explorer: a fast log viewer with a staged Filter/Replace/Sort/Diff pipeline"
+
+[dependencies]
+logexplorer-core = { path = "../core" }
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "system_fonts", "wgpu", "wayland", "x11"] }
+egui = "0.37"
+rfd = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+directories = "6"
+rayon = "1"
+sys-locale = "0.3"
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["eframe"] }
+tempfile = "3"

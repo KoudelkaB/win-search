@@ -1,0 +1,2895 @@
+{
+ "cases": [
+  {
+   "name": "the REST duration recipe of the guide",
+   "files": [
+    [
+     "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+     "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+     "    at Checkout.run (checkout.js:12)",
+     "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+     "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+     "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+     "",
+     "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": " START \n END ",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [],
+     "sources": []
+    },
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 1,
+     "len": 4,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "string",
+     "order": "asc"
+    },
+    {
+     "type": "diff",
+     "pos": 7,
+     "len": 24,
+     "valueType": "date-time",
+     "invert": false
+    },
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": " END ",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [],
+     "sources": []
+    },
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 7,
+     "len": 24,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "time-span",
+     "order": "asc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+      "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+      "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+      "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+      "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      4,
+      5,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+      "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+      "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+      "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+      "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      5,
+      4,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+      "[4711]              00:00:00.143 END   200 GET /api/orders",
+      "[4712]             -00:00:00.138 START POST /api/payments",
+      "[4712]              00:00:00.921 END   201 POST /api/payments",
+      "[4713]              00:00:00.969 START GET /health",
+      "[4713]              00:00:00.007 end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      5,
+      4,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711]              00:00:00.143 END   200 GET /api/orders",
+      "[4712]              00:00:00.921 END   201 POST /api/payments",
+      "[4713]              00:00:00.007 end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      5,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4713]              00:00:00.007 end   204 GET /health",
+      "[4711]              00:00:00.143 END   200 GET /api/orders",
+      "[4712]              00:00:00.921 END   201 POST /api/payments"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      7,
+      1,
+      5
+     ]
+    }
+   ]
+  },
+  {
+   "name": "filter: case, alternatives, exclude",
+   "files": [
+    [
+     "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+     "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+     "    at Checkout.run (checkout.js:12)",
+     "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+     "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+     "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+     "",
+     "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": "END",
+       "caseSensitive": true
+      },
+      {
+       "text": "checkout",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [
+      {
+       "text": "201",
+       "caseSensitive": false
+      }
+     ],
+     "sources": []
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+      "    at Checkout.run (checkout.js:12)"
+     ],
+     "src": [
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "filter: only line breaks is a clause that matches nothing",
+   "files": [
+    [
+     "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+     "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+     "    at Checkout.run (checkout.js:12)",
+     "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+     "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+     "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+     "",
+     "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": "\n",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [],
+     "sources": []
+    }
+   ],
+   "stages": [
+    {
+     "lines": [],
+     "src": [],
+     "rowIds": []
+    }
+   ]
+  },
+  {
+   "name": "filter: no text keeps all, exclude only",
+   "files": [
+    [
+     "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+     "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+     "    at Checkout.run (checkout.js:12)",
+     "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+     "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+     "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+     "",
+     "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": "",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [
+      {
+       "text": "start",
+       "caseSensitive": false
+      }
+     ],
+     "sources": []
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+      "    at Checkout.run (checkout.js:12)",
+      "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+      "",
+      "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2,
+      5,
+      6,
+      7
+     ]
+    }
+   ]
+  },
+  {
+   "name": "filter: only in files",
+   "files": [
+    [
+     "a x",
+     "a y"
+    ],
+    [
+     "b x"
+    ],
+    [
+     "c x",
+     "c z"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": "x",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [],
+     "sources": [
+      "f1␟f1",
+      "f2␟f2"
+     ]
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "b x",
+      "c x"
+     ],
+     "src": [
+      1,
+      2
+     ],
+     "rowIds": [
+      2,
+      3
+     ]
+    }
+   ]
+  },
+  {
+   "name": "replace: in rows, deleting, with unicode",
+   "files": [
+    [
+     "a--b--c",
+     "žluť--kůň",
+     "none",
+     "--"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": "--",
+     "replacement": "→"
+    },
+    {
+     "type": "replace",
+     "search": "ů",
+     "replacement": ""
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "a→b→c",
+      "žluť→kůň",
+      "none",
+      "→"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3
+     ]
+    },
+    {
+     "lines": [
+      "a→b→c",
+      "žluť→kň",
+      "none",
+      "→"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3
+     ]
+    }
+   ]
+  },
+  {
+   "name": "replace: splitting rows",
+   "files": [
+    [
+     "ts=1; level=E; user=42",
+     "next; row"
+    ],
+    [
+     "other; file"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": "; ",
+     "replacement": ";\n"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "ts=1;",
+      "level=E;",
+      "user=42",
+      "next;",
+      "row",
+      "other;",
+      "file"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      2,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "replace: joining rows",
+   "files": [
+    [
+     "ERROR failed",
+     "    user=42",
+     "    order=9",
+     "INFO ok",
+     "    tail"
+    ],
+    [
+     "second",
+     "    file"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": "\n    ",
+     "replacement": " "
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "ERROR failed user=42 order=9",
+      "INFO ok tail",
+      "second file"
+     ],
+     "src": [
+      0,
+      0,
+      1
+     ],
+     "rowIds": [
+      0,
+      3,
+      5
+     ]
+    }
+   ]
+  },
+  {
+   "name": "replace: every line break",
+   "files": [
+    [
+     "a",
+     "b",
+     "",
+     "c"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": "\n",
+     "replacement": "|"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "a|b||c"
+     ],
+     "src": [
+      0
+     ],
+     "rowIds": [
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "replace: search over three rows and overlapping candidates",
+   "files": [
+    [
+     "x}",
+     "mid",
+     "{y}",
+     "mid",
+     "{z",
+     "aa",
+     "aa",
+     "aa",
+     "aa"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": "}\nmid\n{",
+     "replacement": "}{"
+    },
+    {
+     "type": "replace",
+     "search": "aa\naa",
+     "replacement": "A"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "x}{y}{z",
+      "aa",
+      "aa",
+      "aa",
+      "aa"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "lines": [
+      "x}{y}{z",
+      "A",
+      "A"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      5,
+      7
+     ]
+    }
+   ]
+  },
+  {
+   "name": "replace: replacement with breaks at both ends",
+   "files": [
+    [
+     "one,two",
+     "three"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": ",",
+     "replacement": "\n,\n"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "one",
+      ",",
+      "two",
+      "three"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      0,
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: numbers with followers and leading rows",
+   "files": [
+    [
+     "header",
+     "10 ten",
+     "  more of ten",
+     "9 nine",
+     "x",
+     "-1,5 minus",
+     "9 again",
+     "1e2 hundred",
+     "0x10 hex",
+     " 7  spaced"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 0,
+     "len": 4,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "number",
+     "order": "asc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "header",
+      "10 ten",
+      "  more of ten",
+      "9 nine",
+      "x",
+      "-1,5 minus",
+      "9 again",
+      " 7  spaced",
+      "0x10 hex",
+      "1e2 hundred"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      9,
+      8,
+      7
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: numbers descending keeps ties in order",
+   "files": [
+    [
+     "1 a",
+     "2 b",
+     "1 c",
+     "2 d",
+     "3 e"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 0,
+     "len": 1,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "number",
+     "order": "desc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "3 e",
+      "2 b",
+      "2 d",
+      "1 a",
+      "1 c"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      4,
+      1,
+      3,
+      0,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: text",
+   "files": [
+    [
+     "b",
+     "A",
+     "a",
+     "B",
+     "C",
+     "10",
+     "9",
+     "_x",
+     "-y",
+     " z",
+     "a b",
+     "ab",
+     "a-b",
+     "a_b",
+     "A1",
+     "a1",
+     "[4712]",
+     "[4711]",
+     "(1)",
+     "Zeta",
+     "alpha",
+     "Beta"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 0,
+     "len": 6,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "string",
+     "order": "asc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      " z",
+      "_x",
+      "-y",
+      "(1)",
+      "[4711]",
+      "[4712]",
+      "10",
+      "9",
+      "a",
+      "A",
+      "a b",
+      "a_b",
+      "a-b",
+      "a1",
+      "A1",
+      "ab",
+      "alpha",
+      "b",
+      "B",
+      "Beta",
+      "C",
+      "Zeta"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      9,
+      7,
+      8,
+      18,
+      17,
+      16,
+      5,
+      6,
+      2,
+      1,
+      10,
+      13,
+      12,
+      15,
+      14,
+      11,
+      20,
+      0,
+      3,
+      21,
+      4,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: next to a text, after and before",
+   "files": [
+    [
+     "GET status=500 took 30 ms",
+     "GET status=200 took 4 ms",
+     "no value",
+     "GET status=404 took 100 ms"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "anchor",
+     "pos": 0,
+     "len": 1,
+     "anchor": "status=",
+     "anchorSide": "after",
+     "valueType": "number",
+     "order": "asc"
+    },
+    {
+     "type": "sort",
+     "mode": "anchor",
+     "pos": 0,
+     "len": 1,
+     "anchor": " ms",
+     "anchorSide": "before",
+     "valueType": "number",
+     "order": "desc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "GET status=200 took 4 ms",
+      "no value",
+      "GET status=404 took 100 ms",
+      "GET status=500 took 30 ms"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2,
+      3,
+      0
+     ]
+    },
+    {
+     "lines": [
+      "GET status=404 took 100 ms",
+      "GET status=500 took 30 ms",
+      "GET status=200 took 4 ms",
+      "no value"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      3,
+      0,
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: text after an anchor takes the rest of the row",
+   "files": [
+    [
+     "k=b 2",
+     "k=a 9",
+     "k=b 1"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "anchor",
+     "pos": 0,
+     "len": 1,
+     "anchor": "k=",
+     "anchorSide": "after",
+     "valueType": "string",
+     "order": "asc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "k=a 9",
+      "k=b 1",
+      "k=b 2"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: dates in several notations",
+   "files": [
+    [
+     "2026-03-13T09:14:02.105Z a",
+     "2026-03-13T09:14:02.105+02:00 b",
+     "2025-12-31T23:59:59Z c",
+     "not a date",
+     "2026-03-13T09:14:02Z d"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 0,
+     "len": 29,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "date-time",
+     "order": "asc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "2026-03-13T09:14:02.105Z a",
+      "2026-03-13T09:14:02.105+02:00 b",
+      "2025-12-31T23:59:59Z c",
+      "not a date",
+      "2026-03-13T09:14:02Z d"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sort: durations",
+   "files": [
+    [
+     "00:00:10.000",
+     "00:00:02.500",
+     "1.00:00:00",
+     "-00:00:01",
+     "250",
+     "00:60:00",
+     "12:30"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 0,
+     "len": 12,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "time-span",
+     "order": "asc"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "-00:00:01",
+      "250",
+      "00:60:00",
+      "00:00:02.500",
+      "00:00:10.000",
+      "12:30",
+      "1.00:00:00"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      3,
+      4,
+      5,
+      1,
+      0,
+      6,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff: numbers with decimals, a sign column on the right",
+   "files": [
+    [
+     "    Lang   72dpi   300dpi  600dpi  best",
+     "     afr   2.8%   95.6%   95.2%   95.6%",
+     "     amh   33.2%   27.0%   48.6%   48.6%",
+     "     ara   32.4%   77.8%   78.0%   78.0%",
+     "     asm   21.0%   63.0%   62.8%   63.0%",
+     "     aze   48.1%   95.4%   96.0%   100.0%"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 34,
+     "len": 4,
+     "valueType": "number",
+     "invert": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "    Lang   72dpi   300dpi  600dpi  best",
+      "     afr   2.8%   95.6%   95.2%    95.6",
+      "     amh   33.2%   27.0%   48.6%  -47.6%",
+      "     ara   32.4%   77.8%   78.0%   30.0%",
+      "     asm   21.0%   63.0%   62.8%  -15.0%",
+      "     aze   48.1%   95.4%   96.0%   37.00%"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff: numbers, the sign column on the left",
+   "files": [
+    [
+     "    Lang   72dpi   300dpi  600dpi  best",
+     "     afr   2.8%   95.6%   95.2%   95.6%",
+     "     amh   33.2%   27.0%   48.6%   48.6%",
+     "     ara   32.4%   77.8%   78.0%   78.0%",
+     "     asm   21.0%   63.0%   62.8%   63.0%",
+     "     aze   48.1%   95.4%   96.0%   100.0%"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 34,
+     "len": 4,
+     "valueType": "number",
+     "invert": false,
+     "outputExtend": "left"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "    Lang   72dpi   300dpi  600dpi  best",
+      "     afr   2.8%   95.6%   95.2%   95.6%",
+      "     amh   33.2%   27.0%   48.6% -47.66%",
+      "     ara   32.4%   77.8%   78.0%  30.00%",
+      "     asm   21.0%   63.0%   62.8% -15.00%",
+      "     aze   48.1%   95.4%   96.0%  37.0.0%"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff: integers and a decimal comma",
+   "files": [
+    [
+     "v=10 x",
+     "v=7 x",
+     "v=7,5 x",
+     "v=100 x",
+     "none"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 2,
+     "len": 3,
+     "valueType": "number",
+     "invert": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "v=10,0",
+      "v=7 x",
+      "v=-2,5x",
+      "v=92,5x",
+      "none"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff: durations",
+   "files": [
+    [
+     "00:00:10.000 a",
+     "00:00:12.500 b",
+     "00:01:00.000 c",
+     "x",
+     "00:00:59.999 d"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 0,
+     "len": 12,
+     "valueType": "time-span",
+     "invert": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      " 00:00:10.000a",
+      " 00:00:02.500b",
+      " 00:00:47.500c",
+      "x",
+      "-00:00:00.001d"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff: durations without seconds and with days",
+   "files": [
+    [
+     "1.02:00 a",
+     "1.03:30 b",
+     "0.23:59 c"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 0,
+     "len": 7,
+     "valueType": "time-span",
+     "invert": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      " 1.02:00a",
+      " 0.01:30b",
+      "-0.03:31c"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff: text keeps changed characters",
+   "files": [
+    [
+     "id=abc1",
+     "id=abd1",
+     "id=abd2",
+     "short",
+     "id=zzzzzz"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 3,
+     "len": 4,
+     "valueType": "string",
+     "invert": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "id=abc1",
+      "id=  d ",
+      "id=   2",
+      "short",
+      "id=zzzzzz"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "name": "diff then reverse restores the input",
+   "files": [
+    [
+     "    Lang   72dpi   300dpi  600dpi  best",
+     "     afr   2.8%   95.6%   95.2%   95.6%",
+     "     amh   33.2%   27.0%   48.6%   48.6%",
+     "     ara   32.4%   77.8%   78.0%   78.0%",
+     "     asm   21.0%   63.0%   62.8%   63.0%",
+     "     aze   48.1%   95.4%   96.0%   100.0%"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 34,
+     "len": 4,
+     "valueType": "number",
+     "invert": false
+    },
+    {
+     "type": "diff",
+     "pos": 34,
+     "len": 4,
+     "valueType": "number",
+     "invert": true
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "    Lang   72dpi   300dpi  600dpi  best",
+      "     afr   2.8%   95.6%   95.2%    95.6",
+      "     amh   33.2%   27.0%   48.6%  -47.6%",
+      "     ara   32.4%   77.8%   78.0%   30.0%",
+      "     asm   21.0%   63.0%   62.8%  -15.0%",
+      "     aze   48.1%   95.4%   96.0%   37.00%"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    },
+    {
+     "lines": [
+      "    Lang   72dpi   300dpi  600dpi  best",
+      "     afr   2.8%   95.6%   95.2%   95.6%",
+      "     amh   33.2%   27.0%   48.6%   48.6%",
+      "     ara   32.4%   77.8%   78.0%   78.0%",
+      "     asm   21.0%   63.0%   62.8%   63.0%",
+      "     aze   48.1%   95.4%   96.0%   100.0%"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    }
+   ]
+  },
+  {
+   "name": "reverse on its own: numbers, text, durations",
+   "files": [
+    [
+     "10",
+     " 5",
+     "-3",
+     "x",
+     "2,5"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 0,
+     "len": 3,
+     "valueType": "number",
+     "invert": true
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "10",
+      "15,0",
+      "12,0",
+      "x",
+      "14,5"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "name": "reverse on its own: text",
+   "files": [
+    [
+     "abcd",
+     "  x ",
+     "y   ",
+     "    "
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 0,
+     "len": 4,
+     "valueType": "string",
+     "invert": true
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "abcd",
+      "abxd",
+      "ybxd",
+      "ybxd"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3
+     ]
+    }
+   ]
+  },
+  {
+   "name": "reverse on its own: durations",
+   "files": [
+    [
+     "00:00:10.000",
+     "00:00:02.500",
+     "00:00:00.001"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "diff",
+     "pos": 0,
+     "len": 12,
+     "valueType": "time-span",
+     "invert": true
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "00:00:10.000",
+      " 00:00:12.500",
+      " 00:00:12.501"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: regex groups over the whole view",
+   "files": [
+    [
+     "[{\"ConnectionId\":\"a1\",\"x\":1},{\"ConnectionId\": \"b2\"}]",
+     "{\"ConnectionId\":\"c3\"} {\"ConnectionId\":\" d4 \"}"
+    ],
+    [
+     "{\"ConnectionId\":\"\"}",
+     "{\"connectionid\":\"e5\"}"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "\"ConnectionId\"\\s*:\\s*\"([^\"]*)\""
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "a1",
+      "b2",
+      "c3",
+      "d4"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      0,
+      1,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: regex per row, first match, case-insensitive, no trim",
+   "files": [
+    [
+     "id=1 id=2",
+     "none",
+     "ID= 3 id=4"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "id=(\\s*\\d)",
+     "scope": "line",
+     "allMatches": false,
+     "caseSensitive": false,
+     "trim": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "1",
+      " 3"
+     ],
+     "src": [
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: regex group 0, anchors per row, empty matches",
+   "files": [
+    [
+     "abc",
+     "",
+     "a1b22"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "^[a-z]+|\\d*$",
+     "group": 0,
+     "skipEmpty": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "abc",
+      "",
+      "",
+      "a",
+      "22",
+      ""
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      0,
+      1,
+      2,
+      2,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: regex first match of the whole view only",
+   "files": [
+    [
+     "x",
+     "k=1 k=2",
+     "k=3"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "k=(\\d)",
+     "allMatches": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "1"
+     ],
+     "src": [
+      0
+     ],
+     "rowIds": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: optional group that takes no part",
+   "files": [
+    [
+     "a1",
+     "b",
+     "a2b"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "a(\\d)|b"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "1",
+      "2"
+     ],
+     "src": [
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: regex rows range",
+   "files": [
+    [
+     "n=1",
+     "n=2",
+     "n=3",
+     "n=4"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "n=(\\d)",
+     "scope": "line",
+     "rowMode": "range",
+     "fromRow": 2,
+     "toRow": 3
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "2",
+      "3"
+     ],
+     "src": [
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: column with a row range",
+   "files": [
+    [
+     "    Lang   72dpi   300dpi  600dpi  best",
+     "     afr   2.8%   95.6%   95.2%   95.6%",
+     "     amh   33.2%   27.0%   48.6%   48.6%",
+     "     ara   32.4%   77.8%   78.0%   78.0%",
+     "     asm   21.0%   63.0%   62.8%   63.0%",
+     "     aze   48.1%   95.4%   96.0%   100.0%"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "column",
+     "pos": 5,
+     "len": 3,
+     "rowMode": "range",
+     "fromRow": 2,
+     "toRow": 4
+    },
+    {
+     "type": "extract",
+     "mode": "column",
+     "pos": 1,
+     "len": 5,
+     "skipEmpty": false,
+     "trim": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "afr",
+      "amh",
+      "ara"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2,
+      3
+     ]
+    },
+    {
+     "lines": [
+      "fr",
+      "mh",
+      "ra"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      1,
+      2,
+      3
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: between, whole view and per row",
+   "files": [
+    [
+     "<a> one </a><a>two</a>",
+     "x <a>three</a> <a>",
+     "<A>four</A>"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "between",
+     "startAnchor": "<a>",
+     "endAnchor": "</a>",
+     "scope": "line"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "one",
+      "two",
+      "three"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: between without case, first only, open ends",
+   "files": [
+    [
+     "k: one; K: two;",
+     "k: three"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "between",
+     "startAnchor": "k:",
+     "endAnchor": ";",
+     "caseSensitive": false,
+     "scope": "line"
+    },
+    {
+     "type": "extract",
+     "mode": "between",
+     "startAnchor": "",
+     "endAnchor": "e",
+     "scope": "line"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "one",
+      "two"
+     ],
+     "src": [
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      0
+     ]
+    },
+    {
+     "lines": [
+      "on"
+     ],
+     "src": [
+      0
+     ],
+     "rowIds": [
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extract: between with no closing text",
+   "files": [
+    [
+     "a=1 a=2",
+     "b",
+     "a=3"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "between",
+     "startAnchor": "a=",
+     "endAnchor": "",
+     "scope": "line"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "1 a=2",
+      "3"
+     ],
+     "src": [
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unique: stable, trim, empty, case",
+   "files": [
+    [
+     "b",
+     " a ",
+     "b",
+     "",
+     "a",
+     "B",
+     "  "
+    ],
+    [
+     "a",
+     "c"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "unique"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "b",
+      "a",
+      "B",
+      "c"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      5,
+      8
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unique: loose",
+   "files": [
+    [
+     "b",
+     " a ",
+     "B",
+     "",
+     "a",
+     ""
+    ]
+   ],
+   "operators": [
+    {
+     "type": "unique",
+     "trim": false,
+     "ignoreEmpty": false,
+     "caseSensitive": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "b",
+      " a ",
+      "",
+      "a"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unique: sorted with numbers by value",
+   "files": [
+    [
+     "id10",
+     "id9",
+     "id10",
+     "id100",
+     "ID9",
+     "b",
+     "a",
+     "A",
+     "a2",
+     "a10"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "unique",
+     "order": "asc"
+    },
+    {
+     "type": "unique",
+     "order": "desc",
+     "caseSensitive": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "a",
+      "A",
+      "a2",
+      "a10",
+      "b",
+      "id9",
+      "ID9",
+      "id10",
+      "id100"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      6,
+      7,
+      8,
+      9,
+      5,
+      1,
+      4,
+      0,
+      3
+     ]
+    },
+    {
+     "lines": [
+      "id100",
+      "id10",
+      "id9",
+      "b",
+      "a10",
+      "a2",
+      "a"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      3,
+      0,
+      1,
+      5,
+      9,
+      8,
+      6
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join: delimiter, prefix, suffix",
+   "files": [
+    [
+     "id1",
+     "",
+     " id2 ",
+     "id3"
+    ],
+    [
+     "id4"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "join",
+     "delimiter": "|",
+     "prefix": "(",
+     "suffix": ")"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "(id1| id2 |id3|id4)"
+     ],
+     "src": [
+      0
+     ],
+     "rowIds": [
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join: escapes make rows",
+   "files": [
+    [
+     "a",
+     "b",
+     "c"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "join",
+     "delimiter": ",\\n",
+     "prefix": "[\\n",
+     "suffix": "\\n]\\t\\\\n"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "[",
+      "a,",
+      "b,",
+      "c",
+      "]    \\n"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      0,
+      1,
+      2,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join: trimmed, keeping empty, no escapes",
+   "files": [
+    [
+     " a ",
+     "",
+     "b"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "join",
+     "delimiter": "\\n",
+     "trim": true,
+     "skipEmpty": false,
+     "interpretEscapes": false
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "a\\n\\nb"
+     ],
+     "src": [
+      0
+     ],
+     "rowIds": [
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join: nothing to join",
+   "files": [
+    [
+     "",
+     "  "
+    ]
+   ],
+   "operators": [
+    {
+     "type": "join",
+     "trim": true,
+     "prefix": "<",
+     "suffix": ">"
+    },
+    {
+     "type": "join",
+     "trim": true
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "<>"
+     ],
+     "src": [
+      -1
+     ],
+     "rowIds": [
+      -1
+     ]
+    },
+    {
+     "lines": [
+      "<>"
+     ],
+     "src": [
+      -1
+     ],
+     "rowIds": [
+      -1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "collect unique values",
+   "files": [
+    [
+     "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+     "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+     "    at Checkout.run (checkout.js:12)",
+     "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments",
+     "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+     "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+     "",
+     "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "extract",
+     "mode": "regex",
+     "pattern": "^\\[(\\d+)\\]"
+    },
+    {
+     "type": "unique"
+    },
+    {
+     "type": "join",
+     "delimiter": "|"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "4711",
+      "4711",
+      "4712",
+      "4713",
+      "4712",
+      "4713"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      4,
+      5,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "4711",
+      "4712",
+      "4713"
+     ],
+     "src": [
+      0,
+      0,
+      0
+     ],
+     "rowIds": [
+      0,
+      3,
+      4
+     ]
+    },
+    {
+     "lines": [
+      "4711|4712|4713"
+     ],
+     "src": [
+      0
+     ],
+     "rowIds": [
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a long pipeline keeps sources and rows",
+   "files": [
+    [
+     "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
+     "[4711] 2026-03-13T09:14:02.248Z END   200 GET /api/orders",
+     "    at Checkout.run (checkout.js:12)",
+     "[4712] 2026-03-13T09:14:02.110Z START POST /api/payments"
+    ],
+    [
+     "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+     "[4712] 2026-03-13T09:14:03.031Z END   201 POST /api/payments",
+     "",
+     "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+    ]
+   ],
+   "operators": [
+    {
+     "type": "replace",
+     "search": "/api/",
+     "replacement": "/"
+    },
+    {
+     "type": "filter",
+     "include": [
+      {
+       "text": "START",
+       "caseSensitive": false
+      },
+      {
+       "text": "END",
+       "caseSensitive": false
+      }
+     ],
+     "exclude": [],
+     "sources": []
+    },
+    {
+     "type": "sort",
+     "mode": "positional",
+     "pos": 1,
+     "len": 4,
+     "anchor": "",
+     "anchorSide": "after",
+     "valueType": "string",
+     "order": "asc"
+    },
+    {
+     "type": "diff",
+     "pos": 7,
+     "len": 24,
+     "valueType": "date-time",
+     "invert": false
+    },
+    {
+     "type": "extract",
+     "mode": "column",
+     "pos": 0,
+     "len": 40
+    },
+    {
+     "type": "unique"
+    }
+   ],
+   "stages": [
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /orders",
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /orders",
+      "    at Checkout.run (checkout.js:12)",
+      "[4712] 2026-03-13T09:14:02.110Z START POST /payments",
+      "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+      "[4712] 2026-03-13T09:14:03.031Z END   201 POST /payments",
+      "",
+      "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /orders",
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /orders",
+      "[4712] 2026-03-13T09:14:02.110Z START POST /payments",
+      "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+      "[4712] 2026-03-13T09:14:03.031Z END   201 POST /payments",
+      "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      4,
+      5,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /orders",
+      "[4711] 2026-03-13T09:14:02.248Z END   200 GET /orders",
+      "[4712] 2026-03-13T09:14:02.110Z START POST /payments",
+      "[4712] 2026-03-13T09:14:03.031Z END   201 POST /payments",
+      "[4713] 2026-03-13T09:14:04.000Z START GET /health",
+      "[4713] 2026-03-13T09:14:04.007Z end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      5,
+      4,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GET /orders",
+      "[4711]              00:00:00.143 END   200 GET /orders",
+      "[4712]             -00:00:00.138 START POST /payments",
+      "[4712]              00:00:00.921 END   201 POST /payments",
+      "[4713]              00:00:00.969 START GET /health",
+      "[4713]              00:00:00.007 end   204 GET /health"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      5,
+      4,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GE",
+      "[4711]              00:00:00.143 END   2",
+      "[4712]             -00:00:00.138 START P",
+      "[4712]              00:00:00.921 END   2",
+      "[4713]              00:00:00.969 START G",
+      "[4713]              00:00:00.007 end   2"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      5,
+      4,
+      7
+     ]
+    },
+    {
+     "lines": [
+      "[4711] 2026-03-13T09:14:02.105Z START GE",
+      "[4711]              00:00:00.143 END   2",
+      "[4712]             -00:00:00.138 START P",
+      "[4712]              00:00:00.921 END   2",
+      "[4713]              00:00:00.969 START G",
+      "[4713]              00:00:00.007 end   2"
+     ],
+     "src": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      1
+     ],
+     "rowIds": [
+      0,
+      1,
+      3,
+      5,
+      4,
+      7
+     ]
+    }
+   ]
+  }
+ ],
+ "typed": [
+  {
+   "text": "95.6",
+   "type": "number",
+   "legacyDate": false,
+   "number": 95.6,
+   "span": 95.6
+  },
+  {
+   "text": "12",
+   "type": "number",
+   "legacyDate": false,
+   "number": 12,
+   "span": 12
+  },
+  {
+   "text": "-1,5",
+   "type": "number",
+   "legacyDate": false,
+   "number": -1.5,
+   "span": null
+  },
+  {
+   "text": "1e3",
+   "type": "number",
+   "legacyDate": false,
+   "number": 1000,
+   "span": 1000
+  },
+  {
+   "text": "0x1F",
+   "type": "number",
+   "legacyDate": false,
+   "number": 31,
+   "span": 31
+  },
+  {
+   "text": " 7 ",
+   "type": "number",
+   "legacyDate": false,
+   "number": 7,
+   "span": 7
+  },
+  {
+   "text": "",
+   "type": "string",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "abc",
+   "type": "string",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "2026-03-13T09:14:02.105Z",
+   "type": "date-time",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "2026-03-13",
+   "type": "date-time",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "1.2.2026",
+   "type": "date-time",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "31.2.2026",
+   "type": "string",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "00:00:10.000",
+   "type": "time-span",
+   "legacyDate": false,
+   "number": null,
+   "span": 10000
+  },
+  {
+   "text": "1.02:03:04.005",
+   "type": "date-time",
+   "legacyDate": true,
+   "number": null,
+   "span": 93784005
+  },
+  {
+   "text": "12:30",
+   "type": "time-span",
+   "legacyDate": false,
+   "number": null,
+   "span": 45000000
+  },
+  {
+   "text": "25:00",
+   "type": "time-span",
+   "legacyDate": false,
+   "number": null,
+   "span": 90000000
+  },
+  {
+   "text": "01:60",
+   "type": "date-time",
+   "legacyDate": true,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "30:00:00",
+   "type": "time-span",
+   "legacyDate": false,
+   "number": null,
+   "span": 108000000
+  },
+  {
+   "text": "1.24:00:00",
+   "type": "date-time",
+   "legacyDate": true,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "Infinity",
+   "type": "string",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "1 2",
+   "type": "date-time",
+   "legacyDate": true,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "5.",
+   "type": "number",
+   "legacyDate": false,
+   "number": 5,
+   "span": 5
+  },
+  {
+   "text": ".5",
+   "type": "number",
+   "legacyDate": false,
+   "number": 0.5,
+   "span": 0.5
+  },
+  {
+   "text": "+7",
+   "type": "number",
+   "legacyDate": false,
+   "number": 7,
+   "span": 7
+  },
+  {
+   "text": "--1",
+   "type": "date-time",
+   "legacyDate": true,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "1,2,3",
+   "type": "date-time",
+   "legacyDate": true,
+   "number": null,
+   "span": null
+  },
+  {
+   "text": "0b101",
+   "type": "number",
+   "legacyDate": false,
+   "number": 5,
+   "span": 5
+  },
+  {
+   "text": "0o17",
+   "type": "number",
+   "legacyDate": false,
+   "number": 15,
+   "span": 15
+  },
+  {
+   "text": "12abc",
+   "type": "string",
+   "legacyDate": false,
+   "number": null,
+   "span": null
+  }
+ ]
+}
