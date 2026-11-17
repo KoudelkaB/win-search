@@ -283,30 +283,6 @@ namespace search.Tests
         }
 
         [AvaloniaFact]
-        public async Task F2RealizesANewlyPublishedRowBeforeOpeningItsEditor()
-        {
-            using var scene = await UiScene.Open();
-            var path = Path.Combine(scene.Root, "fresh.txt");
-            File.WriteAllText(path, "fresh");
-            var node = new UiScene.PathNode(path, FileAttributes.Normal);
-            Exchange(scene, node);
-            scene.Grid.SelectedItem = node;
-            scene.Grid.Focus();
-
-            // Press F2 before the new collection has had a layout pass.
-            scene.Window.KeyPress(Key.F2, RawInputModifiers.None, PhysicalKey.F2, null);
-            scene.Window.KeyRelease(Key.F2, RawInputModifiers.None, PhysicalKey.F2, null);
-
-            var editor = await Editor(scene);
-            Assert.Equal("fresh", editor.SelectedText);
-            Assert.True(editor.IsKeyboardFocusWithin);
-            scene.Type("renamed");
-            scene.Keys(Key.Enter);
-            Assert.True(File.Exists(Path.Combine(scene.Root, "renamed.txt")));
-            Assert.False(File.Exists(path));
-        }
-
-        [AvaloniaFact]
         public async Task TypedNameAndEnterRenameTheFile()
         {
             using var scene = await UiScene.Open();

@@ -76,7 +76,7 @@ namespace search.Smoke
             app.Keys("F12");
             await LinuxApp.WaitFor(() => app.SelectedName() == Path.GetFileName(file) ? "row" : null, Load, "the file's row");
 
-            app.Keys("F2");
+            app.Keys(X11.F2);
             // F12 may still be publishing rows. Wait until the inline editor owns the
             // keyboard and exposes its selected stem, instead of typing after a fixed delay.
             string copied = null;

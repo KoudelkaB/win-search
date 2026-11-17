@@ -940,13 +940,7 @@ namespace search
             FinishInlineRename(commit: false);
             filesView.ScrollIntoView(node, null);
             //The row may be realized only by the layout pass after the scroll
-            Dispatcher.UIThread.Post(() =>
-            {
-                // A newly published result can already be selected while its virtualized
-                // row is still awaiting layout. Realize it before looking for its editor.
-                filesView.UpdateLayout();
-                StartInlineRename(node);
-            }, DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() => StartInlineRename(node), DispatcherPriority.Loaded);
         }
 
         /// <summary>

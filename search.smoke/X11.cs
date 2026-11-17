@@ -57,6 +57,10 @@ namespace search.Smoke
         /// </summary>
         public const string RightShift = "62";
 
+        // On some Xvfb keymaps xdotool resolves "F2" through an Alt-modified column,
+        // sending Alt+F2. The evdev keycode sends the actual unmodified function key.
+        public const string F2 = "68";
+
         /// <summary>Real key presses in the xdotool syntax: "ctrl+c", "F2", RightShift</summary>
         public static void Key(string keys) => Run("xdotool", $"key --clearmodifiers --delay 60 {keys}");
 
