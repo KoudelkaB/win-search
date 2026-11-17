@@ -141,10 +141,10 @@ namespace search.Tests
             try
             {
                 writer.Schedule(new[] { "first" });
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken: TestContext.Current.CancellationToken);
 
-                var schedule = Task.Run(() => writer.Schedule(new[] { "latest" }));
-                var completed = await Task.WhenAny(schedule, Task.Delay(TimeSpan.FromSeconds(1)));
+                var schedule = Task.Run(() => writer.Schedule(new[] { "latest" }), cancellationToken: TestContext.Current.CancellationToken);
+                var completed = await Task.WhenAny(schedule, Task.Delay(TimeSpan.FromSeconds(1), cancellationToken: TestContext.Current.CancellationToken));
                 Assert.Same(schedule, completed);
                 await schedule;
             }

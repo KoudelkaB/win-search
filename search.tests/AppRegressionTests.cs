@@ -996,7 +996,7 @@ namespace search.Tests
                 var needle = Enumerable.Repeat((byte)'x', 70_000).ToArray();
                 File.WriteAllBytes(path, new byte[] { (byte)'a' }.Concat(needle).Concat(new byte[] { (byte)'z' }).ToArray());
 
-                Assert.True(SearchModel.FindFileContents(path, needle) == true);
+                Assert.True(SearchModel.FindFileContents(path, needle, cancellationToken: TestContext.Current.CancellationToken) == true);
             }
             finally
             {
@@ -1014,7 +1014,7 @@ namespace search.Tests
                 writer.Write(Encoding.ASCII.GetBytes("live log line"));
                 writer.Flush();
 
-                Assert.True(SearchModel.FindFileContents(path, Encoding.ASCII.GetBytes("log")) == true);
+                Assert.True(SearchModel.FindFileContents(path, Encoding.ASCII.GetBytes("log"), cancellationToken: TestContext.Current.CancellationToken) == true);
             }
             finally
             {
@@ -1053,7 +1053,7 @@ namespace search.Tests
                 File.WriteAllBytes(path, Encoding.Unicode.GetBytes(text));
 
                 Assert.True(SearchModel.FindFileContents(path, Encoding.Unicode.GetBytes("abcd"),
-                    caseInsensitive: true, utf16: true) == true);
+                    caseInsensitive: true, utf16: true, cancellationToken: TestContext.Current.CancellationToken) == true);
             }
             finally
             {
@@ -1071,9 +1071,9 @@ namespace search.Tests
                 File.WriteAllBytes(path, Encoding.Unicode.GetBytes("xŁx"));
 
                 Assert.True(SearchModel.FindFileContents(path, Encoding.Unicode.GetBytes("š"),
-                    caseInsensitive: true, utf16: true) == false);
+                    caseInsensitive: true, utf16: true, cancellationToken: TestContext.Current.CancellationToken) == false);
                 Assert.True(SearchModel.FindFileContents(path, Encoding.Unicode.GetBytes("Ł"),
-                    caseInsensitive: true, utf16: true) == true);
+                    caseInsensitive: true, utf16: true, cancellationToken: TestContext.Current.CancellationToken) == true);
             }
             finally
             {
@@ -1090,7 +1090,7 @@ namespace search.Tests
                 var prefix = Enumerable.Repeat((byte)'x', (1 << 16) - 2);
                 File.WriteAllBytes(path, prefix.Concat(Encoding.ASCII.GetBytes("AbCd")).ToArray());
 
-                Assert.True(SearchModel.FindFileContents(path, Encoding.ASCII.GetBytes("abcd"), caseInsensitive: true) == true);
+                Assert.True(SearchModel.FindFileContents(path, Encoding.ASCII.GetBytes("abcd"), caseInsensitive: true, cancellationToken: TestContext.Current.CancellationToken) == true);
             }
             finally
             {

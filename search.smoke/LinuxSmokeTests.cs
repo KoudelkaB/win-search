@@ -79,11 +79,20 @@ namespace search.Smoke
             app.Keys("F2");
             // F12 may still be publishing rows. Wait until the inline editor owns the
             // keyboard and exposes its selected stem, instead of typing after a fixed delay.
-            await LinuxApp.WaitUntil(() =>
+            string copied = null;
+            try
             {
-                app.Keys("ctrl+c");
-                return X11.Clipboard() == Path.GetFileNameWithoutExtension(file);
-            }, TimeSpan.FromSeconds(10), "the selected name in the rename editor");
+                await LinuxApp.WaitUntil(() =>
+                {
+                    app.Keys("ctrl+c");
+                    copied = X11.Clipboard();
+                    return copied == Path.GetFileNameWithoutExtension(file);
+                }, TimeSpan.FromSeconds(10), "the selected name in the rename editor");
+            }
+            catch (TimeoutException error)
+            {
+                throw new TimeoutException($"{error.Message}; clipboard: {copied}; files: {string.Join(", ", Directory.GetFiles(app.Work))}", error);
+            }
             //The name without its extension is selected in the editor: typing replaces it
             app.Type($"{app.Token}-renamed");
             app.Keys("Return");

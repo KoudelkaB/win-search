@@ -172,7 +172,7 @@ namespace search.Tests
             var old = Sample();
             var fresh = Sample();
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(@"Q:\", DriveNodeIndex.PrepareDrive(fresh));
+            index.ReplaceDrive(@"Q:\", DriveNodeIndex.PrepareDrive(fresh, cancellationToken: TestContext.Current.CancellationToken));
             var file = ByName(old, "b.txt");
             var oldSize = ByName(old, "Docs").Size;
             Assert.Equal(3, SearchModel.ApplyAggregateDeltaToParentChain(file, 42, 1,

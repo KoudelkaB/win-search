@@ -135,7 +135,7 @@ namespace search.Tests
                 .AddRecord(sequence: 7, attributes: new[] { FakeMft.FileName(FakeMft.RootEntry, "old.txt") });
             using var stream = new MemoryStream(mft.Image());
             var source = MftDriveReader.GetNodes(stream, mft.BytesPerRecord,
-                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root);
+                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root, cancellationToken: TestContext.Current.CancellationToken);
             var frnSource = Assert.IsAssignableFrom<IFrnNodeSource>(source);
             var scanned = ((ulong)7 << 48) | 6;
             var map = new UsnDriveWatcher.FrnMap();
@@ -173,7 +173,7 @@ namespace search.Tests
                 }); //8
             using var stream = new MemoryStream(mft.Image());
             var source = MftDriveReader.GetNodes(stream, mft.BytesPerRecord,
-                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root);
+                (long)mft.Count * mft.BytesPerRecord, FakeMft.Root, cancellationToken: TestContext.Current.CancellationToken);
             var frn = ((ulong)4 << 48) | 8;
             var map = new UsnDriveWatcher.FrnMap();
 
@@ -364,17 +364,17 @@ namespace search.Tests
                 yield return new FrnNode(scanned);
             }
 
-            var populate = Task.Run(() => map.Populate(BlockingScan()));
+            var populate = Task.Run(() => map.Populate(BlockingScan()), cancellationToken: TestContext.Current.CancellationToken);
             Task update = null;
             try
             {
-                Assert.True(populationEntered.Wait(TimeSpan.FromSeconds(5)));
+                Assert.True(populationEntered.Wait(TimeSpan.FromSeconds(5), cancellationToken: TestContext.Current.CancellationToken));
                 update = Task.Run(() =>
                 {
                     updateStarted.Set();
                     map.Set(changed, new FrnNode(changed));
-                });
-                Assert.True(updateStarted.Wait(TimeSpan.FromSeconds(5)));
+                }, cancellationToken: TestContext.Current.CancellationToken);
+                Assert.True(updateStarted.Wait(TimeSpan.FromSeconds(5), cancellationToken: TestContext.Current.CancellationToken));
                 Assert.False(update.IsCompleted); //Set is waiting for the population swap
             }
             finally

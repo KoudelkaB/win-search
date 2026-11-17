@@ -14,19 +14,19 @@ namespace search.Tests
             Assert.True(work.Settled().IsCompleted);
 
             var first = new TaskCompletionSource();
-            work.Track(first.Task);
+            _ = work.Track(first.Task);
             var settled = work.Settled();
             Assert.False(settled.IsCompleted);
 
             // A newer filter arrives while the search waits for the first one
             var second = new TaskCompletionSource();
-            work.Track(second.Task);
+            _ = work.Track(second.Task);
             first.SetResult();
-            await Task.Delay(50);
+            await Task.Delay(50, cancellationToken: TestContext.Current.CancellationToken);
             Assert.False(settled.IsCompleted);
 
             second.SetException(new InvalidOperationException("update failed"));
-            await settled.WaitAsync(TimeSpan.FromSeconds(5)); // A failed update does not fail the search
+            await settled.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken: TestContext.Current.CancellationToken); // A failed update does not fail the search
         }
     }
 }

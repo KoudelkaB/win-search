@@ -297,7 +297,7 @@ namespace search.Tests
                 .AddRecord(attributes: new[] { FakeMft.FileName(7, "shared.bin") });                         // 9
             using var stream = new MemoryStream(mft.Image());
             var source = Assert.IsAssignableFrom<IFrnNodeSource>(MftDriveReader.GetNodes(
-                stream, mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root));
+                stream, mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root, cancellationToken: TestContext.Current.CancellationToken));
             var files = source.DenseNodes.Where(n => n.Name == "shared.bin").ToArray();
 
             Assert.Equal(2, files.Length);
@@ -557,7 +557,7 @@ namespace search.Tests
         public void AnMftShorterThanOneRecordYieldsNothingButIsStillConsumed()
         {
             var stream = new MemoryStream(new byte[100]);
-            var nodes = MftDriveReader.GetNodes(stream, 1024, 100, FakeMft.Root);
+            var nodes = MftDriveReader.GetNodes(stream, 1024, 100, FakeMft.Root, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Empty(nodes);
             Assert.Equal(100, stream.Position);
@@ -606,7 +606,7 @@ namespace search.Tests
                 .AddRecord(sequence: 5, attributes: new[] { FakeMft.FileName(6, "single.bin") });               // 9
             using var stream = new MemoryStream(mft.Image());
             var source = Assert.IsAssignableFrom<IFrnNodeSource>(MftDriveReader.GetNodes(stream,
-                mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root));
+                mft.BytesPerRecord, (long)mft.Count * mft.BytesPerRecord, FakeMft.Root, cancellationToken: TestContext.Current.CancellationToken));
 
             var linkedFrn = ((ulong)4 << 48) | 8;
             Assert.True(source.HasMultipleLinks(linkedFrn));

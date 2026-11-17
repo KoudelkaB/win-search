@@ -1,0 +1,10 @@
+<Project>
+  <!-- WebView2's package contributes WPF and WinForms references transitively, including
+       to the test projects. Avalonia uses only its Core interop; the unused WPF control
+       pulls a conflicting WindowsBase assembly into reference resolution. -->
+  <Target Name="DropWebView2UiReferences" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf' Or '%(Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
+    </ItemGroup>
+  </Target>
+</Project>

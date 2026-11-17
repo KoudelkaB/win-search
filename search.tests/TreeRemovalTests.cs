@@ -183,7 +183,7 @@ namespace search.Tests
                 }
             }
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(Root, DriveNodeIndex.PrepareDrive(nodes, nodes));
+            index.ReplaceDrive(Root, DriveNodeIndex.PrepareDrive(nodes, nodes, cancellationToken: TestContext.Current.CancellationToken));
 
             //The live overlay: removed, replaced and added entries, inside the trees and outside
             Assert.True(index.TryRemove(P("fsm-tree-test", "gone", "sub3", "file1.txt"), out _));

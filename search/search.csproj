@@ -96,14 +96,6 @@
     <None Include="..\installer\linux\install-service.sh;..\installer\linux\uninstall-service.sh;..\installer\linux\file-search-manager.service" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- The WebView2 package always references its WPF and WinForms controls; only its Core
-       interop is used (behind Avalonia's NativeWebView), and the WPF one drags in WindowsBase -->
-  <Target Name="DropWebView2UiReferences" BeforeTargets="ResolveAssemblyReferences">
-    <ItemGroup>
-      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf' Or '%(Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
-    </ItemGroup>
-  </Target>
-
   <!-- A clone made without submodules has no web apps - fetch the pinned commit instead of failing the copy -->
   <Target Name="InitWebAppsSubmodule" BeforeTargets="BeforeBuild" Condition="!Exists('..\external\singleHtmlApps\HexEditorAndComparer.html')">
     <Exec Command="git submodule update --init external/singleHtmlApps" WorkingDirectory="$(MSBuildProjectDirectory)\.." />

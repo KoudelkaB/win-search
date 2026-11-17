@@ -265,7 +265,7 @@ namespace search.Tests
                 var absent = Path.Combine(root, "absent.txt");
                 var destination = Path.Combine(root, "link.txt");
                 File.CreateSymbolicLink(destination, absent);
-                var errors = source.UniversalCopyOrMove(destination, overwrite);
+                var errors = source.UniversalCopyOrMove(destination, overwrite, cancellationToken: TestContext.Current.CancellationToken);
                 Assert.Equal(overwrite, errors.Count == 0);
                 Assert.False(File.Exists(absent));
                 Assert.Equal(overwrite ? null : absent, new FileInfo(destination).LinkTarget);
@@ -283,7 +283,7 @@ namespace search.Tests
                 File.WriteAllText(Path.Combine(source.FullName, "payload.txt"), "payload");
                 File.CreateSymbolicLink(Path.Combine(source.FullName, "link.txt"), "payload.txt");
                 var destination = Path.Combine(root, "copy");
-                Assert.Empty(source.FullName.UniversalCopyOrMove(destination, false));
+                Assert.Empty(source.FullName.UniversalCopyOrMove(destination, false, cancellationToken: TestContext.Current.CancellationToken));
                 Assert.Equal("payload.txt", new FileInfo(Path.Combine(destination, "link.txt")).LinkTarget);
                 Assert.Equal("payload", File.ReadAllText(Path.Combine(destination, "link.txt")));
             }
@@ -514,7 +514,7 @@ namespace search.Tests
                 var inner = Directory.CreateDirectory(Path.Combine(outer.FullName, "proj"));
                 File.WriteAllText(Path.Combine(inner.FullName, "payload.txt"), "payload");
 
-                Assert.NotEmpty(inner.FullName.UniversalCopyOrMove(outer.FullName, overwrite: true, move: true));
+                Assert.NotEmpty(inner.FullName.UniversalCopyOrMove(outer.FullName, overwrite: true, move: true, cancellationToken: TestContext.Current.CancellationToken));
 
                 Assert.Equal("payload", File.ReadAllText(Path.Combine(inner.FullName, "payload.txt")));
                 Assert.Single(Directory.GetDirectories(root));
@@ -533,7 +533,7 @@ namespace search.Tests
                 var destination = Directory.CreateDirectory(Path.Combine(root, "destination"));
                 File.WriteAllText(Path.Combine(destination.FullName, "old.txt"), "old");
 
-                Assert.Empty(source.FullName.UniversalCopyOrMove(destination.FullName, overwrite: true, move: true));
+                Assert.Empty(source.FullName.UniversalCopyOrMove(destination.FullName, overwrite: true, move: true, cancellationToken: TestContext.Current.CancellationToken));
 
                 Assert.False(Directory.Exists(source.FullName));
                 Assert.Equal(new[] { "new.txt" },

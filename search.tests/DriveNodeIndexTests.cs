@@ -69,7 +69,7 @@ namespace search.Tests
             Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
             var original = new TestNode(@"C:\one.txt");
             IReadOnlyList<INode> dense = new INode[] { original };
-            var prepared = DriveNodeIndex.PrepareDrive(dense, dense);
+            var prepared = DriveNodeIndex.PrepareDrive(dense, dense, cancellationToken: TestContext.Current.CancellationToken);
             var index = new DriveNodeIndex();
             index.ReplaceDrive(@"C:\", prepared);
 
@@ -90,7 +90,7 @@ namespace search.Tests
             var original = new TestNode(@"C:\one.txt");
             IReadOnlyList<INode> dense = new INode[] { original };
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense, cancellationToken: TestContext.Current.CancellationToken));
             var added = new TestNode(@"C:\two.txt");
             index.GetOrAdd(added, added);
 
@@ -110,7 +110,7 @@ namespace search.Tests
             var replace = new TestNode(@"C:\replace.txt");
             IReadOnlyList<INode> dense = new INode[] { keep, remove, replace };
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense, cancellationToken: TestContext.Current.CancellationToken));
             var replacement = new TestNode(replace.FullName);
             var added = new TestNode(@"C:\added.txt");
 
@@ -137,7 +137,7 @@ namespace search.Tests
             var other = new TestNode(@"C:\other.log");
             IReadOnlyList<INode> dense = new INode[] { keep, remove, replace, other };
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense, cancellationToken: TestContext.Current.CancellationToken));
             var replacement = new TestNode(replace.FullName);
             var added = new TestNode(@"C:\added.txt");
             var addedMiss = new TestNode(@"C:\added.log");
@@ -176,7 +176,7 @@ namespace search.Tests
             var indexed = new TestNode(@"D:\already.txt");
             IReadOnlyList<INode> dense = new INode[] { indexed };
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(@"D:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            index.ReplaceDrive(@"D:\", DriveNodeIndex.PrepareDrive(dense, dense, cancellationToken: TestContext.Current.CancellationToken));
             index.BeginSnapshot(@"C:\");
 
             Assert.Equal(new INode[] { indexed },
@@ -204,7 +204,7 @@ namespace search.Tests
             var nodes = Enumerable.Range(0, 5000)
                 .Select(i => (INode)new TestNode($@"C:\group{i % 37}\file{i}.bin"))
                 .ToArray();
-            var prepared = DriveNodeIndex.PrepareDrive(nodes, nodes);
+            var prepared = DriveNodeIndex.PrepareDrive(nodes, nodes, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(nodes.Length, prepared.Count);
             foreach (var node in nodes)
@@ -221,7 +221,7 @@ namespace search.Tests
         {
             var first = new TestNode(@"C:\same.txt");
             var latest = new TestNode(@"C:\same.txt");
-            var prepared = DriveNodeIndex.PrepareDrive(new INode[] { first, latest });
+            var prepared = DriveNodeIndex.PrepareDrive(new INode[] { first, latest }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(1, prepared.Count);
             Assert.True(prepared.Base.TryGetValue(first.FullName, out var found));
@@ -312,7 +312,7 @@ namespace search.Tests
             var freshAlreadyLive = new TestNode(changedBeforeScan.FullName);
 
             index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(
-                new INode[] { scannedRoot, staleDraft, freshAlreadyLive }), watermark);
+                new INode[] { scannedRoot, staleDraft, freshAlreadyLive }, cancellationToken: TestContext.Current.CancellationToken), watermark);
 
             Assert.False(index.TryGetValue(renamedOld.FullName, out _));
             Assert.True(index.TryGetValue(final.FullName, out var publishedFinal));
@@ -347,7 +347,7 @@ namespace search.Tests
             Assert.False(index.TryGetValue(temp.FullName, out _));
 
             index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(new INode[]
-                { new TestNode(root.FullName), new TestNode(temp.FullName) }), watermark,
+                { new TestNode(root.FullName), new TestNode(temp.FullName) }, cancellationToken: TestContext.Current.CancellationToken), watermark,
                 _ => true); //the disk is not even asked: the removal is newer than the scan
 
             Assert.False(index.TryGetValue(temp.FullName, out _));
@@ -357,7 +357,7 @@ namespace search.Tests
             //No snapshot pending => a transient add/remove pair leaves nothing behind, as
             //before: the zero-copy dense snapshot of a clean publication survives it
             var clean = new INode[] { new TestNode(root.FullName) };
-            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(clean, clean));
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(clean, clean, cancellationToken: TestContext.Current.CancellationToken));
             Assert.True(index.TryGetDenseSnapshot(out _));
             index[final.FullName] = final;
             Assert.True(index.TryRemove(final.FullName, out _));
@@ -388,7 +388,7 @@ namespace search.Tests
             var node = new TestNode(@"C:\growing.log");
             var dense = new INode[] { node };
             var index = new DriveNodeIndex();
-            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense));
+            index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(dense, dense, cancellationToken: TestContext.Current.CancellationToken));
             node.AddSizeDelta(42);
             Assert.True(index.Touch(node, node));
             Assert.True(index.TryGetDenseSnapshot(out var snapshot));
@@ -433,7 +433,7 @@ namespace search.Tests
                 [stale.FullName] = false        //the scan still lists it => stays removed
             };
             index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(new INode[]
-                { new TestNode(root.FullName), new TestNode(stale.FullName) }), watermark,
+                { new TestNode(root.FullName), new TestNode(stale.FullName) }, cancellationToken: TestContext.Current.CancellationToken), watermark,
                 path => onDisk.TryGetValue(path, out var exists) ? exists : false);
 
             Assert.True(index.TryGetValue(unseen.FullName, out var keptUnseen));
@@ -445,7 +445,7 @@ namespace search.Tests
 
             //Without a disk oracle the scan is authoritative for everything before the watermark
             index.ReplaceDrive(@"C:\", DriveNodeIndex.PrepareDrive(new INode[]
-                { new TestNode(root.FullName) }), index.MutationVersion + 1);
+                { new TestNode(root.FullName) }, cancellationToken: TestContext.Current.CancellationToken), index.MutationVersion + 1);
             Assert.False(index.TryGetValue(unseen.FullName, out _));
         }
     }

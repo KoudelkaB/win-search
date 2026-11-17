@@ -26,7 +26,7 @@ namespace search.Tests
                     FakeMft.FileName(7, "MSEDGE~1.DLL", ns: 2) });
             using var stream = new MemoryStream(mft.Image());
             var source = Assert.IsAssignableFrom<IFrnNodeSource>(MftDriveReader.GetNodes(stream,
-                1024, mft.Count * 1024L, FakeMft.Root, chunkBytes: 1024));
+                1024, mft.Count * 1024L, FakeMft.Root, chunkBytes: 1024, cancellationToken: TestContext.Current.CancellationToken));
             var index = new DriveNodeIndex.CompactPathIndex(source.DenseNodes);
             Assert.Equal(new[] { @"Q:\EdgeCore\msedge.dll", @"Q:\EdgeWebView\msedge.dll" },
                 index.Where(new NodeFilter("msedge.dll").Matches).Select(n => n.FullName).OrderBy(p => p));

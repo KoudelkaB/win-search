@@ -48,6 +48,9 @@ namespace search.Smoke
             var exe = PublishedApp.Executable;
             var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
             start.Environment[PublishedApp.DataFolderVariable] = Data;
+            // Native child apps must use this test's X display as well, even when the
+            // developer's desktop session is Wayland.
+            start.Environment.Remove("WAYLAND_DISPLAY");
             Process = Process.Start(start);
             Window = await WaitFor(() => X11.FindWindow(Title, Process.Id), TimeSpan.FromSeconds(60), "the main window");
         }
