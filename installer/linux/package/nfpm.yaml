@@ -107,7 +107,8 @@ scripts:
   preremove: installer/linux/package/preremove.sh
   postremove: installer/linux/package/postremove.sh
 
-# Avalonia draws through X11 and fontconfig; .NET needs ICU. WebKitGTK shows the hex editor
+# Avalonia draws through X11 and fontconfig - in a Wayland session through Wayland itself
+# (libwayland, EGL and xkbcommon, which every such desktop has); .NET needs ICU. WebKitGTK shows the hex editor
 # and the calculator inside the app (without it they open in the browser), pkexec asks for
 # the administrator password in Settings. Log explorer (LogExplorer/logexplorer) loads its
 # libraries at run time: the keyboard maps (xkbcommon), the cursor and input extensions of
@@ -131,6 +132,9 @@ overrides:
       - libXcursor.so.1()(64bit)
       - libXi.so.6()(64bit)
       - libEGL.so.1()(64bit)
+      - libwayland-client.so.0()(64bit)
+      - libwayland-cursor.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
   deb:
     depends:
       - libx11-6
@@ -147,6 +151,9 @@ overrides:
       - libxcursor1
       - libxi6
       - libegl1
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
 
 rpm:
   summary: Find files on every disk as you type

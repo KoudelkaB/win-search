@@ -20,7 +20,7 @@ Every package the build references must be listed here: the release workflow che
 ### Avalonia 12.1.6, Avalonia.Controls.DataGrid 12.1.2, Avalonia.Controls.WebView 12.1.1
 
 The user interface: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent, Avalonia.Skia,
-Avalonia.HarfBuzz, Avalonia.X11, Avalonia.FreeDesktop, Avalonia.FreeDesktop.AtSpi,
+Avalonia.HarfBuzz, Avalonia.X11, Avalonia.Wayland, Avalonia.FreeDesktop, Avalonia.FreeDesktop.AtSpi,
 Avalonia.Win32, Avalonia.Native, Avalonia.Remote.Protocol, Avalonia.Controls.DataGrid and
 Avalonia.Controls.WebView.
 
@@ -65,6 +65,14 @@ COM interop used by Avalonia.
 
 - Project: https://github.com/kekekeks/MicroCom
 - Copyright (c) 2021 Nikita Tsukanov
+- License: MIT
+
+### NWayland 0.11.0
+
+The Wayland protocol bindings behind Avalonia's Wayland backend.
+
+- Project: https://github.com/kekekeks/NWayland
+- Copyright (c) 2014 Steven Kirk
 - License: MIT
 
 ### Microsoft.Web.WebView2 1.0.4314.35

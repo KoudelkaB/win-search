@@ -96,6 +96,15 @@ namespace search
                 .UsePlatformDetect()
                 .With(new X11PlatformOptions { WmClass = "file-search-manager" })
                 .LogToTrace();
+            // A Wayland session gets the native backend: through XWayland, GNOME shows its plain
+            // arrow for the whole drag of an X11 application. Only where the session names its
+            // compositor - without WAYLAND_DISPLAY libwayland would reach for wayland-0 and put
+            // a run meant for an X server (Xvfb in the smoke tests) on the desktop. Unsetting it
+            // runs the app through XWayland again.
+            if (OperatingSystem.IsLinux() && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")))
+                builder = builder
+                    .With(new WaylandPlatformOptions { AppId = "io.github.koudelkab.FileSearchManager" })
+                    .UseWaylandWithFallback();
             // Hide the IBus "Destroy is not implemented" error logged on every window close
             if (Logger.Sink is { } sink and not AvaloniaLogFilter)
                 Logger.Sink = new AvaloniaLogFilter(sink);
