@@ -89,6 +89,10 @@ namespace search
             }
         }
 
+        /// <summary>A Linux desktop session on Wayland, where the app runs on Avalonia's Wayland backend</summary>
+        internal static bool WaylandSession =>
+            OperatingSystem.IsLinux() && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+
         // Also used by the Avalonia designer
         public static AppBuilder BuildAvaloniaApp()
         {
@@ -101,7 +105,7 @@ namespace search
             // compositor - without WAYLAND_DISPLAY libwayland would reach for wayland-0 and put
             // a run meant for an X server (Xvfb in the smoke tests) on the desktop. Unsetting it
             // runs the app through XWayland again.
-            if (OperatingSystem.IsLinux() && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")))
+            if (WaylandSession)
                 builder = builder
                     .With(new WaylandPlatformOptions { AppId = "io.github.koudelkab.FileSearchManager" })
                     .UseWaylandWithFallback();

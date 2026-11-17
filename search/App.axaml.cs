@@ -58,6 +58,7 @@ namespace search
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
+                if (Program.WaylandSession) WaylandPopups.Apply();
                 //Secondary HTML/help windows must not keep the application running alone.
                 desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.Exit += (_, e) => OnExit(e.ApplicationExitCode);
