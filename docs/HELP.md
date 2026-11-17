@@ -153,7 +153,7 @@ All target and filter commands live under `Alt` and behave the same everywhere i
 
 `Alt+K` opens the built-in **Calculator** from anywhere in the window, without selecting a file. You can also click **Calculator** on the bottom bar. It works offline with an installed Microsoft Edge WebView2 Runtime and includes Standard, Scientific and Programmer modes. The window automatically fits the current content when you switch modes or expand a panel, up to the monitor's available work area; larger content remains scrollable. Select **Fraction** or **Mixed** below the result for exact fractions and fraction-entry shortcuts. History, memory, zoom and maximized state are kept between runs.
 
-Closing the main File Search Manager window exits the application and closes every built-in HTML tool window, including Calculator, Log explorer and Hex editor.
+Closing the main File Search Manager window exits the application and closes every built-in HTML tool window (Calculator, Hex editor). Log explorer is a program of its own and stays open.
 
 While a keyboard sequence is active, **Hints** shows only valid next keys. `Esc` is offered only when releasing the held keys would execute an action and `Alt` is not currently held. This also works in an `Alt` sequence after releasing `Alt` while keeping another sequence key held. `Backspace` always returns by one step. Flow controls are separated from the command choices by a line.
 
@@ -177,7 +177,7 @@ Common commands:
 - `X`: cut selected items to the clipboard.
 - `D`: compare two files or two directories in an installed compatible diff tool. VS Code is a fallback for two files (`--diff`). The hint is hidden without a suitable installed tool.
 - `H`: open one file in the built-in hex editor, or compare two files. Works offline.
-- `L`: open the selected files in the built-in Log explorer. Works offline. Asks first when the files total more than 100 MB or 500 files, because Log explorer holds them in memory.
+- `L`: open the selected files in the built-in Log explorer. Works offline. Asks first only when the files may not fit in memory (together more than half of it), because Log explorer holds their text in memory.
 - `G`: show in files — open the files containing the searched text (green rows) in one Log explorer window, appended and filtered to the lines with the text. Also the **Show in files** button next to **Case insensitive** and the context menu.
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
@@ -217,7 +217,7 @@ With no compatible installed application, a category is hidden. With exactly one
 - `O`: Opera.
 - `I`: Internet Explorer.
 - `A`: Adobe Reader.
-- `T`: Log explorer (Notepad when the Microsoft Edge WebView2 Runtime is missing).
+- `T`: Log explorer.
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.

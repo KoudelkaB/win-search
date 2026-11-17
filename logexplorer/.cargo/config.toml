@@ -1,0 +1,4 @@
+# The Windows program carries the C runtime in itself: the installer ships no Visual C++
+# redistributable, and without this the program would need vcruntime140.dll of the machine.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

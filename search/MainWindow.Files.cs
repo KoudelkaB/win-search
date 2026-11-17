@@ -241,14 +241,16 @@ namespace search
                 return;
             }
             if (path == null) nodes.ForEach(n => n.GetFileOrTempPath().Open("", elevated: asAdmin)); //Open the files directly
-            else if (WebAppWindow.IsWebApp(path.Split('\0')[0]))
+            else if (path == Apps.LogExplorer || WebAppWindow.IsWebApp(path.Split('\0')[0]))
             {
-                //Built-in HTML app - its own window in this process, never elevated
+                //Log explorer (a program of this build) or a built-in HTML app in a window of
+                //this process - never elevated beyond the app itself
                 if (path == Apps.LogExplorer && !await ConfirmLogExplorerLoad(nodes)) return;
                 string[] files = null;
                 await WaitFor(() => files = nodes.Where(n => !n.IsDirectory).Select(n => n.GetFileOrTempPath()).ToArray());
                 if (files == null || files.Length == 0) Model.Status = L.Text("NothingSelected");
-                else WebAppWindow.Open(path.Split('\0')[0], files, load);
+                else if (path == Apps.LogExplorer) NativeLogExplorer.Open(files, load);
+                else WebAppWindow.Open(path.Split('\0')[0], files);
             }
             else
             {
@@ -269,28 +271,16 @@ namespace search
         }
 
         /// <summary>
-        /// Log explorer holds every file in memory as text, several times its size on disk.
-        /// Above these limits it asks before loading - however the files were chosen.
+        /// Log explorer holds the text of every file in memory, once: it asks before loading
+        /// only when the files may not fit there - however they were chosen.
         /// </summary>
-        internal const ulong LogExplorerConfirmBytes = 100UL * 1024 * 1024;
-        internal const int LogExplorerConfirmFiles = 500;
-
-        internal static bool NeedsLogExplorerConfirmation(INode[] nodes, out int count, out ulong bytes)
-        {
-            var files = nodes.Where(n => !n.IsDirectory).ToArray();
-            count = files.Length;
-            bytes = files.Aggregate(0UL, (sum, n) => sum + n.Size);
-            return bytes > LogExplorerConfirmBytes || count > LogExplorerConfirmFiles;
-        }
-
         async Task<bool> ConfirmLogExplorerLoad(INode[] nodes)
         {
-            var html = NeedsLogExplorerConfirmation(nodes, out var count, out var bytes);
-            // The native Log explorer holds the text once: it asks only whether the files fit
-            var native = NativeLogExplorer.IsAvailable;
-            if (native ? !NativeLogExplorer.NeedsConfirmation(bytes, NativeLogExplorer.MemoryBytes) : !html) return true;
+            var files = nodes.Where(n => !n.IsDirectory).ToArray();
+            var bytes = files.Aggregate(0UL, (sum, n) => sum + n.Size);
+            if (!NativeLogExplorer.NeedsConfirmation(bytes, NativeLogExplorer.MemoryBytes)) return true;
             return await MessageDialog.Show(this,
-                L.Format(native ? "LogExplorerMemory" : "LogExplorerLarge", count, TransferProgressWindow.FormatBytes((long)Math.Min(bytes, long.MaxValue))),
+                L.Format("LogExplorerMemory", files.Length, TransferProgressWindow.FormatBytes((long)Math.Min(bytes, long.MaxValue))),
                 Title, MessageDialogButtons.YesNo, MessageDialogIcon.Warning) == MessageDialogResult.Yes;
         }
 

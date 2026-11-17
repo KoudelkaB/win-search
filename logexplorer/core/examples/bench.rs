@@ -11,7 +11,35 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// Resident memory of this process in MiB (Linux; 0 elsewhere)
+/// Resident memory of this process in MiB: the working set
+#[cfg(windows)]
+fn resident_mib() -> f64 {
+    /// PROCESS_MEMORY_COUNTERS of psapi.h
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        size: u32,
+        page_faults: u32,
+        peak_working_set: usize,
+        working_set: usize,
+        pools_and_pagefile: [usize; 6],
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, size: u32) -> i32;
+    }
+    let mut counters = Counters { size: std::mem::size_of::<Counters>() as u32, ..Default::default() };
+    let known = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.size) } != 0;
+    if known {
+        counters.working_set as f64 / (1 << 20) as f64
+    } else {
+        0.0
+    }
+}
+
+/// Resident memory of this process in MiB (0 where it is not known)
+#[cfg(not(windows))]
 fn resident_mib() -> f64 {
     std::fs::read_to_string("/proc/self/status")
         .ok()

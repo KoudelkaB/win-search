@@ -40,10 +40,16 @@ Reset-PublishDirectory $servicePublish
 
 Push-Location $repoRoot
 try {
+    # Log explorer (logexplorer/, Rust) and the notices of its crates: search.csproj puts both
+    # next to the app, and RequireLogExplorer fails the publish without them
+    Invoke-Checked "cargo" @("build", "--release", "--locked", "--manifest-path", "logexplorer/Cargo.toml", "-p", "logexplorer")
+    Invoke-Checked "node" @("logexplorer/tools/third-party-notices.cjs")
+
     Invoke-Checked "dotnet" @(
         "publish", "search/search.csproj",
         "-c", $Configuration, "-r", $Runtime,
-        "--self-contained", "true", "-o", $appPublish
+        "--self-contained", "true", "-o", $appPublish,
+        "-p:RequireLogExplorer=true"
     )
     Invoke-Checked "dotnet" @(
         "publish", "search.service/search.service.csproj",

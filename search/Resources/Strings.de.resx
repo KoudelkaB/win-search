@@ -38,12 +38,6 @@
   <data name="SelectFound" xml:space="preserve"><value>Gefundene Dateien auswählen</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>Dateien mit dem gesuchten Text in einem Log-Explorer-Fenster öffnen, gefiltert auf die Zeilen mit dem Text (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>Keine Datei enthält den gesuchten Text</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>Der Log-Explorer lädt die Dateien in den Speicher, wo sie ein Vielfaches ihrer Größe auf dem Datenträger belegen.
-
-Dateien: {0}
-Gesamtgröße: {1}
-
-Trotzdem öffnen?</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>Der Log-Explorer lädt die Dateien in den Speicher, und diese passen möglicherweise nicht hinein.
 
 Dateien: {0}

@@ -100,14 +100,20 @@ namespace search.Smoke
         }
 
         /// <summary>
-        /// Where the build ships the native Log explorer (logexplorer/), L opens the file in
-        /// that program: its window is titled with the file and shows the file's rows.
+        /// L opens the file in Log explorer, the program of the build (logexplorer/): its
+        /// window is titled with the file and shows the file's rows. A build made without
+        /// Rust has no Log explorer - a skip here, a failure in the workflows (CI).
         /// </summary>
         [Fact]
         public async Task LOpensTheFileInTheNativeLogExplorer()
         {
             var program = Path.Combine(Path.GetDirectoryName(PublishedApp.Executable), "LogExplorer", "logexplorer");
-            Assert.SkipUnless(File.Exists(program), "This build has no native Log explorer: L opens the HTML page");
+            if (!File.Exists(program))
+            {
+                const string reason = "This build has no Log explorer (LogExplorer/logexplorer): build logexplorer/ with cargo first";
+                if (Environment.GetEnvironmentVariable("CI") is { Length: > 0 }) Assert.Fail(reason);
+                Assert.Skip(reason);
+            }
             await Loaded();
             var name = Path.GetFileName(app.Before);
             app.Filter(name);

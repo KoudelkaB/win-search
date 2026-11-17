@@ -3,6 +3,8 @@
 
 pub mod app;
 pub mod clipboard;
+#[cfg(windows)]
+pub mod elevated_drop;
 pub mod panels;
 pub mod storage;
 pub mod theme;
@@ -13,6 +15,10 @@ pub use app::{App, LoadAction, Options};
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         panels::show(ui, self);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        panels::one_key_press_a_frame(ctx, self, raw_input);
     }
 }
 

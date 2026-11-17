@@ -19,8 +19,8 @@ namespace search
     /// show the pages then: WebKitGTK inside the app, or the user's default browser.
     /// Bound to 127.0.0.1 only; every file is reachable solely through an unguessable
     /// per-window session token, and requests must name this exact host (no DNS rebinding).
-    /// A stable per-user port keeps the pages' origin - and so their saved localStorage
-    /// (Log explorer profiles) - the same from one run to the next.
+    /// A stable per-user port keeps the pages' origin - and so their saved localStorage -
+    /// the same from one run to the next.
     /// </summary>
     internal static class WebAppServer
     {
@@ -215,7 +215,7 @@ namespace search
         static async Task SendFile(NetworkStream stream, string path)
         {
             //Read the content once at the handoff, retrying while a writer holds the file -
-            //a log being written must not fail the whole Log explorer load
+            //a file being written must not fail the load
             byte[] content = null;
             Exception last = null;
             for (var attempt = 1; attempt <= 5 && content == null; attempt++)
@@ -294,8 +294,8 @@ namespace search
 
         /// <summary>
         /// The server-mode counterpart of WebAppWindow's FileHandoffScript: fetches the files
-        /// of the session and feeds them to the page the same way (Log explorer API, a drop on
-        /// the document, or the Hex editor's two file inputs). Also applies the saved zoom
+        /// of the session and feeds them to the page the same way (the Hex editor's two file
+        /// inputs). Also applies the saved zoom
         /// (Ctrl+wheel / Ctrl+plus/minus change it) and reports the calculator's size.
         /// </summary>
         static string HandoffScript(string token, string[] files, string message, double zoom, bool hostZoom, bool calculator)
@@ -360,14 +360,13 @@ namespace search
                     window.addEventListener('load', async () => {
                         const m = message;
                         const results = await Promise.allSettled(names.map((_, i) => read(i)));
-                        const files = [], paths = [], failed = [];
+                        const files = [], failed = [];
                         results.forEach((r, index) => r.status === 'fulfilled'
-                            ? (files.push(r.value), paths.push(((m.logExplorer || {}).paths || [])[index]))
+                            ? files.push(r.value)
                             : failed.push({ index, error: String((r.reason && (r.reason.message || r.reason.name)) || r.reason) }));
                         if (failed.length) post({ failed });
                         if (!files.length) return;
-                        if (m.logExplorer && window.logExplorer) { await window.logExplorer.open(files, { ...m.logExplorer, paths }); return; }
-                        if (m.drop) { document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer(files) })); return; }
+
                         for (let i = 0; i < files.length && i < (m.inputs || []).length; i++) {
                             const step = m.inputs[i];
                             if (step.after) await until(() => shown(step.after));

@@ -57,18 +57,23 @@ namespace search
         }
 
         /// <summary>
+        /// Log explorer: the program in the LogExplorer folder next to the exe (logexplorer/,
+        /// see NativeLogExplorer). Not a path - Open() starts that program with the files.
+        /// </summary>
+        public const string LogExplorer = "LogExplorer";
+
+        /// <summary>
         /// Built-in HTML apps (WebApps next to the exe). Open() shows these in a WebAppWindow
         /// instead of starting a process.
         /// </summary>
-        public const string LogExplorer = "LogExplorer.html";
         public const string HexEditor = "HexEditorAndComparer.html";
         public const string Calculator = "calculator.html";
 
         /// <summary>
-        /// Log explorer can open files: as the native program of this build, or as the HTML
-        /// page in a web view or a browser
+        /// Log explorer can open files: the build has its program (a build made without
+        /// Rust has none, and the text viewer is the editor then)
         /// </summary>
-        public static bool LogExplorerAvailable => NativeLogExplorer.IsAvailable || WebAppWindow.IsAvailable;
+        public static bool LogExplorerAvailable => NativeLogExplorer.IsAvailable;
 
         /// <summary>
         /// Get text viewer path - built-in Log explorer

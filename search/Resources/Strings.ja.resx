@@ -38,12 +38,6 @@
   <data name="SelectFound" xml:space="preserve"><value>見つかったファイルを選択</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>検索したテキストを含むファイルを 1 つのログ エクスプローラー ウィンドウで開き、そのテキストを含む行に絞り込みます (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>検索したテキストを含むファイルはありません</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>ログ エクスプローラーはファイルをメモリに読み込み、ディスク上のサイズの数倍のメモリを使用します。
-
-ファイル数: {0}
-合計サイズ: {1}
-
-それでも開きますか?</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>ログ エクスプローラーはファイルをメモリに読み込みますが、これらはメモリに収まらない可能性があります。
 
 ファイル数: {0}

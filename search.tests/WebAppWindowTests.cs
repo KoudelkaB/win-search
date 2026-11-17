@@ -91,42 +91,21 @@ namespace search.Tests
             Assert.Null(Size("""{"calculatorSize":{"width":0,"height":1000,"zoom":1.18}}""", 1.07));
         }
 
-        static System.Text.Json.JsonElement LogExplorerOptions(string[] files, LogExplorerLoad load)
-            => System.Text.Json.JsonDocument.Parse(WebAppWindow.MessageFor(Apps.LogExplorer, files, load))
-                .RootElement.GetProperty("logExplorer");
-
         [Fact]
-        public void LogExplorerGetsTheFullPathsAndAsksHowToCombineWithoutALoad()
+        public void OnlyTheHexEditorAndTheCalculatorArePages()
         {
-            var options = LogExplorerOptions(new[] { @"C:\logs\a.log", @"D:\b.log" }, null);
-
-            Assert.Equal(new[] { @"C:\logs\a.log", @"D:\b.log" },
-                options.GetProperty("paths").EnumerateArray().Select(x => x.GetString()));
-            Assert.Equal(System.Text.Json.JsonValueKind.Null, options.GetProperty("combine").ValueKind);
-            Assert.Equal(System.Text.Json.JsonValueKind.Null, options.GetProperty("filter").ValueKind);
+            Assert.True(WebAppWindow.IsWebApp(Apps.HexEditor));
+            Assert.True(WebAppWindow.IsWebApp(Apps.Calculator));
+            //Log explorer is a program of its own (NativeLogExplorer)
+            Assert.False(WebAppWindow.IsWebApp(Apps.LogExplorer));
         }
 
         [Fact]
-        public void LogExplorerGetsTheFilesAppendedWithTheFilter()
+        public void ThePageLearnsWhereToFetchTheFilesItsHandlesCannotRead()
         {
-            var options = LogExplorerOptions(new[] { @"C:\a.log" }, new LogExplorerLoad("a\"b", true));
-            Assert.Equal("append", options.GetProperty("combine").GetString());
-            Assert.Equal("a\"b", options.GetProperty("filter").GetProperty("text").GetString());
-            Assert.True(options.GetProperty("filter").GetProperty("caseSensitive").GetBoolean());
-
-            var hex = LogExplorerOptions(new[] { @"C:\a.log" }, new LogExplorerLoad(null, false));
-            Assert.Equal("append", hex.GetProperty("combine").GetString());
-            Assert.Equal(System.Text.Json.JsonValueKind.Null, hex.GetProperty("filter").ValueKind);
-        }
-
-        [Theory]
-        [InlineData(Apps.LogExplorer)]
-        [InlineData(Apps.HexEditor)]
-        public void ThePageLearnsWhereToFetchTheFilesItsHandlesCannotRead(string page)
-        {
-            var plain = System.Text.Json.Nodes.JsonNode.Parse(WebAppWindow.MessageFor(page, new[] { @"C:\a.log" }, null))!.AsObject();
+            var plain = System.Text.Json.Nodes.JsonNode.Parse(WebAppWindow.MessageFor(Apps.HexEditor))!.AsObject();
             var message = System.Text.Json.Nodes.JsonNode.Parse(
-                WebAppWindow.WithFallback(WebAppWindow.MessageFor(page, new[] { @"C:\a.log" }, null), "https://host/files/x/"))!.AsObject();
+                WebAppWindow.WithFallback(WebAppWindow.MessageFor(Apps.HexEditor), "https://host/files/x/"))!.AsObject();
 
             Assert.Equal("https://host/files/x/", (string)message["fallback"]);
             message.Remove("fallback");
@@ -149,20 +128,6 @@ namespace search.Tests
         static INode File(string name, ulong size)
             => new FileNode(@"C:\" + name, new NodeMetadataSnapshot(false, size, System.DateTime.MinValue));
 
-        [Fact]
-        public void LogExplorerAsksByTotalSizeAndFileCount()
-        {
-            var half = MainWindow.LogExplorerConfirmBytes / 2;
-            Assert.False(MainWindow.NeedsLogExplorerConfirmation(new[] { File("a.log", half), File("b.log", half) }, out _, out var bytes));
-            Assert.Equal(MainWindow.LogExplorerConfirmBytes, bytes);
-
-            Assert.True(MainWindow.NeedsLogExplorerConfirmation(
-                new[] { File("a.log", half), File("b.log", half), File("c.log", 1) }, out var count, out _));
-            Assert.Equal(3, count);
-
-            var many = Enumerable.Range(0, MainWindow.LogExplorerConfirmFiles + 1).Select(i => File($"{i}.log", 10)).ToArray();
-            Assert.True(MainWindow.NeedsLogExplorerConfirmation(many, out _, out _));
-        }
 
         [Fact]
         public void ShowInFilesTakesMatchesBeyondTheResultWindowToo()
@@ -187,7 +152,7 @@ namespace search.Tests
             try
             {
                 System.Globalization.CultureInfo.CurrentUICulture = new System.Globalization.CultureInfo("zh-Hans");
-                Assert.EndsWith("/LogExplorer.html?lang=zh-Hans", WebAppWindow.UrlFor(Apps.LogExplorer));
+                Assert.EndsWith("/calculator.html?lang=zh-Hans", WebAppWindow.UrlFor(Apps.Calculator));
             }
             finally { System.Globalization.CultureInfo.CurrentUICulture = previous; }
         }

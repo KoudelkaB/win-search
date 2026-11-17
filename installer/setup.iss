@@ -166,6 +166,7 @@ Source: "{srcexe}"; DestDir: "{app}"; DestName: "FileSearchManager-Setup.exe"; F
 ; they contain same-named runtime DLLs with different content
 Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Check: NotModifying
 Source: "..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion; Check: NotModifying
+; LogExplorer\logexplorer.exe (tools\Build-Installer.ps1 builds it) comes with publish\app too.
 ; LICENSE, THIRD-PARTY-NOTICES.md and licenses\ (the verbatim notices of SkiaSharp and the .NET
 ; runtime) come with publish\app - search.csproj puts them there
 Source: "..\README.md"; DestDir: "{app}"; Check: NotModifying

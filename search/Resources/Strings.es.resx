@@ -38,12 +38,6 @@
   <data name="SelectFound" xml:space="preserve"><value>Seleccionar archivos encontrados</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>Abrir los archivos que contienen el texto buscado en una ventana del explorador de registros, filtrados a las líneas con el texto (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>Ningún archivo contiene el texto buscado</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>El explorador de registros carga los archivos en memoria, donde ocupan varias veces más que en el disco.
-
-Archivos: {0}
-Tamaño total: {1}
-
-¿Abrirlos de todos modos?</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>El explorador de registros carga los archivos en memoria, y puede que estos no quepan en ella.
 
 Archivos: {0}

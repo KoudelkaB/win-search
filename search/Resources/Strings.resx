@@ -192,12 +192,6 @@ while leaving any key pressed</value></data>
   <data name="SelectFound" xml:space="preserve"><value>Select found files</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>Open the files containing the searched text in one Log explorer window, filtered to the lines with the text (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>No file contains the searched text</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>Log explorer loads the files into memory, where they take several times more space than on disk.
-
-Files: {0}
-Total size: {1}
-
-Open them anyway?</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>Log explorer loads the files into memory, and these may not fit there.
 
 Files: {0}

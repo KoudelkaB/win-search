@@ -54,12 +54,11 @@ jobs:
           fetch-depth: 0 # MinVer needs the tag history
           submodules: true
 
-      # The H (Hex editor) and L (Log explorer) pages ship inside the installer. Release with
-      # the latest upstream apps rather than the commit pinned in this repository - but never
-      # with an older one: the app relies on what the pinned commit provides (the Log explorer
-      # embedding API for full paths, the load mode and the Show in files filter), so an
-      # upstream branch that does not contain it yet fails the release instead of shipping
-      # pages that silently ignore those options.
+      # The H (Hex editor) and calculator pages ship inside the installer. Release with the
+      # latest upstream apps rather than the commit pinned in this repository - but never
+      # with an older one: the app relies on what the pinned commit provides, so an upstream
+      # branch that does not contain it yet fails the release instead of shipping older pages.
+      # (Log explorer is the program of logexplorer/, built below - not a page.)
       - name: Update web apps to latest singleHtmlApps
         shell: pwsh
         run: |
@@ -80,12 +79,22 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # Log explorer is a Rust program: the runner images carry rustup and Node
+      - name: Rust
+        shell: pwsh
+        run: rustup toolchain install stable --profile minimal; rustup default stable
+
+      # Build-Installer.ps1 builds Log explorer and writes the notices of its crates first
+      # (a crate under a license that is not accepted fails here), then publishes and packs
       - name: Publish app and service and build installer
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           .\tools\Build-Installer.ps1 -Version $env:VERSION -IsccPath $iscc
+          foreach ($file in 'LogExplorer\logexplorer.exe', 'licenses\logexplorer-THIRD-PARTY-NOTICES.txt') {
+            if (-not (Test-Path "publish\app\$file")) { Write-Error "The app folder has no $file"; exit 1 }
+          }
 
       - name: Check third-party notices
         shell: bash
@@ -136,11 +145,46 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # Log explorer (logexplorer/, Rust). A program built on this runner would need its
+      # glibc (2.39); built on Ubuntu 20.04 it runs from glibc 2.31 on - Debian 11, the
+      # oldest system the packages name. Its other libraries (X11, Wayland, EGL, fontconfig)
+      # are loaded at run time, so nothing else is needed to link it.
+      - name: Build Log explorer (glibc 2.31)
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD/logexplorer:/src" -w /src -e DEBIAN_FRONTEND=noninteractive ubuntu:20.04 sh -ec '
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev
+            curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+            . "$HOME/.cargo/env"
+            cargo build --release --locked -p logexplorer'
+          sudo chown -R "$(id -u):$(id -g)" logexplorer/target
+          program=logexplorer/target/release/logexplorer
+          test -x "$program"
+          needs=$(objdump -T "$program" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "Log explorer needs $needs"
+          if [[ "$(printf '%s\n' GLIBC_2.31 "$needs" | sort -V | tail -1)" != GLIBC_2.31 ]]; then
+            echo "::error::Log explorer needs $needs - more than the glibc 2.31 of the oldest system the packages name"
+            exit 1
+          fi
+
+      # A crate under a license that is not accepted, or without a license text, fails here
+      - name: Notices of Log explorer's crates
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal && rustup default stable
+          node logexplorer/tools/third-party-notices.cjs --target x86_64-unknown-linux-gnu
+
       # The folder users unpack and run. It carries install-service.sh, so Settings (or sudo)
-      # can install the file system service from it.
+      # can install the file system service from it. RequireLogExplorer: no package without
+      # Log explorer and its notices.
       - name: Publish app (linux-x64, self-contained)
         shell: bash
-        run: dotnet publish search/search.csproj -c Release -r linux-x64 --self-contained true -o publish/file-search-manager
+        run: |
+          dotnet publish search/search.csproj -c Release -r linux-x64 --self-contained true -o publish/file-search-manager -p:RequireLogExplorer=true
+          test -x publish/file-search-manager/LogExplorer/logexplorer
+          # It starts on this system too (it needs no display to print its options)
+          publish/file-search-manager/LogExplorer/logexplorer --help 2>&1 | grep -e --combine > /dev/null
 
       # A new or updated package fails here until THIRD-PARTY-NOTICES.md lists it
       - name: Check third-party notices
@@ -155,6 +199,8 @@ jobs:
           # The licenses travel with it, the bundled .NET runtime's notices included
           # (not "grep -q": it stops at the first match, and pipefail then fails on tar's broken pipe)
           tar -tzf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" | grep -x "file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt" > /dev/null
+          tar -tzf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" | grep -x "file-search-manager/licenses/logexplorer-THIRD-PARTY-NOTICES.txt" > /dev/null
+          tar -tzf "dist/FileSearchManager-$VERSION-linux-x64.tar.gz" | grep -x "file-search-manager/LogExplorer/logexplorer" > /dev/null
 
       - name: Stage the packages
         shell: bash
@@ -211,6 +257,8 @@ jobs:
           python3 installer/linux/package/check-service.py /
           [[ -s /usr/share/doc/file-search-manager/copyright ]]
           [[ -s /usr/share/doc/file-search-manager/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt ]]
+          [[ -s /usr/share/doc/file-search-manager/licenses/logexplorer-THIRD-PARTY-NOTICES.txt ]]
+          /usr/libexec/file-search-manager/LogExplorer/logexplorer --help 2>&1 | grep -e --combine > /dev/null
           sudo apt-get remove -y file-search-manager
           # (not "! systemctl ...": bash -e lets a negated command fail unnoticed)
           if systemctl is-active --quiet file-search-manager.service; then
@@ -223,6 +271,8 @@ jobs:
             test -x /usr/bin/file-search-manager
             rpm -V file-search-manager
             test -s /usr/share/licenses/file-search-manager/licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt
+            test -s /usr/share/licenses/file-search-manager/licenses/logexplorer-THIRD-PARTY-NOTICES.txt
+            /usr/libexec/file-search-manager/LogExplorer/logexplorer --help 2>&1 | grep -e --combine > /dev/null
             dnf install -y --setopt=install_weak_deps=False selinux-policy-targeted python3-libselinux python3-setools
             python3 /check/check-selinux.py \$(readlink -f /usr/bin/file-search-manager)"
 
@@ -232,11 +282,16 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # Nothing is published unless both test suites pass. The headless tests run while the
-  # packages build; the smoke tests wait for them and drive the very build to be released -
-  # its web apps are the latest singleHtmlApps, which a build of the pinned commit would miss.
+  # Nothing is published unless every test suite passes. The headless tests and the tests of
+  # Log explorer (its unit, parity, headless UI and smoke tests) run while the packages
+  # build, so a failure stops the run as early as it can; the smoke tests of the app wait
+  # for the packages and drive the very build to be released - its web apps are the latest
+  # singleHtmlApps, which a build of the pinned commit would miss.
   tests:
     uses: ./.github/workflows/tests.yml
+
+  logexplorer:
+    uses: ./.github/workflows/logexplorer.yml
 
   smoke:
     needs: [windows, linux]
@@ -247,7 +302,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, tests, smoke]
+    needs: [windows, linux, tests, logexplorer, smoke]
     runs-on: ubuntu-latest
     steps:
       # The release files only, by name: windows-app is the smoke tests' copy of the app folder

@@ -20,18 +20,42 @@ pub trait ClipboardSource {
 /// The clipboard of the system
 pub struct SystemClipboard;
 
-impl ClipboardSource for SystemClipboard {
-    fn read(&mut self) -> Pasted {
-        let Ok(mut clipboard) = arboard::Clipboard::new() else { return Pasted::Empty };
-        if let Ok(files) = clipboard.get().file_list() {
-            if !files.is_empty() {
-                return Pasted::Files(files);
-            }
+/// The clipboard is held by another program right now
+struct Occupied;
+
+impl SystemClipboard {
+    fn read_once() -> Result<Pasted, Occupied> {
+        let busy = |error: &arboard::Error| matches!(error, arboard::Error::ClipboardOccupied);
+        let mut clipboard = arboard::Clipboard::new().map_err(|_| Occupied)?;
+        match clipboard.get().file_list() {
+            Ok(files) if !files.is_empty() => return Ok(Pasted::Files(files)),
+            Err(error) if busy(&error) => return Err(Occupied),
+            _ => {}
         }
         match clipboard.get_text() {
-            Ok(text) if !text.is_empty() => Pasted::Text(text.replace("\r\n", "\n")),
-            _ => Pasted::Empty,
+            Ok(text) if !text.is_empty() => Ok(Pasted::Text(text.replace("\r\n", "\n"))),
+            Err(error) if busy(&error) => Err(Occupied),
+            _ => Ok(Pasted::Empty),
         }
+    }
+}
+
+/// Reads until the clipboard is free. Only one program can have it open: right after a
+/// copy a clipboard manager, a remote desktop or the tools of a virtual machine read it,
+/// and a paste in that moment would silently do nothing.
+fn read_when_free(mut read: impl FnMut() -> Result<Pasted, Occupied>, pause: std::time::Duration) -> Pasted {
+    for _ in 0..10 {
+        if let Ok(pasted) = read() {
+            return pasted;
+        }
+        std::thread::sleep(pause);
+    }
+    Pasted::Empty
+}
+
+impl ClipboardSource for SystemClipboard {
+    fn read(&mut self) -> Pasted {
+        read_when_free(Self::read_once, std::time::Duration::from_millis(30))
     }
 }
 
@@ -156,6 +180,35 @@ mod tests {
         assert_eq!(files_named_by("a.log"), None);
         assert_eq!(files_named_by("file://elsewhere/share/a.log"), None);
         assert_eq!(files_named_by("  \n"), None);
+    }
+
+    #[test]
+    fn a_clipboard_held_by_another_program_is_read_once_it_is_free() {
+        let mut attempts = 0;
+        let pasted = read_when_free(
+            || {
+                attempts += 1;
+                if attempts < 4 {
+                    Err(Occupied)
+                } else {
+                    Ok(Pasted::Text("late".into()))
+                }
+            },
+            std::time::Duration::ZERO,
+        );
+        assert!(matches!(pasted, Pasted::Text(text) if text == "late"));
+        assert_eq!(attempts, 4);
+        // A clipboard that never gets free pastes nothing, after a bounded number of tries
+        let mut attempts = 0;
+        let pasted = read_when_free(
+            || {
+                attempts += 1;
+                Err(Occupied)
+            },
+            std::time::Duration::ZERO,
+        );
+        assert!(matches!(pasted, Pasted::Empty));
+        assert_eq!(attempts, 10);
     }
 
     #[test]

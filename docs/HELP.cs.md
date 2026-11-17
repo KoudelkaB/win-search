@@ -153,7 +153,7 @@ Všechny příkazy pro cíle a filtry jsou pod klávesou `Alt` a chovají se ste
 
 `Alt+K` otevře vestavěnou **Kalkulačku** odkudkoli v okně, bez výběru souboru. Můžete také klepnout na tlačítko **Kalkulačka** ve spodní liště. Funguje offline s nainstalovaným Microsoft Edge WebView2 Runtime a nabízí režimy Standard, Scientific a Programmer. Při změně režimu nebo rozbalení panelu se okno automaticky přizpůsobí aktuálnímu obsahu až do velikosti dostupné pracovní plochy monitoru; větší obsah lze posouvat. Pro přesné zlomky a zkratky pro jejich zadávání zvolte pod výsledkem **Fraction** nebo **Mixed**. Historie, paměť, přiblížení a stav maximalizace se zachovávají mezi spuštěními.
 
-Zavřením hlavního okna File Search Manager se aplikace ukončí a zavřou se všechna okna vestavěných HTML nástrojů, včetně kalkulačky, prohlížeče logů a hex editoru.
+Zavřením hlavního okna File Search Manager se aplikace ukončí a zavřou se všechna okna vestavěných HTML nástrojů (kalkulačka, hex editor). Prohlížeč logů je samostatný program a zůstane otevřený.
 
 Když je aktivní klávesová sekvence, **Nápověda** zobrazuje jen platné následující klávesy. `Esc` se nabízí jen tehdy, když by uvolnění držených kláves provedlo akci a `Alt` právě není držen. Funguje to i v sekvenci s `Alt` po jeho uvolnění, pokud držíte jinou klávesu sekvence. `Backspace` se vždy vrátí o krok zpět. Ovládání toku je od voleb příkazů odděleno čárou.
 
@@ -177,7 +177,7 @@ Běžné příkazy:
 - `X`: vyjmout vybrané položky do schránky.
 - `D`: porovnat dva soubory nebo dvě složky v nainstalovaném vhodném nástroji diff. Pro dva soubory lze použít i VS Code (`--diff`). Bez vhodného nástroje je tato nápověda skrytá.
 - `H`: otevřít jeden soubor ve vestavěném hex editoru nebo porovnat dva soubory. Funguje offline.
-- `L`: otevřít vybrané soubory ve vestavěném prohlížeči logů (Log Explorer). Funguje offline. Pokud mají soubory dohromady víc než 100 MB nebo je jich víc než 500, nejdřív se zeptá, protože prohlížeč logů drží vše v paměti.
+- `L`: otevřít vybrané soubory ve vestavěném prohlížeči logů (Log Explorer). Funguje offline. Zeptá se jen tehdy, když by se soubory nemusely vejít do paměti (dohromady víc než polovina paměti počítače), protože prohlížeč logů drží jejich text v paměti.
 - `G`: zobrazit v souborech — otevřít soubory obsahující hledaný text (zelené řádky) v jednom okně prohlížeče logů, spojené za sebou a s filtrem na řádky s tímto textem. Totéž dělá tlačítko **Zobrazit v souborech** vedle **Nerozlišovat velikost písmen** a kontextová nabídka.
 - `V`: vložit soubory ze schránky do vybraných složek nebo nadřazených složek.
 - `O`: otevřít vybrané položky v jiné aplikaci.

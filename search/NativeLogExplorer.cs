@@ -7,10 +7,15 @@ using System.IO;
 namespace search
 {
     /// <summary>
-    /// The native Log explorer (logexplorer/, Rust): a program of its own in the LogExplorer
-    /// folder next to the app. Where a build ships it, Log explorer opens in it instead of the
-    /// HTML page in a web view - it keeps the text of the files once, so files of gigabytes fit.
-    /// It takes on its command line what the page takes through window.logExplorer.open.
+    /// What a Log explorer window starts with: the files appended as one source, filtered to
+    /// the lines containing Filter (none when empty)
+    /// </summary>
+    internal sealed record LogExplorerLoad(string Filter, bool CaseSensitive);
+
+    /// <summary>
+    /// Log explorer (logexplorer/, Rust): a program of its own in the LogExplorer folder next
+    /// to the app. It keeps the text of the files once, so files of gigabytes fit. The
+    /// releases ship it; a build made without Rust has none (search.csproj).
     /// </summary>
     internal static class NativeLogExplorer
     {
@@ -19,10 +24,16 @@ namespace search
         /// <summary>Replaces the path of the program (tests); null is the one next to the app</summary>
         internal static string PathOverride;
 
+        /// <summary>
+        /// Replaces starting the program (the UI tests record what would open: the files and
+        /// the load); null starts it
+        /// </summary>
+        internal static Action<string[], LogExplorerLoad> OpenOverride;
+
         public static string ProgramPath => PathOverride
             ?? Path.Combine(AppContext.BaseDirectory, Folder, OperatingSystem.IsWindows() ? "logexplorer.exe" : "logexplorer");
 
-        public static bool IsAvailable => File.Exists(ProgramPath);
+        public static bool IsAvailable => OpenOverride != null || File.Exists(ProgramPath);
 
         /// <summary>
         /// The command line for the files: several files with a load are one appended source
@@ -49,9 +60,17 @@ namespace search
             return arguments;
         }
 
-        /// <summary>Start the program with the files; false when this build has none</summary>
-        public static bool TryOpen(string[] files, LogExplorerLoad load)
+        /// <summary>
+        /// Start the program with the files: without a load it asks how to combine several
+        /// of them. False when this build has no program.
+        /// </summary>
+        public static bool Open(string[] files, LogExplorerLoad load = null)
         {
+            if (OpenOverride != null)
+            {
+                OpenOverride(files, load);
+                return true;
+            }
             if (!IsAvailable) return false;
             var start = new ProcessStartInfo
             {

@@ -153,7 +153,7 @@ Wszystkie polecenia celów i filtrów znajdują się pod `Alt` i działają tak 
 
 `Alt+K` otwiera wbudowany **Kalkulator** z dowolnego miejsca w oknie, bez wybierania pliku. Można też kliknąć **Kalkulator** na dolnym pasku. Działa on offline po zainstalowaniu Microsoft Edge WebView2 Runtime i oferuje tryby Standard, Scientific oraz Programmer. Po zmianie trybu lub rozwinięciu panelu okno automatycznie dopasowuje się do bieżącej zawartości, nie przekraczając dostępnego obszaru roboczego monitora; większą zawartość można przewijać. Wybierz **Fraction** lub **Mixed** pod wynikiem, aby wyświetlić dokładne ułamki i skróty do ich wprowadzania. Historia, pamięć, powiększenie i stan maksymalizacji są zachowywane między uruchomieniami.
 
-Zamknięcie głównego okna File Search Manager kończy działanie aplikacji i zamyka wszystkie okna wbudowanych narzędzi HTML, w tym kalkulatora, przeglądarki logów i edytora szesnastkowego.
+Zamknięcie głównego okna File Search Manager kończy działanie aplikacji i zamyka wszystkie okna wbudowanych narzędzi HTML (kalkulatora i edytora szesnastkowego). Log Explorer jest osobnym programem i pozostaje otwarty.
 
 Gdy sekwencja klawiszy jest aktywna, **Skróty** pokazują tylko prawidłowe kolejne klawisze. `Esc` jest oferowany tylko wtedy, gdy zwolnienie trzymanych klawiszy wykonałoby akcję, a `Alt` nie jest właśnie wciśnięty. Działa to również w sekwencji z `Alt` po jego zwolnieniu, gdy trzymany jest inny klawisz sekwencji. `Backspace` zawsze cofa o jeden krok. Elementy sterujące są oddzielone od wyborów poleceń linią.
 
@@ -177,7 +177,7 @@ Typowe polecenia:
 - `X`: wytnij zaznaczone elementy do schowka.
 - `D`: porównaj dwa pliki lub dwa foldery w zainstalowanym, zgodnym narzędziu porównującym. Dla dwóch plików rozwiązaniem zapasowym jest VS Code (`--diff`). Bez odpowiedniego zainstalowanego narzędzia skrót jest ukryty.
 - `H`: otwórz jeden plik we wbudowanym edytorze szesnastkowym lub porównaj dwa pliki. Działa offline.
-- `L`: otwórz zaznaczone pliki we wbudowanym Log Explorerze. Działa offline. Gdy pliki mają łącznie ponad 100 MB lub jest ich ponad 500, najpierw pyta, bo Log Explorer trzyma wszystko w pamięci.
+- `L`: otwórz zaznaczone pliki we wbudowanym Log Explorerze. Działa offline. Pyta tylko wtedy, gdy pliki mogą nie zmieścić się w pamięci (łącznie ponad połowa pamięci komputera), bo Log Explorer trzyma ich tekst w pamięci.
 - `G`: pokaż w plikach — otwórz pliki zawierające szukany tekst (zielone wiersze) w jednym oknie przeglądarki logów, połączone jeden za drugim i z filtrem na wiersze z tym tekstem. Także przycisk **Pokaż w plikach** obok opcji wielkości liter i menu kontekstowe.
 - `V`: wklej pliki ze schowka do zaznaczonych folderów lub folderów nadrzędnych.
 - `O`: otwórz zaznaczone elementy w innej aplikacji.

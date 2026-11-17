@@ -22,6 +22,11 @@ sys-locale = "0.3"
 egui_kittest = { version = "0.37", features = ["eframe"] }
 tempfile = "3"
 
+# Files dropped into the program while it is elevated (elevated_drop.rs)
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 # The smoke tests on Windows: real keys, the clipboard and UI Automation
 [target.'cfg(windows)'.dev-dependencies]
 arboard = { version = "3", default-features = false }

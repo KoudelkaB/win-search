@@ -710,7 +710,7 @@ namespace search
                 openWith.Items.Add(item);
             }
 
-            // The built-in Log explorer falls back to a text editor without its program or a web view.
+            // A build without the Log explorer program views text in an editor.
             Add(Apps.LogExplorerAvailable ? L.Text("Log explorer") : OperatingSystem.IsWindows() ? "Notepad" : L.Text("Edit"),
                 Key.T, Apps.TextViever, TextExtensions.Contains);
             Add("Ghostscript", Key.G, Apps.GhostScript,

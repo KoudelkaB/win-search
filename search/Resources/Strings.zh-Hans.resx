@@ -38,12 +38,6 @@
   <data name="SelectFound" xml:space="preserve"><value>选择找到的文件</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>在一个日志浏览器窗口中打开包含搜索文本的文件，并筛选出包含该文本的行 (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>没有文件包含搜索的文本</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>日志浏览器会将文件载入内存，占用的内存是其磁盘大小的数倍。
-
-文件数: {0}
-总大小: {1}
-
-仍要打开吗？</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>日志浏览器会将文件载入内存，而这些文件可能超出内存容量。
 
 文件数: {0}

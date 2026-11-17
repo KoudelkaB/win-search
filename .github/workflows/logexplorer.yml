@@ -1,16 +1,14 @@
 name: logexplorer
 
-# The native Log explorer (logexplorer/, Rust). Its unit tests, the parity with the
-# JavaScript operations of the HTML app and the headless UI tests (the real window without a
-# display) run on both systems; the smoke tests drive the built program with real keys and
-# the clipboard - on Linux on an X server of its own, on Windows on the runner's desktop.
+# Log explorer (logexplorer/, Rust). Its unit tests, the parity with the JavaScript
+# operations of the HTML app and the headless UI tests (the real window without a display)
+# run on both systems; the smoke tests drive the built program with real keys and the
+# clipboard - on Linux on an X server of its own, on Windows on the runner's desktop.
+# Not on a push to main: the release workflow calls it beside the build of the packages
+# (nothing is published unless it passes), a pull request that touches the program runs it,
+# and it can be started by hand.
 on:
   pull_request:
-    paths:
-      - 'logexplorer/**'
-      - '.github/workflows/logexplorer.yml'
-  push:
-    branches: [main]
     paths:
       - 'logexplorer/**'
       - '.github/workflows/logexplorer.yml'
@@ -82,11 +80,8 @@ jobs:
           CI: 'true'
         run: cargo test -p logexplorer --test smoke -- --ignored
 
-  # Written on Linux and only type-checked for Windows there: until it has passed on a
-  # Windows machine and here (logexplorer/WINDOWS.md), its failure does not fail the workflow.
   smoke-windows:
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 

@@ -30,7 +30,10 @@ impl Window {
     }
 }
 
-pub struct Backend;
+/// The desktop of the session, and the window of the app that was given the keyboard
+pub struct Backend {
+    keyboard: std::cell::Cell<Option<Window>>,
+}
 
 /// (window, title, process) of the visible top-level windows
 fn windows() -> Vec<(HWND, String, u32)> {
@@ -79,10 +82,23 @@ fn virtual_key(name: &str) -> VIRTUAL_KEY {
 
 impl Backend {
     pub fn start() -> Option<Backend> {
-        Some(Backend)
+        Some(Backend { keyboard: Default::default() })
     }
 
     pub fn prepare(&self, _command: &mut Command) {}
+
+    /// Real keys go to the foreground window, whichever program it belongs to: none is sent
+    /// unless that is the window of the app. A window that got in front is asked back once.
+    fn send(&self, inputs: &[INPUT]) {
+        if let Some(window) = self.keyboard.get() {
+            let in_front = || unsafe { GetForegroundWindow() } == window.handle();
+            assert!(
+                in_front() || (self.activate(&window) && in_front()),
+                "another window took the foreground from the app, so no key was sent: leave the desktop alone while the smoke tests run"
+            );
+        }
+        send(inputs);
+    }
 
     /// The window of process `pid` whose title starts with `title`
     pub fn find_window(&self, title: &str, pid: u32) -> Option<Window> {
@@ -115,6 +131,7 @@ impl Backend {
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(5) {
             if unsafe { GetForegroundWindow() } == target {
+                self.keyboard.set(Some(*window));
                 // The app takes a moment to see that it has the keyboard
                 std::thread::sleep(Duration::from_millis(300));
                 return true;
@@ -129,12 +146,12 @@ impl Backend {
         let keys: Vec<VIRTUAL_KEY> = key.split('+').map(virtual_key).collect();
         let mut inputs: Vec<INPUT> = keys.iter().map(|key| key_input(*key, 0, KEYBD_EVENT_FLAGS(0))).collect();
         inputs.extend(keys.iter().rev().map(|key| key_input(*key, 0, KEYEVENTF_KEYUP)));
-        send(&inputs);
+        self.send(&inputs);
     }
 
     pub fn type_text(&self, text: &str) {
         for unit in text.encode_utf16() {
-            send(&[key_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE), key_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]);
+            self.send(&[key_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE), key_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]);
             std::thread::sleep(Duration::from_millis(30));
         }
     }

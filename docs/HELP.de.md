@@ -153,7 +153,7 @@ Alle Ziel- und Filterbefehle liegen unter `Alt` und verhalten sich überall im F
 
 `Alt+K` öffnet den integrierten **Rechner** von überall im Fenster, ohne eine Datei auszuwählen. Sie können auch in der unteren Leiste auf **Rechner** klicken. Er funktioniert mit installierter Microsoft Edge WebView2 Runtime offline und bietet die Modi Standard, Scientific und Programmer. Beim Wechsel des Modus oder Aufklappen eines Bereichs passt sich das Fenster automatisch an den aktuellen Inhalt an, höchstens bis zur verfügbaren Arbeitsfläche des Monitors; größere Inhalte bleiben scrollbar. Wählen Sie unter dem Ergebnis **Fraction** oder **Mixed**, um exakte Brüche und Eingabehilfen für Brüche anzuzeigen. Verlauf, Speicher, Zoom und Maximierungszustand bleiben zwischen Programmstarts erhalten.
 
-Das Schließen des Hauptfensters von File Search Manager beendet die Anwendung und schließt alle Fenster der integrierten HTML-Werkzeuge, einschließlich Rechner, Log-Explorer und Hex-Editor.
+Das Schließen des Hauptfensters von File Search Manager beendet die Anwendung und schließt alle Fenster der integrierten HTML-Werkzeuge (Rechner, Hex-Editor). Der Log Explorer ist ein eigenes Programm und bleibt geöffnet.
 
 Während eine Tastenfolge aktiv ist, zeigt **Hinweise** nur gültige Folgetasten. `Esc` wird nur angeboten, wenn das Loslassen der gehaltenen Tasten eine Aktion ausführen würde und `Alt` gerade nicht gehalten wird. Das gilt auch in einer `Alt`-Folge, nachdem `Alt` losgelassen wurde, während eine andere Folgetaste gehalten bleibt. `Backspace` geht immer einen Schritt zurück. Ablaufsteuerungen sind von den Befehlsoptionen durch eine Linie getrennt.
 
@@ -177,7 +177,7 @@ Häufige Befehle:
 - `X`: ausgewählte Elemente in die Zwischenablage ausschneiden.
 - `D`: zwei Dateien oder zwei Ordner in einem installierten, passenden Vergleichswerkzeug vergleichen. Für zwei Dateien dient VS Code als Ausweichlösung (`--diff`). Ohne passendes installiertes Werkzeug ist der Hinweis ausgeblendet.
 - `H`: eine Datei im integrierten Hex-Editor öffnen oder zwei Dateien vergleichen. Funktioniert offline.
-- `L`: ausgewählte Dateien im integrierten Log Explorer öffnen. Funktioniert offline. Fragt vorher nach, wenn die Dateien zusammen mehr als 100 MB haben oder mehr als 500 sind, weil der Log Explorer alles im Speicher hält.
+- `L`: ausgewählte Dateien im integrierten Log Explorer öffnen. Funktioniert offline. Fragt nur dann vorher nach, wenn die Dateien möglicherweise nicht in den Arbeitsspeicher passen (zusammen mehr als die Hälfte davon), weil der Log Explorer ihren Text im Speicher hält.
 - `G`: in Dateien anzeigen — die Dateien mit dem gesuchten Text (grüne Zeilen) in einem Log-Explorer-Fenster öffnen, aneinandergehängt und auf die Zeilen mit dem Text gefiltert. Ebenso die Schaltfläche **In Dateien anzeigen** neben der Groß-/Kleinschreibungsoption und das Kontextmenü.
 - `V`: Dateien aus der Zwischenablage in die ausgewählten oder übergeordneten Ordner einfügen.
 - `O`: ausgewählte Elemente in einer anderen Anwendung öffnen.

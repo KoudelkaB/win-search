@@ -218,7 +218,6 @@ namespace search.Tests
         public async Task LOpensTheLogExplorerWithoutAFilter()
         {
             using var scene = await UiScene.Open();
-            Assert.SkipUnless(WebAppWindow.IsAvailable, "No web view on this machine");
             scene.ClickRow(scene.FileNode);
 
             scene.Keys(Key.L);
@@ -233,7 +232,6 @@ namespace search.Tests
         public async Task F3ViewsATextFileInTheLogExplorer()
         {
             using var scene = await UiScene.Open();
-            Assert.SkipUnless(WebAppWindow.IsAvailable, "No web view on this machine");
             scene.ClickRow(scene.FileNode);
 
             scene.Keys(Key.F3);
@@ -249,7 +247,6 @@ namespace search.Tests
         public async Task ShowInFilesOpensTheFoundFilesFilteredToTheSearchedText(bool button)
         {
             using var scene = await UiScene.Open();
-            Assert.SkipUnless(WebAppWindow.IsAvailable, "No web view on this machine");
             var model = (SearchModel)scene.Window.DataContext;
             scene.Click(scene.Find<AutoCompleteTextBox>("findTextBox"));
             scene.Type("content");

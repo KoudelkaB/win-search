@@ -2,7 +2,7 @@
 
 File Search Manager (MIT, see `LICENSE`) incorporates or is built with the third-party
 components below. Their licenses are MIT, BSD-3-Clause and Apache-2.0, all reproduced at the
-end of this document. Two components carry further third-party code, whose notices ship
+end of this document. Three components carry further third-party code, whose notices ship
 verbatim next to this file:
 
 - `licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt` - the native SkiaSharp and HarfBuzzSharp
@@ -10,6 +10,11 @@ verbatim next to this file:
   and more.
 - `licenses/dotnet-THIRD-PARTY-NOTICES.txt` - the .NET runtime, where a package carries it
   (the Windows installer, the portable tar.gz and the .rpm and .deb packages).
+- `licenses/logexplorer-THIRD-PARTY-NOTICES.txt` - Log Explorer (`LogExplorer/logexplorer`),
+  a Rust program: every crate built into it with its version, license and project, and the
+  license texts the crates ship (the fonts of egui among them). The release writes it from
+  the crates of that very build (`logexplorer/tools/third-party-notices.cjs`) and fails on
+  a crate whose license is not among the accepted ones.
 
 Every package the build references must be listed here: the release workflow checks it
 (`tools/check-third-party-notices.py`).
@@ -88,7 +93,17 @@ managed interop assembly is shipped, and it is not used there.
 - Copyright (c) 2014 Adam Hathcock
 - License: MIT
 
-### singleHtmlApps (Hex Editor and Comparer, Log Explorer, Calculator)
+### Log Explorer (`LogExplorer/logexplorer`)
+
+- Part of this project (`logexplorer/`), MIT like the application
+- Its user interface texts and their translations come from the Log Explorer page of
+  singleHtmlApps (below)
+- Built from Rust crates: egui and eframe (the user interface), wgpu (drawing), winit (the
+  window), AccessKit (accessibility), regex, rayon and others, under MIT, Apache-2.0, BSD,
+  ISC, Zlib, BSL-1.0, Unicode-3.0, MPL-2.0 and the font licenses OFL-1.1 and Ubuntu Font
+  Licence 1.0 - listed with their texts in `licenses/logexplorer-THIRD-PARTY-NOTICES.txt`
+
+### singleHtmlApps (Hex Editor and Comparer, Calculator)
 
 - Project: https://github.com/KoudelkaB/singleHtmlApps
 - Copyright (c) 2026 KoudelkaB

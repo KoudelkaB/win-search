@@ -82,6 +82,10 @@ contents:
     dst: /usr/share/licenses/file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt
     type: license
     packager: rpm
+  - src: installer/linux/package/staging/app/licenses/logexplorer-THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/licenses/file-search-manager/licenses/logexplorer-THIRD-PARTY-NOTICES.txt
+    type: license
+    packager: rpm
   - src: installer/linux/package/staging/app/LICENSE
     dst: /usr/share/doc/file-search-manager/copyright
     packager: deb
@@ -94,15 +98,20 @@ contents:
   - src: installer/linux/package/staging/app/licenses/dotnet-THIRD-PARTY-NOTICES.txt
     dst: /usr/share/doc/file-search-manager/licenses/dotnet-THIRD-PARTY-NOTICES.txt
     packager: deb
+  - src: installer/linux/package/staging/app/licenses/logexplorer-THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/doc/file-search-manager/licenses/logexplorer-THIRD-PARTY-NOTICES.txt
+    packager: deb
 
 scripts:
   postinstall: installer/linux/package/postinstall.sh
   preremove: installer/linux/package/preremove.sh
   postremove: installer/linux/package/postremove.sh
 
-# Avalonia draws through X11 and fontconfig; .NET needs ICU. WebKitGTK shows the hex editor,
-# log explorer and calculator inside the app (without it they open in the browser), pkexec
-# asks for the administrator password in Settings.
+# Avalonia draws through X11 and fontconfig; .NET needs ICU. WebKitGTK shows the hex editor
+# and the calculator inside the app (without it they open in the browser), pkexec asks for
+# the administrator password in Settings. Log explorer (LogExplorer/logexplorer) loads its
+# libraries at run time: the keyboard maps (xkbcommon), the cursor and input extensions of
+# X11, and EGL to draw with - a desktop has them all, so they are recommendations.
 overrides:
   rpm:
     # By library rather than package name: the names differ between Fedora and openSUSE.
@@ -117,6 +126,11 @@ overrides:
       - libicu
       - libwebkit2gtk-4.1.so.0()(64bit)
       - /usr/bin/pkexec
+      - libxkbcommon.so.0()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libXcursor.so.1()(64bit)
+      - libXi.so.6()(64bit)
+      - libEGL.so.1()(64bit)
   deb:
     depends:
       - libx11-6
@@ -128,6 +142,11 @@ overrides:
     recommends:
       - libwebkit2gtk-4.1-0
       - pkexec | policykit-1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libxcursor1
+      - libxi6
+      - libegl1
 
 rpm:
   summary: Find files on every disk as you type

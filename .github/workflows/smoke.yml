@@ -3,8 +3,9 @@ name: smoke
 # The smoke tests over the published build (search.smoke): the app runs as its own process
 # with a data folder of its own and is driven from outside - UI Automation on Windows, the
 # X server (Xvfb, xdotool, xclip) on Linux. Started by hand, the tests publish the app from
-# this commit; called by the release workflow, they test the very build it releases (its web
-# apps come from the latest singleHtmlApps, not the pinned commit).
+# this commit, with Log explorer (logexplorer/) built first; called by the release workflow,
+# they test the very build it releases (its web apps come from the latest singleHtmlApps,
+# not the pinned commit).
 on:
   workflow_dispatch:
   workflow_call:
@@ -28,11 +29,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # MinVer needs the tag history
-          submodules: true # the web apps (H, L, the calculator) ship from it
+          submodules: true # the web apps (H, the calculator) ship from it
 
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+
+      # Started by hand the tests publish the app themselves: Log explorer goes with it
+      - name: Build Log explorer
+        if: inputs.windows-app == ''
+        shell: pwsh
+        working-directory: logexplorer
+        run: rustup toolchain install stable --profile minimal; rustup default stable; cargo build --release --locked -p logexplorer
 
       - name: The build to release
         if: inputs.windows-app != ''
@@ -69,8 +77,15 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # Mesa's software renderers draw the window of Log explorer
       - name: X server tools
-        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip wmctrl openbox
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip wmctrl openbox libegl1 libgl1-mesa-dri mesa-vulkan-drivers
+
+      # Started by hand the tests publish the app themselves: Log explorer goes with it
+      - name: Build Log explorer
+        if: inputs.linux-app == ''
+        working-directory: logexplorer
+        run: rustup toolchain install stable --profile minimal && rustup default stable && cargo build --release --locked -p logexplorer
 
       - name: The build to release
         if: inputs.linux-app != ''

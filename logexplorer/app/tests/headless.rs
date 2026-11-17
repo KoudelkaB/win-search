@@ -404,6 +404,8 @@ fn files_copied_in_a_file_manager_are_opened_by_paste() {
     assert_eq!(rows(&harness), ["a1", "a2"]);
     harness.get_by_label("a.log");
     let address = format!("file://{}", b.to_string_lossy().replace(' ', "%20"));
+    // The address of a Windows path: file:///C:/logs/b.log
+    let address = if cfg!(windows) { address.replace("file://", "file:///").replace('\\', "/") } else { address };
     harness.event(egui::Event::Paste(address));
     harness.run();
     harness.get_by_label("How should the new files be loaded?");
@@ -444,4 +446,61 @@ fn the_clipboard_keys_work_when_the_app_handles_them_itself() {
     harness.state_mut().clipboard_source = Box::new(FakeClipboard(Some(logexplorer::clipboard::Pasted::Text("pasted row".into()))));
     key_with(&mut harness, egui::Modifiers::COMMAND, Key::V);
     harness.get_by_label("How should the new files be loaded?");
+}
+
+/// One frame the way the window runs it: the app orders the keys of the input first
+fn frame(harness: &mut Ui) {
+    let ctx = harness.ctx.clone();
+    let mut input = std::mem::take(harness.input_mut());
+    logexplorer::panels::one_key_press_a_frame(&ctx, harness.state_mut(), &mut input);
+    *harness.input_mut() = input;
+    harness.step();
+}
+
+/// Keys come faster than frames from a script, or where drawing is slow: a frame then holds
+/// several presses, and each must act as if it had a frame of its own
+#[test]
+fn keys_arriving_in_one_frame_act_one_after_another() {
+    let (mut harness, _files) = with_sample();
+    let (ctrl, plain) = (egui::Modifiers::COMMAND, egui::Modifiers::NONE);
+    // A key pressed and released, between the changes of the modifiers held with it
+    let tap = |key, modifiers: egui::Modifiers| {
+        let key = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers };
+        let held = |now: egui::Modifiers| (modifiers != plain).then_some(egui::Event::ModifiersChanged(now));
+        held(modifiers).into_iter().chain([key(true), key(false)]).chain(held(plain)).collect::<Vec<_>>()
+    };
+    let copied_text = |harness: &Ui| {
+        harness.output().platform_output.commands.iter().find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+    };
+
+    // Select all and copy
+    harness.input_mut().events.extend([tap(Key::A, ctrl), tap(Key::C, ctrl)].into_iter().flatten());
+    frame(&mut harness);
+    assert_eq!(copied_text(&harness), None);
+    frame(&mut harness);
+    assert_eq!(copied_text(&harness), Some(rows(&harness).join("\n")));
+
+    // Find: the text behind Ctrl+F is typed into the find box, Enter finds it, Esc closes
+    // find, and Enter in the view keeps the rows with the found text - Esc, which takes the
+    // keyboard from a field, not before its turn
+    let mut events = tap(Key::F, ctrl);
+    // (a keyboard sends the key with its character; text sent by a program is text alone)
+    let typed = tap(Key::E, plain);
+    events.extend([typed[0].clone(), egui::Event::Text("E".into()), typed[1].clone(), egui::Event::Text("N".into()), egui::Event::Text("D".into())]);
+    events.extend([Key::Enter, Key::Escape, Key::Enter].into_iter().flat_map(|key| tap(key, plain)));
+    // The Ctrl of the next shortcut is not held yet when that last Enter is pressed
+    events.extend(tap(Key::A, ctrl));
+    harness.input_mut().events.extend(events);
+    for _ in 0..12 {
+        frame(&mut harness);
+    }
+    harness.run();
+    assert_eq!(harness.state().find.query, "END");
+    assert!(!harness.state().find.open);
+    let kept = rows(&harness);
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    assert!(kept.iter().all(|row| row.contains("END")), "{kept:?}");
 }

@@ -39,14 +39,16 @@
     <!-- HTML apps hosted by WebAppWindow, shipped next to the exe so they work offline.
          external/singleHtmlApps is a git submodule: local builds use the pinned commit, the
          release workflow moves it to the latest upstream commit before publishing. -->
-    <None Include="..\external\singleHtmlApps\HexEditorAndComparer.html;..\external\singleHtmlApps\LogExplorer.html;..\external\singleHtmlApps\calculator.html" Link="WebApps\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\external\singleHtmlApps\HexEditorAndComparer.html;..\external\singleHtmlApps\calculator.html" Link="WebApps\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\external\singleHtmlApps\LICENSE" Link="WebApps\LICENSE.singleHtmlApps.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- The native Log explorer (logexplorer/, Rust) next to the app, when it has been built:
-       a release build of its Cargo package (logexplorer/README.md). A build without it opens the HTML
-       page of WebApps instead (see NativeLogExplorer). LogExplorerNative can name the program
-       built elsewhere, as for a runtime other than the one of the build machine. -->
+  <!-- Log explorer (logexplorer/, Rust) next to the app, when it has been built: a release
+       build of its Cargo package (logexplorer/README.md), with the notices of its crates
+       (logexplorer/tools/third-party-notices.cjs). A build without it has no Log explorer
+       (see NativeLogExplorer); the packages of a release must have it - RequireLogExplorer
+       makes its absence an error. LogExplorerNative can name the program built elsewhere,
+       as for a runtime other than the one of the build machine. -->
   <PropertyGroup>
     <_LogExplorerProgram Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">logexplorer.exe</_LogExplorerProgram>
     <_LogExplorerProgram Condition="'$(_LogExplorerProgram)' == ''">logexplorer</_LogExplorerProgram>
@@ -55,6 +57,16 @@
   <ItemGroup Condition="Exists('$(LogExplorerNative)')">
     <None Include="$(LogExplorerNative)" Link="LogExplorer\$(_LogExplorerProgram)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+  <PropertyGroup>
+    <LogExplorerNotices Condition="'$(LogExplorerNotices)' == ''">..\logexplorer\target\logexplorer-THIRD-PARTY-NOTICES.txt</LogExplorerNotices>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(LogExplorerNotices)')">
+    <None Include="$(LogExplorerNotices)" Link="licenses\logexplorer-THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireLogExplorer" BeforeTargets="BeforeBuild" Condition="'$(RequireLogExplorer)' == 'true'">
+    <Error Condition="!Exists('$(LogExplorerNative)')" Text="Log explorer was not built: $(LogExplorerNative) (cargo build --release -p logexplorer in logexplorer/)" />
+    <Error Condition="!Exists('$(LogExplorerNotices)')" Text="The notices of Log explorer's crates were not written: $(LogExplorerNotices) (node logexplorer/tools/third-party-notices.cjs)" />
+  </Target>
 
   <!-- Licenses travel with the app on every platform: its own, the third-party summary, and the
        verbatim notices of the native SkiaSharp/HarfBuzzSharp libraries (Skia, FreeType, libpng,
@@ -93,7 +105,7 @@
   </Target>
 
   <!-- A clone made without submodules has no web apps - fetch the pinned commit instead of failing the copy -->
-  <Target Name="InitWebAppsSubmodule" BeforeTargets="BeforeBuild" Condition="!Exists('..\external\singleHtmlApps\LogExplorer.html')">
+  <Target Name="InitWebAppsSubmodule" BeforeTargets="BeforeBuild" Condition="!Exists('..\external\singleHtmlApps\HexEditorAndComparer.html')">
     <Exec Command="git submodule update --init external/singleHtmlApps" WorkingDirectory="$(MSBuildProjectDirectory)\.." />
   </Target>
 

@@ -153,7 +153,7 @@ Tutti i comandi di destinazioni e filtri stanno sotto `Alt` e si comportano allo
 
 `Alt+K` apre la **Calcolatrice** integrata da qualsiasi punto della finestra, senza selezionare un file. Puoi anche fare clic su **Calcolatrice** nella barra inferiore. Funziona offline con Microsoft Edge WebView2 Runtime installato e include le modalità Standard, Scientific e Programmer. Quando cambi modalità o espandi un pannello, la finestra si adatta automaticamente al contenuto attuale, fino all’area di lavoro disponibile del monitor; se il contenuto è più grande, resta accessibile tramite scorrimento. Seleziona **Fraction** o **Mixed** sotto il risultato per visualizzare frazioni esatte e scorciatoie per inserirle. Cronologia, memoria, zoom e stato massimizzato vengono conservati tra gli avvii.
 
-Chiudendo la finestra principale di File Search Manager si termina l’applicazione e si chiudono tutte le finestre degli strumenti HTML integrati, inclusi Calcolatrice, esplora log ed editor esadecimale.
+Chiudendo la finestra principale di File Search Manager si termina l’applicazione e si chiudono tutte le finestre degli strumenti HTML integrati (Calcolatrice ed editor esadecimale). Il Log Explorer è un programma a sé e resta aperto.
 
 Mentre una sequenza da tastiera è attiva, **Suggerimenti** mostra solo i tasti successivi validi. `Esc` viene offerto solo quando rilasciare i tasti premuti eseguirebbe un’azione e `Alt` non è premuto in quel momento. Vale anche in una sequenza con `Alt` dopo averlo rilasciato tenendo premuto un altro tasto della sequenza. `Backspace` torna sempre indietro di un passo. I controlli di flusso sono separati dalle scelte di comando da una linea.
 
@@ -177,7 +177,7 @@ Comandi comuni:
 - `X`: taglia gli elementi selezionati negli appunti.
 - `D`: confronta due file o due cartelle in uno strumento di confronto installato e compatibile. Per due file, VS Code funge da ripiego (`--diff`). Senza uno strumento installato adatto, il suggerimento è nascosto.
 - `H`: apri un file nell'editor esadecimale integrato o confronta due file. Funziona offline.
-- `L`: apri i file selezionati nel Log Explorer integrato. Funziona offline. Chiede conferma se i file superano in totale 100 MB o sono più di 500, perché il Log Explorer li tiene in memoria.
+- `L`: apri i file selezionati nel Log Explorer integrato. Funziona offline. Chiede conferma solo se i file potrebbero non entrare in memoria (in totale più della metà), perché il Log Explorer ne tiene il testo in memoria.
 - `G`: mostra nei file — apri i file che contengono il testo cercato (righe verdi) in una finestra di Esplora log, accodati e filtrati sulle righe con il testo. Anche il pulsante **Mostra nei file** accanto all'opzione maiuscole/minuscole e il menu contestuale.
 - `V`: incolla i file degli appunti nelle cartelle selezionate o nelle cartelle padre.
 - `O`: apri gli elementi selezionati in un’altra applicazione.

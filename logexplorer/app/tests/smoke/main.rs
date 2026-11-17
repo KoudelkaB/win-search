@@ -119,21 +119,42 @@ impl Desktop {
         let mut last = String::new();
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(20) {
+            // Where the clipboard is the one of the session, what an earlier copy left there
+            // must not pass for this one
+            const STALE: &str = "not copied yet";
+            self.backend.set_clipboard(STALE);
             self.keys(&["ctrl+a", "ctrl+c"]);
-            last = self.backend.clipboard().replace("\r\n", "\n");
+            let copied = Instant::now();
+            loop {
+                last = self.backend.clipboard().replace("\r\n", "\n");
+                if last != STALE || copied.elapsed() > Duration::from_secs(2) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
             if last == expected {
                 return;
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        panic!("the view is not the expected one.\n--- expected ---\n{expected}\n--- copied ---\n{last}");
+        panic!("the view is not the expected one.\n--- expected ---\n{expected}\n--- copied ---\n{last}\n--- pipeline ---\n{}", read(&self.data().join("working-set.json")));
+    }
+
+    /// Ctrl+Esc clears the selection. Windows opens its Start menu on that key and the app
+    /// never sees it; the scenarios hold there without it (find wraps around, and Shift+End
+    /// extends from the start of the selection).
+    fn clear_selection(&self) {
+        if cfg!(not(windows)) {
+            self.keys(&["ctrl+Escape"]);
+        }
     }
 
     /// Closes the window the way a user does and waits for the process to end cleanly
     fn close(&mut self) {
         self.keys(&["alt+F4"]);
-        let mut app = self.app.take().expect("the app runs");
-        let status = wait_for("the app to exit", Duration::from_secs(20), || app.try_wait().expect("process state"));
+        // The app stays owned until it has ended: one that does not end is killed by `drop`
+        let status = wait_for("the app to exit", Duration::from_secs(20), || self.app.as_mut().expect("the app runs").try_wait().expect("process state"));
+        self.app = None;
         assert!(status.success(), "the app exited with {status}");
     }
 }
@@ -154,14 +175,16 @@ fn a_file_is_shown_filtered_from_the_keyboard_and_the_pipeline_is_kept() {
     desktop.expect_view(SAMPLE);
 
     // Find END, close find, and Enter keeps the rows with the found text
-    desktop.keys(&["ctrl+Escape", "ctrl+f"]);
+    desktop.clear_selection();
+    desktop.keys(&["ctrl+f"]);
     desktop.type_text("END");
     desktop.keys(&["Return", "Escape", "Return"]);
     let ends: Vec<&str> = SAMPLE.lines().filter(|line| line.contains("END")).collect();
     desktop.expect_view(&ends.join("\n"));
 
     // Delete on a selection removes that text from every row
-    desktop.keys(&["ctrl+Escape", "ctrl+f"]);
+    desktop.clear_selection();
+    desktop.keys(&["ctrl+f"]);
     desktop.type_text("GET ");
     desktop.keys(&["Return", "Escape", "Delete"]);
     desktop.expect_view(&ends.join("\n").replace("GET ", ""));
@@ -197,7 +220,8 @@ fn text_pasted_from_the_clipboard_becomes_the_source() {
     assert!(desktop.window("Clipboard - Log Explorer"));
     desktop.expect_view("pasted one\npasted two");
     // The keyboard walks and selects: Shift+End from the top takes everything too
-    desktop.keys(&["ctrl+Escape", "Home", "shift+End", "ctrl+c"]);
+    desktop.clear_selection();
+    desktop.keys(&["Home", "shift+End", "ctrl+c"]);
     let copied = wait_for("the copied selection", Duration::from_secs(10), || Some(desktop.backend.clipboard().replace("\r\n", "\n")).filter(|text| text.contains("two")));
     assert_eq!(copied, "pasted one\npasted two");
     desktop.close();

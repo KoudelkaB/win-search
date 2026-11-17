@@ -1,6 +1,7 @@
 # Log Explorer (Rust)
 
-A native rewrite of `external/singleHtmlApps/LogExplorer.html`: a viewer for big logs with a
+The Log explorer of File Search Manager, a native rewrite of
+`external/singleHtmlApps/LogExplorer.html` that replaced that page: a viewer for big logs with a
 staged Filter / Replace / Sort / Diff / Extract / Unique / Join pipeline, smart click
 selection, find, multi-file sources with per-file tints, and profiles. It runs on Windows
 and Linux (egui/eframe) and is meant for files of gigabytes, as long as they fit in memory.
@@ -22,7 +23,7 @@ texts and their ten translations are taken from it (`tools/extract-translations.
 | --- | --- |
 | `core/` | `logexplorer-core`: the engine, no UI. Loading, stages, the operations, the pipeline cache, selection, find, profiles, texts. |
 | `app/` | `logexplorer`: the egui application. `app.rs` is state and behaviour, `viewer.rs` the virtual file view, `panels.rs` everything around it. |
-| `tools/` | Node scripts that regenerate the translations and the parity fixtures from the HTML app. |
+| `tools/` | Node scripts that regenerate the translations and the parity fixtures from the HTML app, and write the notices of the crates. |
 
 ## How memory is kept low
 
@@ -64,6 +65,12 @@ Measured on a 32-thread machine, release build, the generated log of
 
 The window shows the file 0.5 s after the process starts and uses no CPU while idle.
 
+The same file on Windows 10 in a virtual machine (20 threads, no GPU): load 0.46 s and
+1.04x the file, Filter 59 ms, Sort 208 ms, Diff 749 ms, Replace 526 ms, Extract 653 ms,
+Unique 966 ms, with the same memory. The window is there after 0.5 s as well; without a
+GPU the first frames cost a few seconds of CPU on all cores and a key takes 0.1-0.2 s to
+show (Direct3D 12 on the software adapter; Vulkan and OpenGL are not to be had there).
+
 ```sh
 cargo run --release -p logexplorer-core --example bench -- big.log --generate 1024
 ```
@@ -88,18 +95,51 @@ cargo test -p logexplorer --test smoke -- --ignored --test-threads=1        # sm
   keyboard and clipboard, down to a clean exit and the files it leaves - the counterpart
   of `search.smoke`. The scenarios are shared; `linux.rs` drives a private X server (Xvfb,
   openbox, xdotool, xclip), `windows.rs` the desktop of the session (SendInput, UI Automation).
+  On Windows they take the foreground and type real keys - leave the machine alone while
+  they run; a key is sent only while the window of the app is in front.
 
 `.github/workflows/logexplorer.yml` runs all of it, and fails when the translations or the
 parity fixtures no longer match the pinned HTML app. After the HTML app changes:
 `node tools/extract-translations.cjs` and `node tools/parity-fixtures.cjs`, then the tests.
+The workflow runs for a pull request that touches this folder, by hand, and in every
+release beside the build of the packages - not on a push to main.
 
 ## File Search Manager
 
-A release build of this package is copied by `search/search.csproj` to `LogExplorer/` next
-to the app, and File Search Manager then opens Log explorer (L, T/F3, Show in files) in it
-instead of the HTML page (`search/NativeLogExplorer.cs`); a build without it falls back to
-the page. It asks before loading only when the files would not fit in half of the memory.
-`LinuxSmokeTests.LOpensTheFileInTheNativeLogExplorer` in `search.smoke` covers the hand-over.
+This program is the Log explorer of File Search Manager (L, T/F3, Show in files): the HTML
+page is no longer shipped or opened. A release build of this package is copied by
+`search/search.csproj` to `LogExplorer/` next to the app, and `search/NativeLogExplorer.cs`
+starts it with the files. A build made without Rust has no Log explorer - L is not offered
+and text opens in the editor - and `-p:RequireLogExplorer=true` makes that an error, as the
+packages are built. The app asks before loading only when the files would not fit in half
+of the memory. `LOpensTheFileInTheNativeLogExplorer` of `LinuxSmokeTests` and
+`WindowsSmokeTests` in `search.smoke` covers the hand-over.
+
+Started by an elevated File Search Manager the program is elevated too, and can read what
+the app shows an administrator. Windows lets no program of lower rights - Explorer - use
+the drop target of such a window, so an elevated program takes dropped files the older
+way (`app/src/elevated_drop.rs`: `WM_DROPFILES`, let through the border between the
+rights); only the "drop here" picture is missing then.
+
+## Releases
+
+`release.yml` builds the program for both systems before the app is published, and no
+package is made without it:
+
+- **Windows:** `tools/Build-Installer.ps1` runs `cargo build --release` and the installer
+  takes `LogExplorer\logexplorer.exe` with the app folder. The C runtime is linked in
+  (`.cargo/config.toml`), so no Visual C++ redistributable is needed. The program is not
+  signed, like the rest of the installer's files.
+- **Linux:** built in an Ubuntu 20.04 container, so that it needs no newer glibc than
+  2.31 (the workflow checks the symbols it asks for); the portable archive and the .rpm
+  and .deb carry `LogExplorer/logexplorer`, and the packages recommend the libraries it
+  loads at run time (xkbcommon, Xcursor, Xi, EGL).
+- **Licenses:** `node tools/third-party-notices.cjs` writes
+  `licenses/logexplorer-THIRD-PARTY-NOTICES.txt` from the crates of that very build - each
+  with its version, license and project, and the license texts they ship. A crate under a
+  license that is not in the script's accepted list, or without a text, fails the release.
+- **Tests:** the workflow of this folder runs beside the build of the packages, and
+  nothing is published unless it passes.
 
 ## Deliberate differences from the HTML app
 
@@ -112,12 +152,23 @@ the page. It asks before loading only when the files would not fit in half of th
 - Identifiers of any alphabet are selected by a click, not only ASCII ones.
 - A stage that follows several edits keeps its earlier stages (the HTML app recomputes
   the whole pipeline after every change).
+- Keys that come faster than frames are taken one key press a frame, in their order
+  (`panels::one_key_press_a_frame`): a script, or a machine that draws slowly, gets what
+  the same keys give when typed slowly.
 
-## Not done yet
+## Windows
 
-- **Windows has never run it.** The application and the Windows smoke driver are type-checked
-  and linted for `x86_64-pc-windows-msvc` only. `WINDOWS.md` is the list of what to run,
-  verify and finish there (the smoke job of the workflow may fail until then).
-- **Releases do not ship it.** The release workflow, the installers and the third-party
-  notices are untouched: building the program there and listing the licences of its crates
-  are decisions still to be made (`WINDOWS.md`, "Shipping it").
+Built, run and tested on Windows 10 (stable MSVC toolchain): the unit, parity and headless
+tests, the smoke tests of this package and of File Search Manager with the program beside
+it. Checked by eye: no console window, the title, the toolbar symbols, Japanese through
+the system fonts, the UI in the display language of Windows, profiles under
+`%APPDATA%\LogExplorer\config`, paths longer than 260 characters.
+
+- **Ctrl+Esc** (clear the selection) never reaches a program on Windows - it opens the
+  Start menu, in the HTML app too. A click on the line numbers clears the selection.
+- **Not checked by hand:** the system file dialogs (`▤`, Download view), a file copied in
+  Explorer itself (the smoke test puts the same file list on the clipboard through
+  `arboard`), sharpness on a scaled display, a real GPU.
+- **Not run yet:** the release workflow with this program in it (the Linux build in its
+  container, the packages, the installer) and the `smoke-windows` job on a runner - they
+  pass here, on a desktop without a GPU, or were only written.

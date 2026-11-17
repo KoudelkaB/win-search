@@ -152,6 +152,8 @@ pub struct App {
     pub clipboard_source: Box<dyn crate::clipboard::ClipboardSource>,
     /// Files pasted in this frame
     pub pasted_files: Option<Vec<PathBuf>>,
+    /// Input that arrived behind the key press of a frame and waits for the next one
+    pub(crate) waiting_events: Vec<egui::Event>,
     /// A file dialog the UI should open
     pub dialog: Option<FileDialog>,
     /// The viewer asks for the keyboard
@@ -210,6 +212,7 @@ impl App {
             clipboard: None,
             clipboard_source: Box::new(crate::clipboard::SystemClipboard),
             pasted_files: None,
+            waiting_events: Vec::new(),
             dialog: None,
             focus_viewer: false,
             viewer: Default::default(),

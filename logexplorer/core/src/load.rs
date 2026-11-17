@@ -522,4 +522,21 @@ mod tests {
         assert!(profile_bundle(br#"{"kind":"other"}"#).is_none());
         assert!(profile_bundle(br#"{"message":"LogExplorerProfiles"}"#).is_none());
     }
+
+    /// Windows refuses such a path to programs that do not ask for long paths
+    #[test]
+    fn a_file_under_a_path_longer_than_260_characters_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut folder = dir.path().to_path_buf();
+        while folder.as_os_str().len() < 300 {
+            folder.push("a folder with a long name ž".repeat(2));
+        }
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("long path.log");
+        std::fs::write(&path, "one\r\ntwo").unwrap();
+        assert_eq!(total_size(std::slice::from_ref(&path)), 8);
+        let Ok(Input::Text(source)) = read_input(&path, &LoadProgress::default(), &Cancel::new()) else { panic!("the file is read as text") };
+        assert_eq!(lines_of(&source.stage), ["one", "two"]);
+        assert_eq!(source.stage.sources[0].label, "long path.log");
+    }
 }

@@ -153,7 +153,7 @@ Todos os comandos de destinos e filtros ficam sob `Alt` e se comportam da mesma 
 
 `Alt+K` abre a **Calculadora** integrada de qualquer lugar da janela, sem selecionar um arquivo. Você também pode clicar em **Calculadora** na barra inferior. Ela funciona offline com o Microsoft Edge WebView2 Runtime instalado e inclui os modos Standard, Scientific e Programmer. Ao mudar de modo ou expandir um painel, a janela se ajusta automaticamente ao conteúdo atual, até o limite da área de trabalho disponível do monitor; conteúdos maiores continuam acessíveis por rolagem. Selecione **Fraction** ou **Mixed** abaixo do resultado para exibir frações exatas e atalhos para inseri-las. Histórico, memória, zoom e estado maximizado são mantidos entre as execuções.
 
-Fechar a janela principal do File Search Manager encerra o aplicativo e fecha todas as janelas das ferramentas HTML integradas, incluindo a Calculadora, o explorador de logs e o editor hexadecimal.
+Fechar a janela principal do File Search Manager encerra o aplicativo e fecha todas as janelas das ferramentas HTML integradas (a Calculadora e o editor hexadecimal). O Log Explorer é um programa à parte e permanece aberto.
 
 Enquanto uma sequência de teclado está ativa, **Dicas** mostra apenas as próximas teclas válidas. `Esc` só é oferecido quando soltar as teclas pressionadas executaria uma ação e `Alt` não está pressionado. Isso também vale em uma sequência com `Alt` depois de soltá-lo mantendo outra tecla da sequência. `Backspace` sempre volta um passo. Os controles de fluxo são separados das opções de comando por uma linha.
 
@@ -177,7 +177,7 @@ Comandos comuns:
 - `X`: recortar os itens selecionados para a área de transferência.
 - `D`: comparar dois arquivos ou duas pastas em uma ferramenta de comparação instalada e compatível. Para dois arquivos, o VS Code serve como alternativa (`--diff`). Sem uma ferramenta instalada adequada, a dica fica oculta.
 - `H`: abrir um arquivo no editor hexadecimal integrado ou comparar dois arquivos. Funciona offline.
-- `L`: abrir os arquivos selecionados no Log Explorer integrado. Funciona offline. Pergunta antes quando os arquivos somam mais de 100 MB ou passam de 500, porque o Log Explorer mantém tudo na memória.
+- `L`: abrir os arquivos selecionados no Log Explorer integrado. Funciona offline. Pergunta antes somente quando os arquivos podem não caber na memória (somam mais da metade dela), porque o Log Explorer mantém o texto deles na memória.
 - `G`: mostrar nos arquivos — abrir os arquivos que contêm o texto pesquisado (linhas verdes) em uma janela do explorador de logs, concatenados e filtrados às linhas com o texto. Também o botão **Mostrar nos arquivos** ao lado da opção de maiúsculas e o menu de contexto.
 - `V`: colar os arquivos da área de transferência nas pastas selecionadas ou nas pastas pai.
 - `O`: abrir os itens selecionados em outro aplicativo.

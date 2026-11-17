@@ -81,6 +81,63 @@ fn markup(text: &str, size: f32) -> LayoutJob {
 
 // --- the keyboard ---------------------------------------------------------------------------------
 
+/// A key that types or edits text in a field, as opposed to one that ends or leaves it
+fn edits_text(key: Key, modifiers: Modifiers) -> bool {
+    let name = key.name();
+    let function_key = name.len() > 1 && name.starts_with('F') && name[1..].bytes().all(|digit| digit.is_ascii_digit());
+    !(modifiers.ctrl || modifiers.alt || modifiers.command || function_key || matches!(key, Key::Enter | Key::Escape | Key::Tab))
+}
+
+fn is_modifier(key: Key) -> bool {
+    matches!(key, Key::ShiftLeft | Key::ShiftRight | Key::ControlLeft | Key::ControlRight | Key::AltLeft | Key::AltRight | Key::SuperLeft | Key::SuperRight)
+}
+
+/// Keys can come faster than frames (a slow renderer, a script, a macro key). Several
+/// presses are then in one frame, where the shortcuts act on one of them only and a field
+/// that a key gives the keyboard to misses the text behind that key. So a frame takes one
+/// key press and what came behind it waits for the next frame - but for the repeats of a
+/// held key and for typing into a field, which the field takes whole. This is done to the
+/// input before the toolkit reads it (Esc and Tab move the keyboard there).
+pub fn one_key_press_a_frame(ctx: &egui::Context, app: &mut App, raw: &mut egui::RawInput) {
+    let typing = ctx.text_edit_focused();
+    let mut events = std::mem::take(&mut app.waiting_events);
+    events.append(&mut raw.events);
+    // The first press of the frame: where it is and whether it is typing. (The changes of
+    // the modifiers are events too and wait with the keys they belong to.)
+    let mut first: Option<(usize, bool)> = None;
+    let mut end = events.len();
+    for (index, event) in events.iter().enumerate() {
+        let behind = match event {
+            egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } if !is_modifier(*key) => {
+                let text = typing && edits_text(*key, *modifiers);
+                match first {
+                    None => {
+                        first = Some((index, text));
+                        false
+                    }
+                    Some((_, typed)) => !(typed && text),
+                }
+            }
+            // Text behind a shortcut is for what the shortcut opens - unless it is the
+            // character of that very key, which comes right with it
+            egui::Event::Text(_) | egui::Event::Paste(_) => first.is_some_and(|(at, typed)| !typed && index != at + 1),
+            // A frame has one set of modifiers: the keys held when its key was pressed, not
+            // the ones of what comes next
+            egui::Event::ModifiersChanged(_) => first.is_some(),
+            _ => false,
+        };
+        if behind {
+            end = index;
+            break;
+        }
+    }
+    app.waiting_events = events.split_off(end);
+    raw.events = events;
+    if !app.waiting_events.is_empty() {
+        ctx.request_repaint();
+    }
+}
+
 fn pressed(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> bool {
     ctx.input_mut(|input| input.consume_key(modifiers, key))
 }
@@ -1140,8 +1197,12 @@ fn file_dialogs(ctx: &egui::Context, app: &mut App) {
 }
 
 fn dropped_files(ctx: &egui::Context, app: &mut App) {
-    let dropped: Vec<std::path::PathBuf> =
+    #[allow(unused_mut)]
+    let mut dropped: Vec<std::path::PathBuf> =
         ctx.input(|input| input.raw.dropped_files.iter().map(|file| file.path().to_path_buf()).filter(|path| !path.as_os_str().is_empty()).collect());
+    // Into an elevated program on Windows the files come past the window library
+    #[cfg(windows)]
+    dropped.extend(crate::elevated_drop::take());
     if !dropped.is_empty() {
         app.open_paths(dropped, None, None);
     }

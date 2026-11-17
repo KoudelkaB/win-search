@@ -38,7 +38,10 @@ namespace search.Tests
         /// <summary>The programs the window asked to start - none of them runs</summary>
         public System.Collections.Generic.List<System.Diagnostics.ProcessStartInfo> Launched { get; } = new();
 
-        /// <summary>The web apps the window asked to open: the page, its files, the Log explorer filter</summary>
+        /// <summary>
+        /// The web apps and the Log explorer the window asked to open: the page (Apps.LogExplorer
+        /// for the program), its files, what Log explorer starts with
+        /// </summary>
         public System.Collections.Generic.List<(string Page, string[] Files, LogExplorerLoad Load)> WebApps { get; } = new();
 
         readonly TimeSpan progressDelay = MainWindow.ProgressDialogDelay;
@@ -59,7 +62,8 @@ namespace search.Tests
             System.IO.File.WriteAllText(scene.Other, "other");
             //Nothing a test does starts a real program or a web view
             ProcessLauncher.Override = start => { scene.Launched.Add(start); return null; };
-            WebAppWindow.OpenOverride = (page, files, load) => scene.WebApps.Add((page, files, load));
+            WebAppWindow.OpenOverride = (page, files) => scene.WebApps.Add((page, files, null));
+            NativeLogExplorer.OpenOverride = (files, load) => scene.WebApps.Add((Apps.LogExplorer, files, load));
 
             var window = new MainWindow(startFileSystem: false);
             scene.Window = window;
@@ -434,6 +438,7 @@ namespace search.Tests
             Window.Close();
             ProcessLauncher.Override = null;
             WebAppWindow.OpenOverride = null;
+            NativeLogExplorer.OpenOverride = null;
             MainWindow.ProgressDialogDelay = progressDelay;
             if (recycles)
             {

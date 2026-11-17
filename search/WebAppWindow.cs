@@ -21,7 +21,7 @@ namespace search
     /// Top-level window hosting one of the single-file HTML apps copied to WebApps next to the
     /// exe (from the external/singleHtmlApps submodule, https://github.com/KoudelkaB/singleHtmlApps).
     /// The HTML files stay unmodified copies of the upstream apps; the selected files are
-    /// handed to the page's own file input, drop handler or embedding API.
+    /// handed to the file inputs of the page (the Hex editor; the calculator takes none).
     ///
     /// Windows: Avalonia's NativeWebView runs WebView2, driven through its CoreWebView2 - the
     /// pages come from a virtual https host mapped to the local folder and the files arrive
@@ -84,8 +84,8 @@ namespace search
         });
 
         /// <summary>
-        /// Set when the handoff failed on a runtime that passed the version check - keeps the
-        /// text viewer on its fallback for the rest of the session
+        /// Set when the handoff failed on a runtime that passed the version check - the Hex
+        /// editor is not offered for the rest of the session
         /// </summary>
         static volatile bool handoffUnsupported;
 
@@ -105,9 +105,6 @@ namespace search
         // "inputs" - one file per <input type=file>; "after" delays a step until that element
         //            is shown (Hex editor resets the comparison pane while loading the first file,
         //            so the second one must wait for it);
-        // "drop"   - all files in one drop event on the document (Log explorer multi-file input);
-        // "logExplorer" - options for window.logExplorer.open(files, options) of the page (full
-        //            paths, combine mode and a starting filter), the drop is the fallback without it.
         // "fallback" - where the host serves a file whose handle cannot be read (+ its index,
         //            see ServeFile).
         const string FileHandoffScript = """
@@ -140,20 +137,12 @@ namespace search
                     const m = e.data || {};
                     const handles = Array.from(e.additionalObjects || []);
                     const results = await Promise.allSettled(handles.map((h, i) => Promise.resolve().then(() => read(h, m.fallback && m.fallback + i))));
-                    const files = [], paths = [], failed = [];
+                    const files = [], failed = [];
                     results.forEach((r, index) => r.status === 'fulfilled'
-                        ? (files.push(r.value), paths.push(((m.logExplorer || {}).paths || [])[index]))
+                        ? files.push(r.value)
                         : failed.push({ index, error: String((r.reason && (r.reason.message || r.reason.name)) || r.reason) }));
                     if (failed.length) chrome.webview.postMessage({ failed });
                     if (!files.length) return;
-                    if (m.logExplorer && window.logExplorer) {
-                        await window.logExplorer.open(files, { ...m.logExplorer, paths });
-                        return;
-                    }
-                    if (m.drop) {
-                        document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer(files) }));
-                        return;
-                    }
                     for (let i = 0; i < files.length && i < (m.inputs || []).length; i++) {
                         const step = m.inputs[i];
                         if (step.after) await until(() => shown(step.after));
@@ -201,7 +190,6 @@ namespace search
         readonly Border noticeBar;
         readonly string page;
         readonly string[] files;
-        readonly LogExplorerLoad load;
         readonly DispatcherTimer saveLayout;
         /// <summary>Where this window's page fetches its files: FilesOrigin + this + the file's index (see ServeFile)</summary>
         readonly string filesPath = Guid.NewGuid().ToString("N") + "/";
@@ -225,34 +213,31 @@ namespace search
             => !string.IsNullOrWhiteSpace(runtimeVersion) &&
                CoreWebView2Environment.CompareBrowserVersions(runtimeVersion, MinimumRuntime) >= 0;
 
-        public static bool IsWebApp(string app) => app is Apps.LogExplorer or Apps.HexEditor or Apps.Calculator;
+        public static bool IsWebApp(string app) => app is Apps.HexEditor or Apps.Calculator;
 
         /// <summary>
-        /// Replaces opening a web app (the UI tests record what would open: the page, the
-        /// files and the Log explorer filter); null opens the window
+        /// Replaces opening a web app (the UI tests record what would open: the page and the
+        /// files); null opens the window
         /// </summary>
-        internal static Action<string, string[], LogExplorerLoad> OpenOverride;
+        internal static Action<string, string[]> OpenOverride;
 
         /// <summary>
-        /// Show the app in a new window with the files loaded. Log explorer takes them as one
-        /// appended source with the filter when load is given, otherwise it asks how to combine them.
+        /// Show the app in a new window with the files loaded
         /// </summary>
-        public static void Open(string page, string[] files = null, LogExplorerLoad load = null)
+        public static void Open(string page, string[] files = null)
         {
             files ??= Array.Empty<string>();
             if (OpenOverride != null)
             {
-                OpenOverride(page, files, load);
+                OpenOverride(page, files);
                 return;
             }
-            //Log explorer is a program of its own where the build ships it (see NativeLogExplorer)
-            if (page == Apps.LogExplorer && NativeLogExplorer.TryOpen(files, load)) return;
             if (!OperatingSystem.IsWindows() && linuxHost.Value != LinuxHost.Embedded)
             {
-                OpenOutside(page, files, load);
+                OpenOutside(page, files);
                 return;
             }
-            new WebAppWindow(page, files, load).Show();
+            new WebAppWindow(page, files).Show();
         }
 
         /// <summary>
@@ -273,7 +258,7 @@ namespace search
         /// <summary>
         /// Linux without an embeddable WebKitGTK: a native web dialog, or the default browser
         /// </summary>
-        static void OpenOutside(string page, string[] files, LogExplorerLoad load)
+        static void OpenOutside(string page, string[] files)
         {
             var layout = WebAppLayoutStore.Load(page);
             string token = null;
@@ -295,7 +280,7 @@ namespace search
                 }
                 catch { }
             }
-            string Register(bool hostZoom) => WebAppServer.Register(page, files, MessageFor(page, files, load), layout.Zoom, hostZoom, Receive, out token);
+            string Register(bool hostZoom) => WebAppServer.Register(page, files, MessageFor(page), layout.Zoom, hostZoom, Receive, out token);
 
             if (linuxHost.Value == LinuxHost.Dialog)
             {
@@ -378,11 +363,10 @@ namespace search
         /// </summary>
         internal string NoticeText => noticeBar.IsVisible ? notice.Text : null;
 
-        WebAppWindow(string page, string[] files, LogExplorerLoad load)
+        WebAppWindow(string page, string[] files)
         {
             this.page = page;
             this.files = files;
-            this.load = load;
             Title = TitleFor(page, files, null);
             Icon = App.MainWindowOrNull?.Icon;
             var layout = WebAppLayoutStore.Load(page);
@@ -523,27 +507,18 @@ namespace search
                 : documentTitle));
         }
 
-        string Message => MessageFor(page, files, load);
+        string Message => MessageFor(page);
 
         /// <summary>
-        /// The host message telling FileHandoffScript how to hand the files to the page. Log
-        /// explorer gets their full paths too - a browser File carries only the name.
+        /// The host message telling FileHandoffScript how to hand the files to the page: the
+        /// two file inputs of the Hex editor. The other pages take no files.
         /// </summary>
-        internal static string MessageFor(string page, string[] files, LogExplorerLoad load) => page == Apps.HexEditor
+        internal static string MessageFor(string page) => page == Apps.HexEditor
             ? """{"inputs":[{"id":"file-input-1"},{"id":"file-input-2","after":"main-content"}]}"""
-            : JsonSerializer.Serialize(new
-            {
-                drop = true,
-                logExplorer = new
-                {
-                    paths = files,
-                    combine = load == null ? null : "append",
-                    filter = string.IsNullOrEmpty(load?.Filter) ? null : new { text = load.Filter, caseSensitive = load.CaseSensitive }
-                }
-            });
+            : "{}";
 
         /// <summary>
-        /// The page in the UI language of the application (Log explorer is localized)
+        /// The page in the UI language of the application (a localized page reads it)
         /// </summary>
         internal static string UrlFor(string page)
             => Origin + page + "?lang=" + Uri.EscapeDataString(CultureInfo.CurrentUICulture.Name);
@@ -790,13 +765,6 @@ namespace search
         void HandoffUnsupported()
         {
             handoffUnsupported = true;
-            if (page == Apps.LogExplorer)
-            {
-                //Keep the text viewer working - the same fallback as without the runtime
-                foreach (var file in files) Apps.Notepad.Open($"\"{file}\"");
-                Close();
-                return;
-            }
             ShowNotice(L.Format("WebRuntimeTooOld", MinimumRuntime));
         }
 
@@ -822,11 +790,6 @@ namespace search
         }
     }
 
-    /// <summary>
-    /// What a Log explorer window starts with: the files appended as one source, filtered to
-    /// the lines containing Filter (none when empty)
-    /// </summary>
-    internal sealed record LogExplorerLoad(string Filter, bool CaseSensitive);
 
     /// <summary>
     /// Zoom and window size of one web app, kept when the user changes them
@@ -840,7 +803,7 @@ namespace search
     }
 
     /// <summary>
-    /// WebAppLayout per app page, e.g. {"LogExplorer.html":{"Zoom":0.8,"Width":1280,...}}
+    /// WebAppLayout per app page, e.g. {"calculator.html":{"Zoom":0.8,"Width":1280,...}}
     /// </summary>
     internal static class WebAppLayoutStore
     {

@@ -10,8 +10,8 @@ using Xunit;
 namespace search.Tests
 {
     /// <summary>
-    /// Log explorer as the native program of the build (logexplorer/): its command line says
-    /// what the HTML page is told through window.logExplorer.open.
+    /// Log explorer, the program of the build (logexplorer/): its command line says which
+    /// files to open, how to combine them and what to filter them by.
     /// </summary>
     public class NativeLogExplorerTests
     {
@@ -48,7 +48,7 @@ namespace search.Tests
         public void ItAsksOnlyWhenTheFilesWouldNotFitInMemory()
         {
             const ulong memory = 16UL << 30;
-            Assert.False(NativeLogExplorer.NeedsConfirmation(MainWindow.LogExplorerConfirmBytes * 10, memory));
+            Assert.False(NativeLogExplorer.NeedsConfirmation(1UL << 30, memory));
             Assert.False(NativeLogExplorer.NeedsConfirmation(memory / 2, memory));
             Assert.True(NativeLogExplorer.NeedsConfirmation(memory / 2 + 1, memory));
             Assert.True(NativeLogExplorer.MemoryBytes > 0);
@@ -56,20 +56,24 @@ namespace search.Tests
 
         //On the UI thread like the tests of the main window: they replace the launcher too
         [AvaloniaFact]
-        public void TheProgramOfTheBuildOpensLogExplorerAndABuildWithoutItFallsBackToThePage()
+        public void TheProgramOfTheBuildOpensLogExplorerAndABuildWithoutItHasNone()
         {
             var folder = Path.Combine(Path.GetTempPath(), "win-search-native-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(folder);
             var program = Path.Combine(folder, OperatingSystem.IsWindows() ? "logexplorer.exe" : "logexplorer");
             var started = new List<ProcessStartInfo>();
-            var (launcher, path) = (ProcessLauncher.Override, NativeLogExplorer.PathOverride);
+            var (launcher, path, open) = (ProcessLauncher.Override, NativeLogExplorer.PathOverride, NativeLogExplorer.OpenOverride);
             try
             {
                 ProcessLauncher.Override = start => { started.Add(start); return null; };
                 NativeLogExplorer.PathOverride = program;
+                NativeLogExplorer.OpenOverride = null;
 
+                //Without the program the text viewer is the editor, and L is not offered
                 Assert.False(NativeLogExplorer.IsAvailable);
-                Assert.False(NativeLogExplorer.TryOpen(new[] { "/a.log" }, null));
+                Assert.False(Apps.LogExplorerAvailable);
+                Assert.NotEqual(Apps.LogExplorer, Apps.TextViever);
+                Assert.False(NativeLogExplorer.Open(new[] { "/a.log" }));
                 Assert.Empty(started);
 
                 File.WriteAllText(program, "");
@@ -77,8 +81,7 @@ namespace search.Tests
                 Assert.True(Apps.LogExplorerAvailable);
                 Assert.Equal(Apps.LogExplorer, Apps.TextViever);
 
-                //Opening the page of Log explorer starts the program; the other pages stay pages
-                WebAppWindow.Open(Apps.LogExplorer, new[] { "/logs/a.log" }, new LogExplorerLoad("ERROR", true));
+                Assert.True(NativeLogExplorer.Open(new[] { "/logs/a.log" }, new LogExplorerLoad("ERROR", true)));
                 var start = Assert.Single(started);
                 Assert.Equal(program, start.FileName);
                 Assert.False(start.UseShellExecute);
@@ -90,6 +93,7 @@ namespace search.Tests
             {
                 ProcessLauncher.Override = launcher;
                 NativeLogExplorer.PathOverride = path;
+                NativeLogExplorer.OpenOverride = open;
                 Directory.Delete(folder, true);
             }
         }

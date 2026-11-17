@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
+using FlaUI.Core.Input;
 using FlaUI.Core.WindowsAPI;
 using Xunit;
 
@@ -170,29 +171,64 @@ namespace search.Smoke
             await WindowsApp.WaitUntil(() => ResultOf(calculator) == "9", TimeSpan.FromSeconds(10), "the result 9");
         }
 
+        static string NativeLogExplorer => Path.Combine(Path.GetDirectoryName(PublishedApp.Executable), "LogExplorer", "logexplorer.exe");
+
         /// <summary>
-        /// Chromium lets no web page read a file in AppData (Temp included) through its handle;
-        /// the app serves those itself - archive entries and the text of documents open from Temp
+        /// L opens the file in Log explorer, the program of the build (logexplorer/): its
+        /// window is titled with the file and shows the file's rows. A build made without
+        /// Rust has no Log explorer - a skip here, a failure in the workflows (CI).
         /// </summary>
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public async Task TheLogExplorerShowsTheFileInItsWebView(bool inTemp)
+        [Fact]
+        public async Task LOpensTheFileInTheNativeLogExplorer()
         {
-            var file = inTemp ? Path.Combine(app.Root, $"{app.Token}-temp.txt") : app.Before;
-            var text = $"smoke {app.Token} {(inTemp ? "temp" : "before")}";
-            if (inTemp) File.WriteAllText(file, text);
-            var name = Path.GetFileName(file);
+            if (!File.Exists(NativeLogExplorer))
+            {
+                const string reason = "This build has no Log explorer (LogExplorer\\logexplorer.exe): build logexplorer/ with cargo first";
+                if (Environment.GetEnvironmentVariable("CI") is { Length: > 0 }) Assert.Fail(reason);
+                Assert.Skip(reason);
+            }
+            var name = BeforeName;
             await app.ShowOnly(app.Token, names => names.Contains(name));
             await app.SelectRow(name);
+            var before = System.Diagnostics.Process.GetProcessesByName("logexplorer").Select(p => p.Id).ToHashSet();
 
             app.Press(VirtualKeyShort.KEY_L);
 
-            var explorer = await app.Opened("WebAppWindow", TimeSpan.FromSeconds(30));
-            await WindowsApp.WaitUntil(() => explorer.FindAllDescendants()
-                .Any(e => e.Properties.Name.ValueOrDefault?.Contains(text) == true),
-                TimeSpan.FromSeconds(30), "the file's text in the Log explorer");
-            Assert.DoesNotContain(explorer.FindAllDescendants(), e => e.Properties.Name.ValueOrDefault?.StartsWith("Could not read") == true);
+            var title = $"{name} - Log Explorer";
+            var explorer = await WindowsApp.WaitFor(() => System.Diagnostics.Process.GetProcessesByName("logexplorer")
+                .FirstOrDefault(p => !before.Contains(p.Id) && p.MainWindowTitle == title), TimeSpan.FromSeconds(30), "the Log explorer window");
+            try
+            {
+                var window = explorer.MainWindowHandle;
+                var expected = File.ReadAllText(app.Before).Replace("\r\n", "\n").TrimEnd('\n');
+                var seen = "nothing: its window did not come to the front";
+                try
+                {
+                    await WindowsApp.WaitUntil(() =>
+                    {
+                        //Real keys go to the foreground window: none is sent before it is Log explorer's
+                        if (ForegroundWindow.Handle() != window) ForegroundWindow.Bring(window);
+                        if (ForegroundWindow.Handle() != window) return false;
+                        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+                        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_C);
+                        Wait.UntilInputIsProcessed();
+                        seen = SystemClipboard.Text();
+                        return seen?.Replace("\r\n", "\n").TrimEnd('\n') == expected;
+                    }, TimeSpan.FromSeconds(20), "the rows of the file in Log explorer");
+                }
+                catch (TimeoutException e)
+                {
+                    throw new TimeoutException($"{e.Message}: \"{expected}\" expected, copied from it: \"{seen}\"");
+                }
+                //Closed as a user closes it, it ends cleanly
+                Assert.True(explorer.CloseMainWindow());
+                Assert.True(explorer.WaitForExit(10000), "Log explorer did not end after its window was closed");
+            }
+            finally
+            {
+                if (!explorer.HasExited) explorer.Kill();
+                explorer.Dispose();
+            }
         }
 
         /// <summary>Two files selected open side by side for comparison - one of them from Temp</summary>

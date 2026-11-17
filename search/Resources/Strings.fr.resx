@@ -38,12 +38,6 @@
   <data name="SelectFound" xml:space="preserve"><value>Sélectionner les fichiers trouvés</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>Ouvrir les fichiers contenant le texte recherché dans une fenêtre de l'explorateur de journaux, filtrés sur les lignes contenant ce texte (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>Aucun fichier ne contient le texte recherché</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>L'explorateur de journaux charge les fichiers en mémoire, où ils occupent plusieurs fois leur taille sur le disque.
-
-Fichiers : {0}
-Taille totale : {1}
-
-Les ouvrir quand même ?</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>L'explorateur de journaux charge les fichiers en mémoire, et ceux-ci risquent de ne pas y tenir.
 
 Fichiers : {0}

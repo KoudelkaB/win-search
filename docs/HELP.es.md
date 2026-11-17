@@ -153,7 +153,7 @@ Todos los comandos de destinos y filtros están bajo `Alt` y se comportan igual 
 
 `Alt+K` abre la **Calculadora** integrada desde cualquier parte de la ventana, sin seleccionar un archivo. También puede pulsar **Calculadora** en la barra inferior. Funciona sin conexión con Microsoft Edge WebView2 Runtime instalado e incluye los modos Standard, Scientific y Programmer. Al cambiar de modo o expandir un panel, la ventana se ajusta automáticamente al contenido actual, hasta el área de trabajo disponible del monitor; si el contenido es mayor, se puede desplazar. Seleccione **Fraction** o **Mixed** debajo del resultado para mostrar fracciones exactas y accesos directos para introducirlas. El historial, la memoria, el zoom y el estado maximizado se conservan entre ejecuciones.
 
-Al cerrar la ventana principal de File Search Manager, la aplicación se cierra junto con todas las ventanas de las herramientas HTML integradas, incluidas la Calculadora, el explorador de registros y el editor hexadecimal.
+Al cerrar la ventana principal de File Search Manager, la aplicación se cierra junto con todas las ventanas de las herramientas HTML integradas (la Calculadora y el editor hexadecimal). El Log Explorer es un programa aparte y permanece abierto.
 
 Mientras una secuencia de teclado está activa, **Pistas** muestra solo las teclas siguientes válidas. `Esc` se ofrece únicamente cuando soltar las teclas mantenidas ejecutaría una acción y `Alt` no está pulsado. Esto también funciona en una secuencia con `Alt` después de soltarlo manteniendo otra tecla de la secuencia. `Backspace` siempre retrocede un paso. Los controles de flujo se separan de las opciones de comando mediante una línea.
 
@@ -177,7 +177,7 @@ Comandos habituales:
 - `X`: cortar los elementos seleccionados al portapapeles.
 - `D`: comparar dos archivos o dos carpetas en una herramienta de comparación instalada y compatible. Para dos archivos, VS Code sirve como alternativa (`--diff`). Sin una herramienta instalada adecuada, la pista se oculta.
 - `H`: abrir un archivo en el editor hexadecimal integrado o comparar dos archivos. Funciona sin conexión.
-- `L`: abrir los archivos seleccionados en el Log Explorer integrado. Funciona sin conexión. Pregunta antes si los archivos suman más de 100 MB o son más de 500, porque el Log Explorer los mantiene en memoria.
+- `L`: abrir los archivos seleccionados en el Log Explorer integrado. Funciona sin conexión. Pregunta antes solo si los archivos podrían no caber en la memoria (suman más de la mitad de ella), porque el Log Explorer mantiene su texto en memoria.
 - `G`: mostrar en archivos — abrir los archivos que contienen el texto buscado (filas verdes) en una ventana del explorador de registros, unidos y filtrados a las líneas con el texto. También el botón **Mostrar en archivos** junto a la opción de mayúsculas y el menú contextual.
 - `V`: pegar los archivos del portapapeles en las carpetas seleccionadas o en sus carpetas padre.
 - `O`: abrir los elementos seleccionados en otra aplicación.

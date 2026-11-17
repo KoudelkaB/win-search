@@ -153,7 +153,7 @@ Toutes les commandes de cibles et de filtres se trouvent sous `Alt` et se compor
 
 `Alt+K` ouvre la **Calculatrice** intégrée depuis n’importe où dans la fenêtre, sans sélectionner de fichier. Vous pouvez aussi cliquer sur **Calculatrice** dans la barre inférieure. Elle fonctionne hors connexion avec Microsoft Edge WebView2 Runtime installé et propose les modes Standard, Scientific et Programmer. Lorsque vous changez de mode ou développez un panneau, la fenêtre s’adapte automatiquement au contenu actuel, dans la limite de la zone de travail disponible du moniteur ; si le contenu est plus grand, il reste accessible par défilement. Sélectionnez **Fraction** ou **Mixed** sous le résultat pour afficher les fractions exactes et les raccourcis de saisie des fractions. L’historique, la mémoire, le zoom et l’état maximisé sont conservés entre les lancements.
 
-La fermeture de la fenêtre principale de File Search Manager quitte l’application et ferme toutes les fenêtres des outils HTML intégrés, notamment la Calculatrice, l’explorateur de journaux et l’éditeur hexadécimal.
+La fermeture de la fenêtre principale de File Search Manager quitte l’application et ferme toutes les fenêtres des outils HTML intégrés (la Calculatrice et l’éditeur hexadécimal). Le Log Explorer est un programme à part et reste ouvert.
 
 Tant qu’une séquence clavier est active, **Raccourcis** n’affiche que les touches suivantes valides. `Esc` n’est proposé que si relâcher les touches maintenues exécuterait une action et que `Alt` n’est pas maintenu. Cela vaut aussi dans une séquence `Alt` après avoir relâché `Alt` tout en maintenant une autre touche de séquence. `Backspace` revient toujours d’un pas. Les commandes de flux sont séparées des choix de commandes par une ligne.
 
@@ -177,7 +177,7 @@ Commandes courantes :
 - `X` : couper les éléments sélectionnés dans le presse-papiers.
 - `D` : comparer deux fichiers ou deux dossiers dans un outil de comparaison installé et compatible. Pour deux fichiers, VS Code sert de solution de repli (`--diff`). Sans outil installé adapté, le raccourci est masqué.
 - `H` : ouvrir un fichier dans l’éditeur hexadécimal intégré ou comparer deux fichiers. Fonctionne hors ligne.
-- `L` : ouvrir les fichiers sélectionnés dans le Log Explorer intégré. Fonctionne hors ligne. Demande d’abord confirmation si les fichiers dépassent 100 Mo au total ou sont plus de 500, car le Log Explorer les garde en mémoire.
+- `L` : ouvrir les fichiers sélectionnés dans le Log Explorer intégré. Fonctionne hors connexion. Ne demande confirmation que si les fichiers risquent de ne pas tenir en mémoire (plus de la moitié de celle-ci au total), car le Log Explorer garde leur texte en mémoire.
 - `G` : afficher dans les fichiers — ouvrir les fichiers contenant le texte recherché (lignes vertes) dans une fenêtre de l'explorateur de journaux, mis bout à bout et filtrés sur les lignes contenant ce texte. Également le bouton **Afficher dans les fichiers** à côté de l'option de casse et le menu contextuel.
 - `V` : coller les fichiers du presse-papiers dans les dossiers sélectionnés ou parents.
 - `O` : ouvrir les éléments sélectionnés dans une autre application.

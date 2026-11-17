@@ -38,12 +38,6 @@
   <data name="SelectFound" xml:space="preserve"><value>찾은 파일 선택</value></data>
   <data name="ShowInFilesTip" xml:space="preserve"><value>검색한 텍스트가 포함된 파일을 하나의 로그 탐색기 창에서 열고 해당 텍스트가 있는 줄로 필터링합니다 (G)</value></data>
   <data name="NoFoundFiles" xml:space="preserve"><value>검색한 텍스트가 포함된 파일이 없습니다</value></data>
-  <data name="LogExplorerLarge" xml:space="preserve"><value>로그 탐색기는 파일을 메모리에 로드하며, 디스크 크기의 몇 배에 해당하는 메모리를 사용합니다.
-
-파일 수: {0}
-전체 크기: {1}
-
-그래도 여시겠습니까?</value></data>
   <data name="LogExplorerMemory" xml:space="preserve"><value>로그 탐색기는 파일을 메모리에 로드하는데, 이 파일들은 메모리에 다 들어가지 않을 수 있습니다.
 
 파일 수: {0}

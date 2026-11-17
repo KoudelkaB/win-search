@@ -1788,6 +1788,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "logexplorer-core",
+ "raw-window-handle",
  "rayon",
  "rfd",
  "serde",
