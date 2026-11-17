@@ -111,6 +111,12 @@ for (const crate of crates) {
     lines.push(`${name} - ${license || 'unknown'}${crate.repository ? ` - ${crate.repository}` : ''}`);
 
     const files = shipped(directory);
+    // sctk-adwaita embeds Cantarell under OFL-1.1, but its crate only ships the
+    // code's MIT license file. Preserve the font's embedded copyright as well.
+    if (crate.name === 'sctk-adwaita') {
+        add(fs.readFileSync(path.join(__dirname, 'license-texts', 'Cantarell-OFL.txt'), 'utf8'),
+            `${name} (src/title/Cantarell-Regular.ttf)`);
+    }
     if (crate.license_file && !files.includes(path.join(directory, crate.license_file))) files.push(path.join(directory, crate.license_file));
     for (const file of files) add(fs.readFileSync(file, 'utf8'), `${name} (${path.relative(directory, file).replace(/\\/g, '/')})`);
     if (files.length || !chosen) continue;
