@@ -86,7 +86,7 @@ jobs:
 
       # Mesa's software renderers draw the window of Log explorer
       - name: X server tools
-        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip wmctrl openbox libxkbcommon-x11-0 libxcursor1 libxi6 libegl1 libgl1-mesa-dri mesa-vulkan-drivers
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip wmctrl openbox x11-apps libxkbcommon-x11-0 libxcursor1 libxi6 libegl1 libgl1-mesa-dri mesa-vulkan-drivers
 
       # Started by hand the tests publish the app themselves: Log explorer goes with it
       - name: Build Log explorer
@@ -137,5 +137,5 @@ jobs:
         if: always()
         with:
           name: smoke-results-Linux
-          path: TestResults/*.trx
+          path: TestResults/**
           if-no-files-found: error

@@ -91,6 +91,12 @@ namespace search.Smoke
             }
             catch (TimeoutException error)
             {
+                var diagnostics = Path.Combine("TestResults", "Diagnostics");
+                Directory.CreateDirectory(diagnostics);
+                try { PublishedApp.Run("xwd", $"-root -silent -out {Path.Combine(diagnostics, "rename.xwd")}"); }
+                catch (Exception captureError) { Console.WriteLine(captureError.Message); }
+                var log = Path.Combine(app.Data, "log.txt");
+                if (File.Exists(log)) File.Copy(log, Path.Combine(diagnostics, "app.log"), overwrite: true);
                 throw new TimeoutException($"{error.Message}; clipboard: {copied}; files: {string.Join(", ", Directory.GetFiles(app.Work))}", error);
             }
             //The name without its extension is selected in the editor: typing replaces it
