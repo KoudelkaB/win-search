@@ -91,7 +91,8 @@ namespace search.Smoke
             }
             catch (TimeoutException error)
             {
-                var diagnostics = Path.Combine("TestResults", "Diagnostics");
+                var diagnostics = Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE")
+                    ?? Environment.CurrentDirectory, "TestResults", "Diagnostics");
                 Directory.CreateDirectory(diagnostics);
                 try { PublishedApp.Run("xwd", $"-root -silent -out {Path.Combine(diagnostics, "rename.xwd")}"); }
                 catch (Exception captureError) { Console.WriteLine(captureError.Message); }
