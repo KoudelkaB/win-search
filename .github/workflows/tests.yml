@@ -35,4 +35,11 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Headless tests
-        run: dotnet test search.tests -c Release --logger "console;verbosity=normal"
+        run: dotnet test search.tests -c Release --logger "console;verbosity=normal" --logger trx --results-directory TestResults
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: headless-results-${{ runner.os }}
+          path: TestResults/*.trx
+          if-no-files-found: error

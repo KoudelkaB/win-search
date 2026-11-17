@@ -75,6 +75,10 @@ jobs:
             exit 1
           }
 
+      - name: Test the web apps shipped in the installer
+        working-directory: external/singleHtmlApps
+        run: node tests/run.cjs
+
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
@@ -140,6 +144,10 @@ jobs:
             echo "::error::singleHtmlApps upstream does not contain the pinned commit $pinned - merge it upstream before releasing"
             exit 1
           fi
+
+      - name: Test the web apps shipped in the packages
+        working-directory: external/singleHtmlApps
+        run: node tests/run.cjs
 
       - uses: actions/setup-dotnet@v5
         with:

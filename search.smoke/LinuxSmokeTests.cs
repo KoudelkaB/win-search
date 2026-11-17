@@ -77,7 +77,13 @@ namespace search.Smoke
             await LinuxApp.WaitFor(() => app.SelectedName() == Path.GetFileName(file) ? "row" : null, Load, "the file's row");
 
             app.Keys("F2");
-            await Task.Delay(500);
+            // F12 may still be publishing rows. Wait until the inline editor owns the
+            // keyboard and exposes its selected stem, instead of typing after a fixed delay.
+            await LinuxApp.WaitUntil(() =>
+            {
+                app.Keys("ctrl+c");
+                return X11.Clipboard() == Path.GetFileNameWithoutExtension(file);
+            }, TimeSpan.FromSeconds(10), "the selected name in the rename editor");
             //The name without its extension is selected in the editor: typing replaces it
             app.Type($"{app.Token}-renamed");
             app.Keys("Return");

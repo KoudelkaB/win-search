@@ -129,7 +129,13 @@ namespace search.Tests
             scene.Click(await scene.Dialog<MessageDialog>(), confirmed ? "OK" : "Cancel");
 
             if (confirmed)
-                await scene.Until(() => Entries(zip).Contains("a.txt"));
+            {
+                // Reading the ZIP while AddToArchive is opening it can deny its exclusive
+                // write handle on Windows. Wait for the operation, then inspect the result.
+                await scene.Until(() => scene.Status == L.Format("BasketUsed",
+                    FileOperationText.DescribeItems(new[] { scene.File }), 1));
+                Assert.Contains("a.txt", Entries(zip));
+            }
             else
             {
                 await scene.Until(() => !scene.Window.OwnedWindows.Any(w => w.IsVisible));
