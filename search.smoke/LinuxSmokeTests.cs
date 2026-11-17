@@ -98,6 +98,8 @@ namespace search.Smoke
                 catch (Exception captureError) { Console.WriteLine(captureError.Message); }
                 var log = Path.Combine(app.Data, "log.txt");
                 if (File.Exists(log)) File.Copy(log, Path.Combine(diagnostics, "app.log"), overwrite: true);
+                foreach (var trace in Directory.GetFiles(app.Data, "*.log"))
+                    File.Copy(trace, Path.Combine(diagnostics, Path.GetFileName(trace)), overwrite: true);
                 throw new TimeoutException($"{error.Message}; clipboard: {copied}; files: {string.Join(", ", Directory.GetFiles(app.Work))}", error);
             }
             //The name without its extension is selected in the editor: typing replaces it
