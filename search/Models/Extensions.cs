@@ -71,6 +71,7 @@ namespace search.Models
         /// </summary>
         /// <param name="file"></param>
         /// <param name="dest"></param>
+        /// <param name="overwrite">Replace what stands at dest - only once the link exists</param>
         /// <returns></returns>
         public static List<string> Hardlink(this string file, string dest, bool overwrite = false)
         {
@@ -78,34 +79,8 @@ namespace search.Models
             var replaced = false;
             try
             {
-                if (overwrite) replaced = dest.DeletePathIfExistsKeeping(file);
-                if (!OperatingSystem.IsWindows())
-                {
-                    // Directories cannot be hard linked on Unix - the closest equivalent of a
-                    // junction is a symbolic link to the absolute target
-                    if (System.IO.Directory.Exists(file))
-                        System.IO.Directory.CreateSymbolicLink(dest, Path.GetFullPath(file));
-                    else if (UnixLink(file, dest) != 0)
-                        throw new IOException($"Cannot create hard link '{dest}': {Marshal.GetLastPInvokeErrorMessage()}");
-                }
-                else if (System.IO.Directory.Exists(file))
-                {
-                    // Hardlink to directory i.e. NTFS Junction
-                    var e = Process.Start(new ProcessStartInfo("cmd.exe", $" /C mklink /J \"{dest}\" \"{file}\"")
-                    {
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        RedirectStandardError = true,
-                    }).StandardError.ReadToEnd();
-                    if (!string.IsNullOrEmpty(e)) errors.Add(e);
-                }
-                // Hardlink to file
-                else if (!CreateHardLink(dest, file, IntPtr.Zero))
-                {
-                    var e = Marshal.GetLastWin32Error();
-                    if (e == 0 && File.Exists(dest)) throw new Exception($"Destination file '{dest}' allready exists.");
-                    throw new System.ComponentModel.Win32Exception(e);
-                }
+                if (overwrite) replaced = dest.CreateReplacing(file, at => CreateHardLink(file, at));
+                else CreateHardLink(file, dest);
             }
             catch (Exception e)
             {
@@ -116,10 +91,45 @@ namespace search.Models
         }
 
         /// <summary>
+        /// The hard link (a junction for a directory) of file at path; throws when it was not created
+        /// </summary>
+        static void CreateHardLink(string file, string path)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                // Directories cannot be hard linked on Unix - the closest equivalent of a
+                // junction is a symbolic link to the absolute target
+                if (System.IO.Directory.Exists(file))
+                    System.IO.Directory.CreateSymbolicLink(path, Path.GetFullPath(file));
+                else if (UnixLink(file, path) != 0)
+                    throw new IOException($"Cannot create hard link '{path}': {Marshal.GetLastPInvokeErrorMessage()}");
+            }
+            else if (System.IO.Directory.Exists(file))
+            {
+                // Hardlink to directory i.e. NTFS Junction
+                var e = Process.Start(new ProcessStartInfo("cmd.exe", $" /C mklink /J \"{path}\" \"{file}\"")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                }).StandardError.ReadToEnd();
+                if (!string.IsNullOrWhiteSpace(e)) throw new IOException(e.Trim());
+            }
+            // Hardlink to file
+            else if (!CreateHardLink(path, file, IntPtr.Zero))
+            {
+                var e = Marshal.GetLastWin32Error();
+                if (e == 0 && File.Exists(path)) throw new Exception($"Destination file '{path}' allready exists.");
+                throw new System.ComponentModel.Win32Exception(e);
+            }
+        }
+
+        /// <summary>
         /// Create soft link
         /// </summary>
         /// <param name="file"></param>
         /// <param name="dest"></param>
+        /// <param name="overwrite">Replace what stands at dest - only once the link exists</param>
         /// <returns></returns>
         public static List<string> Softlink(this string file, string dest, bool overwrite = false)
         {
@@ -127,17 +137,15 @@ namespace search.Models
             var replaced = false;
             try
             {
-                if (overwrite) replaced = dest.DeletePathIfExistsKeeping(file);
-                if (System.IO.Directory.Exists(file))
+                void Create(string at)
                 {
-                    // Create symbolic link for directory
-                    System.IO.Directory.CreateSymbolicLink(dest, file);
+                    if (System.IO.Directory.Exists(file))
+                        System.IO.Directory.CreateSymbolicLink(at, file);
+                    else
+                        File.CreateSymbolicLink(at, file);
                 }
-                else
-                {
-                    // Create symbolic link for file
-                    File.CreateSymbolicLink(dest, file);
-                }
+                if (overwrite) replaced = dest.CreateReplacing(file, Create);
+                else Create(dest);
             }
             catch (Exception e)
             {
@@ -145,6 +153,69 @@ namespace search.Models
             }
             EchoCreated(dest, replaced);
             return errors;
+        }
+
+        /// <summary>
+        /// Create an item - a link - at dest in place of what stands there. It is created under
+        /// a temporary name beside dest first, so a failed creation (a hard link to another
+        /// file system, a symbolic link without the privilege) keeps the original destination;
+        /// a replaced directory is set aside until the new item has its name. Never replaces
+        /// the source itself or a folder containing it (see DeletePathIfExistsKeeping).
+        /// </summary>
+        /// <param name="create">Creates the item at the path it is given</param>
+        /// <returns>Something was replaced</returns>
+        internal static bool CreateReplacing(this string dest, string source, Action<string> create)
+        {
+            if (PathsReferToSameLocation(source, dest) || IsInside(source, dest))
+                throw new IOException($"'{dest}' cannot be replaced: it is or contains the source '{source}'.");
+            var target = Path.GetFullPath(dest).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!PathExists(target))
+            {
+                create(dest);
+                return false;
+            }
+            // Beside the destination: one file system for the renames, and a relative link
+            // target means the same there
+            var staged = Path.Combine(Path.GetDirectoryName(target), $".win-search-link-{Guid.NewGuid():N}");
+            create(staged);
+            try
+            {
+                // A file over a file in one rename - the destination is never missing
+                if (!System.IO.Directory.Exists(target) && !System.IO.Directory.Exists(staged))
+                    File.Move(staged, target, overwrite: true);
+                else
+                {
+                    var aside = target + ".~" + Guid.NewGuid().ToString("N")[..8];
+                    MovePath(target, aside);
+                    try { MovePath(staged, target); }
+                    catch
+                    {
+                        MovePath(aside, target);
+                        throw;
+                    }
+                    // The replacement succeeded - a leftover that cannot be removed must not report it failed
+                    try { aside.DeletePathIfExists(); }
+                    catch (Exception e) { $"Could not remove replaced item '{aside}': {e.Message}".Debug(); }
+                }
+            }
+            catch
+            {
+                try { staged.DeletePathIfExists(); }
+                catch (Exception e) { $"Could not remove staged link '{staged}': {e.Message}".Debug(); }
+                throw;
+            }
+            return true;
+        }
+
+        /// <summary>A file, a directory or a link - a dangling one included</summary>
+        static bool PathExists(string path)
+            => File.Exists(path) || System.IO.Directory.Exists(path) || new FileInfo(path).LinkTarget != null;
+
+        /// <summary>Rename a file, a directory or a link itself (never what it points to)</summary>
+        static void MovePath(string from, string to)
+        {
+            if (System.IO.Directory.Exists(from)) System.IO.Directory.Move(from, to);
+            else File.Move(from, to);
         }
 
         /// <summary>
@@ -248,6 +319,7 @@ namespace search.Models
                 errors.Add(Naming(e.Message, file));
                 return errors;
             }
+            var replacing = false;
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -288,6 +360,7 @@ namespace search.Models
                 }
                 else
                 {
+                    replacing = overwrite && File.Exists(dest);
                     if (move) File.Move(file, dest, overwrite);
                     else if (a.HasFlag(FileAttributes.ReparsePoint)
                         && new FileInfo(file).LinkTarget is { } linkTarget)
@@ -295,7 +368,7 @@ namespace search.Models
                     else
                         CopyFileCancellable(file, dest, overwrite, nativeCancellation);
                 }
-                EchoTransferred(file, dest, move, batchEcho);
+                EchoTransferred(file, dest, move, batchEcho, replacing);
             }
             catch (OperationCanceledException)
             {
@@ -341,24 +414,27 @@ namespace search.Models
             var errors = new List<string>();
             try
             {
-                if (overwrite)
-                    destination.DeletePathIfExistsKeeping(source.FullName);
                 var rawTarget = source.LinkTarget;
                 if (string.IsNullOrEmpty(rawTarget))
                     throw new IOException($"Cannot read the target of directory link '{source.FullName}'.");
-                try
+                void Create(string at)
                 {
-                    System.IO.Directory.CreateSymbolicLink(destination, rawTarget);
+                    try
+                    {
+                        System.IO.Directory.CreateSymbolicLink(at, rawTarget);
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        // Creating a symbolic link may require Developer Mode or elevation.
+                        // A junction needs neither, and preserves directory-link behavior.
+                        var resolved = source.ResolveLinkTarget(returnFinalTarget: false)
+                            ?? throw new IOException(
+                                $"Cannot resolve the target of directory link '{source.FullName}'.");
+                        CreateHardLink(resolved.FullName, at);
+                    }
                 }
-                catch (UnauthorizedAccessException)
-                {
-                    // Creating a symbolic link may require Developer Mode or elevation.
-                    // A junction needs neither, and preserves directory-link behavior.
-                    var resolved = source.ResolveLinkTarget(returnFinalTarget: false)
-                        ?? throw new IOException(
-                            $"Cannot resolve the target of directory link '{source.FullName}'.");
-                    errors.AddRange(resolved.FullName.Hardlink(destination, overwrite: false));
-                }
+                if (overwrite) destination.CreateReplacing(source.FullName, Create);
+                else Create(destination);
             }
             catch (Exception e)
             {
@@ -550,17 +626,32 @@ namespace search.Models
             string source,
             string dest,
             bool move,
-            bool batched = false)
+            bool batched = false,
+            bool replaced = false)
         {
-            FsEvent change = null;
-            if (move && !File.Exists(source) && !System.IO.Directory.Exists(source))
-                change = new FsEvent(WatcherChangeTypes.Renamed, dest, source);
-            else if (!move && (File.Exists(dest) || System.IO.Directory.Exists(dest)))
-                change = new FsEvent(WatcherChangeTypes.Created, dest);
-            if (change != null)
+            foreach (var change in TransferredEvents(source, dest, move, replaced))
                 _ = batched
                     ? FSChangeProcessor.PostBatched(change)
                     : FSChangeProcessor.Echo(change);
+        }
+
+        /// <summary>
+        /// What a finished transfer reports: a move renames, a copy creates. A copy over an
+        /// existing file (replaced) also reports it changed - a create of an indexed path keeps
+        /// the indexed node with its old size and time, and Linux has no watcher to tell.
+        /// </summary>
+        internal static FsEvent[] TransferredEvents(string source, string dest, bool move, bool replaced)
+        {
+            if (move)
+                return File.Exists(source) || System.IO.Directory.Exists(source)
+                    ? Array.Empty<FsEvent>()
+                    : new[] { new FsEvent(WatcherChangeTypes.Renamed, dest, source) };
+            if (File.Exists(dest)) return replaced
+                ? new[] { new FsEvent(WatcherChangeTypes.Created, dest), new FsEvent(WatcherChangeTypes.Changed, dest) }
+                : new[] { new FsEvent(WatcherChangeTypes.Created, dest) };
+            return System.IO.Directory.Exists(dest)
+                ? new[] { new FsEvent(WatcherChangeTypes.Created, dest) }
+                : Array.Empty<FsEvent>();
         }
 
         /// <summary>
