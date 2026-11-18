@@ -45,16 +45,16 @@ const profileHelp = {
     'zh-Hans': '配置文件保存在本地。使用应用菜单 (≡) 导出或导入 JSON 配置文件包。',
 };
 const closeView = {
-    cs: 'Zavřít zobrazení souborů (Ctrl+W)',
-    de: 'Dateiansicht schließen (Ctrl+W)',
-    es: 'Cerrar la vista de archivos (Ctrl+W)',
-    fr: 'Fermer la vue des fichiers (Ctrl+W)',
-    it: 'Chiudi la vista dei file (Ctrl+W)',
-    ja: 'ファイルビューを閉じる (Ctrl+W)',
-    ko: '파일 보기 닫기 (Ctrl+W)',
-    pl: 'Zamknij widok plików (Ctrl+W)',
-    'pt-BR': 'Fechar a visualização de arquivos (Ctrl+W)',
-    'zh-Hans': '关闭文件视图 (Ctrl+W)',
+    cs: 'Zavřít zobrazení souborů',
+    de: 'Dateiansicht schließen',
+    es: 'Cerrar la vista de archivos',
+    fr: 'Fermer la vue des fichiers',
+    it: 'Chiudi la vista dei file',
+    ja: 'ファイルビューを閉じる',
+    ko: '파일 보기 닫기',
+    pl: 'Zamknij widok plików',
+    'pt-BR': 'Fechar a visualização de arquivos',
+    'zh-Hans': '关闭文件视图',
 };
 for (const [language, entries] of Object.entries(ordered)) {
     entries['help.load.1'] = entries['help.load.1']
@@ -62,7 +62,7 @@ for (const [language, entries] of Object.entries(ordered)) {
         .replace('▤', `<strong>${entries['Open file'] || 'Open file'}</strong>`);
     entries['help.profiles.2'] = profileHelp[language];
     delete entries['A JSON profile bundle is imported instead.'];
-    if (closeView[language]) entries['Close file view (Ctrl+W)'] = closeView[language];
+    if (closeView[language]) entries['Close file view'] = closeView[language];
 }
 
 const target = path.join(__dirname, '..', 'core', 'assets', 'translations.json');

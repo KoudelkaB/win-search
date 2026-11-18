@@ -231,6 +231,65 @@ fn the_keyboard_moves_the_cursor_and_extends_the_selection() {
 }
 
 #[test]
+fn shift_navigation_keeps_its_anchor_and_shows_each_press_in_order() {
+    let mut harness = start();
+    harness.state_mut().paste_text("abcdefghi".into());
+    harness.run();
+    let queue = |harness: &mut Ui, key, count, modifiers| {
+        let event = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers };
+        harness.input_mut().events.extend((0..count).flat_map(|_| [event(true), event(false)]));
+    };
+
+    queue(&mut harness, Key::ArrowRight, 4, egui::Modifiers::NONE);
+    for col in 1..=4 {
+        frame(&mut harness);
+        assert_eq!(harness.state().cursor.col, col);
+    }
+    queue(&mut harness, Key::ArrowRight, 2, egui::Modifiers::SHIFT);
+    frame(&mut harness);
+    assert_eq!(selected(&harness), "e");
+    frame(&mut harness);
+    assert_eq!(selected(&harness), "ef");
+    harness.get_by_label_contains("len 2");
+    queue(&mut harness, Key::ArrowLeft, 5, egui::Modifiers::SHIFT);
+    for text in ["e", "", "d", "cd", "bcd"] {
+        frame(&mut harness);
+        assert_eq!(selected(&harness), text);
+        harness.get_by_label_contains(&format!("len {}", text.len()));
+    }
+    queue(&mut harness, Key::ArrowRight, 1, egui::Modifiers::SHIFT);
+    frame(&mut harness);
+    assert_eq!(selected(&harness), "cd");
+    harness.get_by_label_contains("len 2");
+}
+
+#[test]
+fn repeats_from_a_held_arrow_show_one_step_per_frame_and_do_not_build_up() {
+    let mut harness = start();
+    harness.state_mut().paste_text("abcdefghi".into());
+    harness.run();
+    let right = |pressed| egui::Event::Key { key: Key::ArrowRight, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::SHIFT };
+
+    harness.input_mut().events.push(right(true));
+    frame(&mut harness);
+    assert_eq!(selected(&harness), "a");
+    harness.input_mut().events.extend(std::iter::repeat_n(right(true), 512));
+    frame(&mut harness);
+    assert_eq!(selected(&harness), "ab");
+    harness.input_mut().events.extend(std::iter::repeat_n(right(true), 512));
+    harness.input_mut().events.push(right(false));
+    frame(&mut harness);
+    assert_eq!(selected(&harness), "abc");
+    for _ in 0..4 {
+        frame(&mut harness);
+        assert_eq!(selected(&harness), "abc");
+    }
+
+    key_with(&mut harness, egui::Modifiers::SHIFT, Key::ArrowLeft);
+    assert_eq!(selected(&harness), "ab");
+}
+
+#[test]
 fn find_walks_the_matches_from_the_find_box() {
     let (mut harness, _files) = with_sample();
     key_with(&mut harness, egui::Modifiers::COMMAND, Key::F);
@@ -447,6 +506,10 @@ fn help_opens_with_f1_and_closes_with_escape() {
     key(&mut harness, Key::F1);
     harness.get_by_label("How to use Log Explorer");
     harness.get_by_label("Keyboard shortcuts");
+    harness.get_by_label("Close file view");
+    harness.get_by_label("How to use Log Explorer").click();
+    harness.run();
+    harness.get_by_label("Loading files");
     key(&mut harness, Key::Escape);
     assert!(!harness.state().help_open);
 }
@@ -458,9 +521,6 @@ fn help_closes_with_its_cross_and_with_ok() {
         harness.get_by_label("Help and shortcuts (F1)").click();
         harness.run();
         assert!(harness.state().help_open);
-        // OK is at the end of the text, below what the window shows
-        harness.get_by_label(button).scroll_to_me();
-        harness.run();
         harness.get_by_label(button).click();
         harness.run();
         assert!(!harness.state().help_open, "{button} closes the help");

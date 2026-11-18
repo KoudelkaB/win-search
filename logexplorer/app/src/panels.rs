@@ -46,9 +46,9 @@ fn meta(ui: &mut egui::Ui, text: &str) {
 /// Text with the `<code>`, `<kbd>` and `<strong>` of the help as fonts
 fn markup(text: &str, size: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
-    let plain = TextFormat { font_id: FontId::proportional(size), color: theme::TEXT, ..Default::default() };
-    let code = TextFormat { font_id: FontId::monospace(size - 1.0), color: theme::ACCENT_STRONG, background: theme::SURFACE_2, ..Default::default() };
-    let strong = TextFormat { font_id: FontId::proportional(size), color: Color32::BLACK, ..Default::default() };
+    let plain = TextFormat { font_id: FontId::proportional(size), color: theme::TEXT, line_height: Some(size + 6.0), ..Default::default() };
+    let code = TextFormat { font_id: FontId::monospace(size - 1.0), color: theme::ACCENT_STRONG, background: theme::SURFACE_2, ..plain.clone() };
+    let strong = TextFormat { color: theme::ACCENT_STRONG, ..plain.clone() };
     let (mut in_code, mut in_strong) = (0usize, 0usize);
     let mut rest = text;
     let unescape = |piece: &str| piece.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&");
@@ -92,24 +92,56 @@ fn is_modifier(key: Key) -> bool {
     matches!(key, Key::ShiftLeft | Key::ShiftRight | Key::ControlLeft | Key::ControlRight | Key::AltLeft | Key::AltRight | Key::SuperLeft | Key::SuperRight)
 }
 
-/// Keys can come faster than frames (a slow renderer, a script, a macro key). Several
-/// presses are then in one frame, where the shortcuts act on one of them only and a field
-/// that a key gives the keyboard to misses the text behind that key. So a frame takes one
-/// key press and what came behind it waits for the next frame - but for the repeats of a
-/// held key and for typing into a field, which the field takes whole. This is done to the
-/// input before the toolkit reads it (Esc and Tab move the keyboard there).
+fn is_navigation_key(key: Key) -> bool {
+    matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight | Key::PageUp | Key::PageDown | Key::Home | Key::End)
+}
+
+fn navigation_key(event: &egui::Event) -> Option<(Key, bool)> {
+    let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { return None };
+    (is_navigation_key(*key) && (modifiers.is_none() || *modifiers == Modifiers::SHIFT)).then_some((*key, modifiers.shift))
+}
+
+fn mark_navigation_repeats(ctx: &egui::Context, events: &mut [egui::Event]) {
+    // The native integration marks repeats after the raw input hook. Detect them here
+    // so holding a key can't fill the queue meant for separate presses.
+    let mut down = ctx.input(|input| input.keys_down.clone());
+    for event in events {
+        match event {
+            egui::Event::Key { key, pressed, repeat, .. } if is_navigation_key(*key) => {
+                if *pressed {
+                    *repeat |= !down.insert(*key);
+                } else {
+                    down.remove(key);
+                }
+            }
+            egui::Event::WindowFocused(false) => down.clear(),
+            _ => {}
+        }
+    }
+}
+
+/// Show each viewer movement on its own frame and keep distinct presses in order.
+/// Excess repeats from a held key are discarded so movement doesn't lag behind input.
+/// Typing can still reach an already focused field in one batch.
 pub fn one_key_press_a_frame(ctx: &egui::Context, app: &mut App, raw: &mut egui::RawInput) {
     let typing = ctx.text_edit_focused();
     let mut events = std::mem::take(&mut app.waiting_events);
     events.append(&mut raw.events);
+    if !typing && !events.is_empty() {
+        mark_navigation_repeats(ctx, &mut events);
+    }
     // The first press of the frame: where it is and whether it is typing. (The changes of
     // the modifiers are events too and wait with the keys they belong to.)
     let mut first: Option<(usize, bool)> = None;
     let mut end = events.len();
     for (index, event) in events.iter().enumerate() {
         let behind = match event {
-            egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } if !is_modifier(*key) => {
+            egui::Event::Key { key, pressed: true, repeat, modifiers, .. } if !is_modifier(*key) => {
                 let text = typing && edits_text(*key, *modifiers);
+                let navigation = !typing && navigation_key(event).is_some();
+                if *repeat && !navigation {
+                    continue;
+                }
                 match first {
                     None => {
                         first = Some((index, text));
@@ -132,10 +164,10 @@ pub fn one_key_press_a_frame(ctx: &egui::Context, app: &mut App, raw: &mut egui:
         }
     }
     app.waiting_events = events.split_off(end);
-    raw.events = events;
-    if !app.waiting_events.is_empty() {
-        ctx.request_repaint();
+    if !typing {
+        app.waiting_events.retain(|event| !matches!(event, egui::Event::Key { repeat: true, .. }) || navigation_key(event).is_none());
     }
+    raw.events = events;
 }
 
 fn pressed(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> bool {
@@ -239,41 +271,44 @@ fn handle_keys(ctx: &egui::Context, app: &mut App) {
         app.add_delete_replace_from_selection();
         return;
     }
-    let page = app.view.viewport_rows.saturating_sub(1).max(1) as i64;
-    for extend in [true, false] {
-        let modifiers = if extend { Modifiers::SHIFT } else { Modifiers::NONE };
-        for (key, rows, cols) in
-            [(Key::ArrowUp, -1, 0), (Key::ArrowDown, 1, 0), (Key::ArrowLeft, 0, -1), (Key::ArrowRight, 0, 1), (Key::PageUp, -page, 0), (Key::PageDown, page, 0)]
-        {
-            if pressed(ctx, modifiers, key) {
-                app.move_cursor(rows, cols, extend);
-            }
-        }
-        if pressed(ctx, modifiers, Key::Home) {
-            app.move_to_edge(false, extend);
-        }
-        if pressed(ctx, modifiers, Key::End) {
-            app.move_to_edge(true, extend);
+    let navigation = ctx.input_mut(|input| input.events.extract_if(.., |event| navigation_key(event).is_some()).find_map(|event| navigation_key(&event)));
+    let Some((key, extend)) = navigation else { return };
+    if let Some(stage) = app.stage_now() {
+        let page = app.view.viewport_rows.saturating_sub(1).max(1) as isize;
+        match key {
+            Key::ArrowUp => app.move_cursor(&stage, -1, 0, extend),
+            Key::ArrowDown => app.move_cursor(&stage, 1, 0, extend),
+            Key::ArrowLeft => app.move_cursor(&stage, 0, -1, extend),
+            Key::ArrowRight => app.move_cursor(&stage, 0, 1, extend),
+            Key::PageUp => app.move_cursor(&stage, -page, 0, extend),
+            Key::PageDown => app.move_cursor(&stage, page, 0, extend),
+            Key::Home => app.move_to_edge(&stage, false, extend),
+            Key::End => app.move_to_edge(&stage, true, extend),
+            _ => unreachable!("validated navigation key"),
         }
     }
 }
 
 // --- the toolbar ----------------------------------------------------------------------------------
 
-const CLOSE_FILE_VIEW: &str = "Close file view (Ctrl+W)";
+const CLOSE_FILE_VIEW: &str = "Close file view";
 
 #[derive(Clone, Copy)]
-enum ToolbarIcon {
+enum ActionIcon {
     Open,
     Close,
     Copy,
     Help,
     Menu,
+    Add,
+    Remove,
+    Up,
+    Down,
 }
 
-impl ToolbarIcon {
+impl ActionIcon {
     fn button(self) -> egui::Button<'static> {
-        let button = egui::Button::new("").min_size(egui::vec2(28.0, 28.0));
+        let button = egui::Button::new("").min_size(egui::vec2(22.0, 22.0));
         if matches!(self, Self::Open) {
             button.fill(theme::ACCENT_SOFT)
         } else {
@@ -283,10 +318,10 @@ impl ToolbarIcon {
 
     fn paint(self, ui: &egui::Ui, response: egui::Response, name: &str) -> egui::Response {
         let painter = ui.painter();
-        let color = ui.style().interact(&response).fg_stroke.color;
-        let stroke = Stroke::new(1.4, color);
+        let color = if matches!(self, Self::Remove) && response.enabled() { theme::DANGER } else { ui.style().interact(&response).fg_stroke.color };
+        let stroke = Stroke::new(1.2, color);
         let center = response.rect.center();
-        let at = |x, y| center + egui::vec2(x, y);
+        let at = |x, y| center + 0.8 * egui::vec2(x, y);
         let line = |x1, y1, x2, y2| painter.line_segment([at(x1, y1), at(x2, y2)], stroke);
         match self {
             Self::Open => {
@@ -294,7 +329,7 @@ impl ToolbarIcon {
                 painter.add(egui::Shape::closed_line(folder.to_vec(), stroke));
                 line(-7.0, 0.0, 6.0, 0.0);
             }
-            Self::Close => {
+            Self::Close | Self::Remove => {
                 line(-5.0, -5.0, 5.0, 5.0);
                 line(-5.0, 5.0, 5.0, -5.0);
             }
@@ -303,13 +338,22 @@ impl ToolbarIcon {
                 painter.rect_stroke(egui::Rect::from_min_max(at(-2.5, -3.5), at(6.5, 7.0)), 1.5, stroke, egui::StrokeKind::Middle);
             }
             Self::Help => {
-                painter.circle_stroke(center, 7.5, stroke);
-                painter.text(center, egui::Align2::CENTER_CENTER, "?", FontId::proportional(theme::SMALL_SIZE), color);
+                painter.circle_stroke(center, 6.0, stroke);
+                painter.text(center, egui::Align2::CENTER_CENTER, "?", FontId::proportional(10.0), color);
             }
             Self::Menu => {
                 for y in [-4.5, 0.0, 4.5] {
                     line(-6.5, y, 6.5, y);
                 }
+            }
+            Self::Add => {
+                line(-5.0, 0.0, 5.0, 0.0);
+                line(0.0, -5.0, 0.0, 5.0);
+            }
+            Self::Up | Self::Down => {
+                let tip = if matches!(self, Self::Up) { -6.0 } else { 6.0 };
+                line(0.0, -tip, 0.0, tip);
+                painter.add(egui::Shape::line(vec![at(-4.0, 0.0), at(0.0, tip), at(4.0, 0.0)], stroke));
             }
         }
         named(response.on_hover_text(name), egui::Role::Button, name)
@@ -360,16 +404,17 @@ fn toolbar(ui: &mut egui::Ui, app: &mut App) {
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             app_menu(ui, app);
-            if ToolbarIcon::Help.show(ui, app.t("Help and shortcuts (F1)"), true).clicked() {
+            if ActionIcon::Help.show(ui, app.t("Help and shortcuts (F1)"), true).clicked() {
                 app.help_open = true;
             }
-            if ToolbarIcon::Copy.show(ui, app.t("Copy selection (Ctrl+C)"), app.selection.is_some()).clicked() {
+            if ActionIcon::Copy.show(ui, app.t("Copy selection (Ctrl+C)"), app.selection.is_some()).clicked() {
                 app.copy_selection();
             }
-            if ToolbarIcon::Close.show(ui, app.t(CLOSE_FILE_VIEW), app.source.is_some()).clicked() {
+            let close = format!("{} (Ctrl+W)", app.t(CLOSE_FILE_VIEW));
+            if ActionIcon::Close.show(ui, &close, app.source.is_some()).clicked() {
                 app.close_source();
             }
-            if ToolbarIcon::Open.show(ui, app.t("Open file"), true).clicked() {
+            if ActionIcon::Open.show(ui, app.t("Open file"), true).clicked() {
                 app.dialog = Some(FileDialog::Open);
             }
             match &app.source {
@@ -396,7 +441,7 @@ fn app_menu(ui: &mut egui::Ui, app: &mut App) {
     let has_source = app.source.is_some();
     let has_selection = app.selection.is_some();
     let several = app.source.as_ref().is_some_and(|source| source.raw.sources.len() > 1);
-    let (response, _) = egui::containers::menu::MenuButton::from_button(ToolbarIcon::Menu.button()).ui(ui, |ui| {
+    let (response, _) = egui::containers::menu::MenuButton::from_button(ActionIcon::Menu.button()).ui(ui, |ui| {
         ui.label(RichText::new(app.t("View")).small().color(theme::MUTED));
         let item = |ui: &mut egui::Ui, app: &mut App, enabled: bool, label: &str, tip: &str| {
             let clicked = ui.add_enabled(enabled, egui::Button::new(app.t(label))).on_hover_text(app.t(tip)).clicked();
@@ -432,7 +477,7 @@ fn app_menu(ui: &mut egui::Ui, app: &mut App) {
             app.dialog = Some(FileDialog::ImportProfiles);
         }
     });
-    ToolbarIcon::Menu.paint(ui, response, app.t("App menu"));
+    ActionIcon::Menu.paint(ui, response, app.t("App menu"));
 }
 
 // --- the operations -------------------------------------------------------------------------------
@@ -526,8 +571,9 @@ fn filter_body(ui: &mut egui::Ui, i18n: &I18n, id: u64, filter: &mut FilterOp, s
     for exclude in [false, true] {
         let title = ui
             .horizontal(|ui| {
-                let title = ui.strong(i18n.t(if exclude { "Exclude" } else { "Include" })).id;
-                if ui.small_button(i18n.t(if exclude { "⊖ Exclude" } else { "⊕ Include" })).clicked() {
+                let caption = i18n.t(if exclude { "Exclude" } else { "Include" });
+                let title = ui.strong(caption).id;
+                if ActionIcon::Add.show(ui, &format!("+ {caption}"), true).clicked() {
                     actions.push(Action::AddClause(id, exclude));
                 }
                 title
@@ -542,7 +588,7 @@ fn filter_body(ui: &mut egui::Ui, i18n: &I18n, id: u64, filter: &mut FilterOp, s
             ui.push_id((exclude, index), |ui| {
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                        if icon(ui, egui::Button::new("×").small(), i18n.t("Remove clause")).clicked() {
+                        if ActionIcon::Remove.show(ui, i18n.t("Remove clause"), true).clicked() {
                             removed = Some(index);
                         }
                         changed |= ui.checkbox(&mut clause.case_sensitive, "Aa").on_hover_text(i18n.t("Match case")).changed();
@@ -702,16 +748,17 @@ fn operator_card(ui: &mut egui::Ui, i18n: &I18n, operator: &mut Operator, index:
                     actions.push(Action::Select(id));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if icon(ui, egui::Button::new(RichText::new("×").color(theme::DANGER)).small(), i18n.t("Delete")).clicked() {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if ActionIcon::Remove.show(ui, i18n.t("Delete"), true).clicked() {
                         actions.push(Action::Delete(id));
                     }
-                    if icon(ui, egui::Button::new("⊞").small(), i18n.t("Duplicate")).clicked() {
+                    if ActionIcon::Copy.show(ui, i18n.t("Duplicate"), true).clicked() {
                         actions.push(Action::Duplicate(id));
                     }
-                    if icon(ui, egui::Button::new("↓").small(), i18n.t("Move down")).clicked() {
+                    if ActionIcon::Down.show(ui, i18n.t("Move down"), true).clicked() {
                         actions.push(Action::Move(id, 1));
                     }
-                    if icon(ui, egui::Button::new("↑").small(), i18n.t("Move up")).clicked() {
+                    if ActionIcon::Up.show(ui, i18n.t("Move up"), true).clicked() {
                         actions.push(Action::Move(id, -1));
                     }
                 });
@@ -948,10 +995,10 @@ fn find_bar(ui: &mut egui::Ui, app: &mut App) {
             app.find_in_view(forward);
             input.request_focus();
         }
-        if icon(ui, egui::Button::new("↑"), app.t("Previous match (Shift+Enter or Shift+F3)")).clicked() {
+        if ActionIcon::Up.show(ui, app.t("Previous match (Shift+Enter or Shift+F3)"), true).clicked() {
             app.find_in_view(false);
         }
-        if icon(ui, egui::Button::new("↓"), app.t("Next match (Enter or F3)")).clicked() {
+        if ActionIcon::Down.show(ui, app.t("Next match (Enter or F3)"), true).clicked() {
             app.find_in_view(true);
         }
         let case_tip = app.t(if app.find.case_sensitive { "Match case: on" } else { "Match case: off" });
@@ -959,7 +1006,7 @@ fn find_bar(ui: &mut egui::Ui, app: &mut App) {
             app.toggle_find_case();
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if icon(ui, egui::Button::new("×"), app.t("Close find (Esc)")).clicked() {
+            if ActionIcon::Close.show(ui, app.t("Close find (Esc)"), true).clicked() {
                 app.close_find_bar();
             }
             ui.add(egui::Label::new(RichText::new(&app.find.status).color(if app.find.not_found { theme::DANGER } else { theme::MUTED })).truncate())
@@ -992,77 +1039,111 @@ fn status_bar(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
 
 fn help(ctx: &egui::Context, app: &mut App) {
     let modal = egui::Modal::new(egui::Id::unique("help")).show(ctx, |ui| {
-        ui.set_width(760.0_f32.min(ui.ctx().content_rect().width() - 60.0));
-        let mut close = ui
+        let screen = ctx.content_rect();
+        ui.set_width(720.0_f32.min(screen.width() - 60.0));
+        let close = ui
             .horizontal(|ui| {
-                ui.heading(app.t("How to use Log Explorer"));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| icon(ui, egui::Button::new("×"), app.t("Close help")).clicked()).inner
+                ui.heading(app.t("Help and shortcuts"));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| ActionIcon::Close.show(ui, app.t("Close help"), true).clicked()).inner
             })
             .inner;
-        egui::ScrollArea::vertical().max_height(ui.ctx().content_rect().height() - 140.0).show(ui, |ui| {
-            let sections: [(&str, &[&str]); 6] = [
-                ("Loading files", &["help.load.1", "help.load.2", "help.load.3"]),
-                ("Browsing", &["help.browse.1", "help.browse.2"]),
-                (
-                    "Operations",
-                    &[
-                        "help.operations.1",
-                        "help.operations.filter",
-                        "help.operations.replace",
-                        "help.operations.sort",
-                        "help.operations.diff",
-                        "help.operations.extract",
-                        "help.operations.unique",
-                        "help.operations.join",
-                        "help.operations.2",
-                    ],
-                ),
-                ("Profiles", &["help.profiles.1", "help.profiles.2"]),
-                ("Selecting and copying", &["help.select.1", "help.select.2", "help.select.3"]),
-                ("Find", &["help.find.1"]),
-            ];
-            for (title, keys) in sections {
-                ui.add_space(6.0);
-                ui.label(RichText::new(app.t(title)).strong().size(16.0));
-                for key in keys {
-                    let bullet = if key.matches('.').count() == 2 && !key.ends_with(|last: char| last.is_ascii_digit()) { "•  " } else { "" };
-                    ui.add(egui::Label::new(markup(&format!("{bullet}{}", app.t(key)), 14.0)).wrap());
-                }
-            }
-            ui.add_space(6.0);
-            ui.label(RichText::new(app.t("Keyboard shortcuts")).strong().size(16.0));
-            ui.add(egui::Label::new(markup(app.t("help.keys.1"), 14.0)).wrap());
-            let rows: [(&str, &str); 14] = [
-                ("<kbd>F1</kbd>", "help.keys.f1"),
-                ("<kbd>Ctrl+F</kbd>", "help.keys.find"),
-                ("<kbd>F3</kbd> / <kbd>Shift+F3</kbd>", "help.keys.next"),
-                ("<kbd>Ctrl+F3</kbd> / <kbd>Ctrl+Shift+F3</kbd>", "help.keys.findSelection"),
-                ("<kbd>Enter</kbd>", "help.keys.enter"),
-                ("<kbd>Esc</kbd>", "help.keys.esc"),
-                ("<kbd>Delete</kbd>", "help.keys.delete"),
-                ("<kbd>F</kbd> <kbd>R</kbd> <kbd>S</kbd> <kbd>D</kbd>", "help.keys.add"),
-                ("<kbd>Ctrl+A</kbd>", "help.keys.all"),
-                ("<kbd>Ctrl+C</kbd>", "help.keys.copy"),
-                ("<kbd>Ctrl+Esc</kbd>", "help.keys.clear"),
-                ("<kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> <kbd>Page Up</kbd> <kbd>Page Down</kbd> <kbd>Home</kbd> <kbd>End</kbd>", "help.keys.move"),
-                ("help.keys.wheelKey", "help.keys.wheel"),
-                ("help.keys.middleKey", "help.keys.middle"),
-            ];
-            egui::Grid::new("help keys").num_columns(2).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
-                for (keys, description) in rows {
-                    ui.label(markup(app.t(keys), 13.0));
-                    ui.add(egui::Label::new(markup(app.t(description), 13.0)).wrap());
-                    ui.end_row();
-                }
-            });
-            ui.add_space(8.0);
-            close |= ui.button("OK").clicked();
+        let tab = ui.scope_id().with("shortcuts tab");
+        let mut shortcuts = ui.data(|data| data.get_temp::<bool>(tab)).unwrap_or(true);
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut shortcuts, true, app.t("Keyboard shortcuts"));
+            ui.selectable_value(&mut shortcuts, false, app.t("How to use Log Explorer"));
         });
-        close
+        ui.data_mut(|data| data.insert_temp(tab, shortcuts));
+        ui.separator();
+        let content_height = (screen.height() - 148.0).clamp(64.0, 560.0);
+        egui::ScrollArea::vertical().id_salt(shortcuts).auto_shrink([false, false]).min_scrolled_height(content_height).max_height(content_height).show(ui, |ui| {
+            if shortcuts {
+                help_shortcuts(ui, app);
+            } else {
+                help_guide(ui, app);
+            }
+        });
+        ui.separator();
+        let ok = ui.with_layout(Layout::right_to_left(Align::Center), |ui| ui.button("OK").clicked()).inner;
+        close || ok
     });
     if modal.should_close() || modal.inner {
         app.help_open = false;
     }
+}
+
+fn help_guide(ui: &mut egui::Ui, app: &App) {
+    let sections: [(&str, &[&str]); 6] = [
+        ("Loading files", &["help.load.1", "help.load.2", "help.load.3"]),
+        ("Browsing", &["help.browse.1", "help.browse.2"]),
+        (
+            "Operations",
+            &[
+                "help.operations.1",
+                "help.operations.filter",
+                "help.operations.replace",
+                "help.operations.sort",
+                "help.operations.diff",
+                "help.operations.extract",
+                "help.operations.unique",
+                "help.operations.join",
+                "help.operations.2",
+            ],
+        ),
+        ("Profiles", &["help.profiles.1", "help.profiles.2"]),
+        ("Selecting and copying", &["help.select.1", "help.select.2", "help.select.3"]),
+        ("Find", &["help.find.1"]),
+    ];
+    for (index, (title, keys)) in sections.into_iter().enumerate() {
+        if index != 0 {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+        }
+        ui.label(RichText::new(app.t(title)).strong().heading());
+        for key in keys {
+            let paragraph = egui::Label::new(markup(app.t(key), theme::BODY_SIZE)).wrap();
+            if key.starts_with("help.operations.") && !key.ends_with(['1', '2']) {
+                ui.horizontal_top(|ui| {
+                    ui.label(RichText::new("•").color(theme::MUTED));
+                    ui.add(paragraph);
+                });
+            } else {
+                ui.add(paragraph);
+            }
+        }
+    }
+}
+
+fn help_shortcuts(ui: &mut egui::Ui, app: &App) {
+    meta(ui, app.t("help.keys.1"));
+    let rows = [
+        ("<kbd>F1</kbd>", "help.keys.f1"),
+        ("<kbd>Ctrl+F</kbd>", "help.keys.find"),
+        ("<kbd>Ctrl+W</kbd>", CLOSE_FILE_VIEW),
+        ("<kbd>F3</kbd> / <kbd>Shift+F3</kbd>", "help.keys.next"),
+        ("<kbd>Ctrl+F3</kbd> / <kbd>Ctrl+Shift+F3</kbd>", "help.keys.findSelection"),
+        ("<kbd>Enter</kbd>", "help.keys.enter"),
+        ("<kbd>Esc</kbd>", "help.keys.esc"),
+        ("<kbd>Delete</kbd>", "help.keys.delete"),
+        ("<kbd>F</kbd> <kbd>R</kbd> <kbd>S</kbd> <kbd>D</kbd>", "help.keys.add"),
+        ("<kbd>Ctrl+A</kbd>", "help.keys.all"),
+        ("<kbd>Ctrl+C</kbd>", "help.keys.copy"),
+        ("<kbd>Ctrl+Esc</kbd>", "help.keys.clear"),
+        ("<kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd>\n<kbd>Page Up</kbd> <kbd>Page Down</kbd>\n<kbd>Home</kbd> <kbd>End</kbd>", "help.keys.move"),
+        ("help.keys.wheelKey", "help.keys.wheel"),
+        ("help.keys.middleKey", "help.keys.middle"),
+    ];
+    let width = ui.available_width();
+    let keys_width = (width * 0.30).min(190.0);
+    let spacing = 16.0;
+    egui::Grid::new("help keys").num_columns(2).striped(true).spacing([spacing, 7.0]).show(ui, |ui| {
+        for (keys, description) in rows {
+            ui.add_sized([keys_width, 0.0], egui::Label::new(markup(app.t(keys), theme::BODY_SIZE)).wrap());
+            ui.add_sized([width - keys_width - spacing, 0.0], egui::Label::new(markup(app.t(description), theme::BODY_SIZE)).wrap());
+            ui.end_row();
+        }
+    });
 }
 
 fn load_question(ctx: &egui::Context, app: &mut App) {
@@ -1294,12 +1375,34 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     let stage = app.stage();
     egui::Panel::bottom("status").frame(bar).show_separator_line(true).show(ui, |ui| status_bar(ui, app, stage.as_ref()));
     egui::Panel::left("operations").frame(bar).resizable(true).default_size(250.0).size_range(250.0..=720.0).show(ui, |ui| operations(ui, app, stage.as_ref()));
-    egui::CentralPanel::default().frame(bar).show(ui, |ui| {
+    let file_frame = if app.windows_software_renderer { bar.fill(Color32::TRANSPARENT) } else { bar };
+    egui::CentralPanel::default().frame(file_frame).show(ui, |ui| {
+        let chrome = app.windows_software_renderer.then(|| {
+            let outer = file_frame.outer_rect(ui.max_rect());
+            let painter = ui.painter().with_clip_rect(outer);
+            let background = painter.add(egui::Shape::Noop);
+            (outer, painter, background)
+        });
         viewer_toolbar(ui, app, stage.as_ref());
         if app.find.open {
             find_bar(ui, app);
         }
-        egui::Frame::NONE.stroke(Stroke::new(1.0, theme::BORDER)).show(ui, |ui| viewer::show(ui, app, stage.as_ref()));
+        let file = egui::Frame::NONE.stroke(Stroke::new(1.0, theme::BORDER)).show(ui, |ui| viewer::show(ui, app, stage.as_ref())).response.rect;
+        if let Some((outer, painter, background)) = chrome {
+            let file = file.intersect(outer);
+            // The surface is already white. Paint the surrounding chrome without covering
+            // that area with two full-window quads on the software adapter.
+            let mut mesh = egui::Mesh::default();
+            for (left, top, right, bottom) in [
+                (outer.left(), outer.top(), outer.right(), file.top()),
+                (outer.left(), file.bottom(), outer.right(), outer.bottom()),
+                (outer.left(), file.top(), file.left(), file.bottom()),
+                (file.right(), file.top(), outer.right(), file.bottom()),
+            ] {
+                mesh.add_colored_rect(egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom)), theme::BG);
+            }
+            painter.set(background, egui::Shape::mesh(mesh));
+        }
     });
 
     if app.help_open {
@@ -1324,5 +1427,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     }
     if app.is_busy() {
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if !app.waiting_events.is_empty() {
+        ctx.request_repaint();
     }
 }

@@ -154,6 +154,7 @@ pub struct App {
     pub pasted_files: Option<Vec<PathBuf>>,
     /// Input that arrived behind the key press of a frame and waits for the next one
     pub(crate) waiting_events: Vec<egui::Event>,
+    pub(crate) windows_software_renderer: bool,
     /// A file dialog the UI should open
     pub dialog: Option<FileDialog>,
     /// The viewer asks for the keyboard
@@ -213,6 +214,7 @@ impl App {
             clipboard_source: Box::new(crate::clipboard::SystemClipboard),
             pasted_files: None,
             waiting_events: Vec::new(),
+            windows_software_renderer: false,
             dialog: None,
             focus_viewer: false,
             viewer: Default::default(),
@@ -481,19 +483,18 @@ impl App {
         self.cursor = Point::new(row, point.col.min(stage.line_cols(row)));
     }
 
-    fn selection_anchor(&self) -> Point {
-        self.selection.map_or(self.cursor, |selection| selection.normalized().start)
+    pub(crate) fn selection_anchor(&self) -> Point {
+        self.selection.filter(|selection| selection.end == self.cursor).map_or(self.cursor, |selection| selection.start)
     }
 
     pub fn clear_selection(&mut self) {
         self.selection = None;
     }
 
-    pub fn move_cursor(&mut self, delta_row: i64, delta_col: i64, extend: bool) {
-        let Some(stage) = self.stage_now() else { return };
-        let row = (self.cursor.row as i64 + delta_row).clamp(0, stage.len().saturating_sub(1) as i64) as usize;
-        let col = (self.cursor.col as i64 + delta_col).clamp(0, stage.line_cols(row) as i64) as usize;
-        self.move_cursor_to(&stage, Point::new(row, col), extend);
+    pub fn move_cursor(&mut self, stage: &Stage, delta_row: isize, delta_col: isize, extend: bool) {
+        let row = self.cursor.row.saturating_add_signed(delta_row);
+        let col = self.cursor.col.saturating_add_signed(delta_col);
+        self.move_cursor_to(stage, Point::new(row, col), extend);
     }
 
     pub fn move_cursor_to(&mut self, stage: &Stage, target: Point, extend: bool) {
@@ -506,10 +507,9 @@ impl App {
         self.ensure_visible(stage, point.row, point.col);
     }
 
-    pub fn move_to_edge(&mut self, end: bool, extend: bool) {
-        let Some(stage) = self.stage_now() else { return };
+    pub fn move_to_edge(&mut self, stage: &Stage, end: bool, extend: bool) {
         let target = if end { Point::new(stage.len().saturating_sub(1), usize::MAX) } else { Point::default() };
-        self.move_cursor_to(&stage, target, extend);
+        self.move_cursor_to(stage, target, extend);
     }
 
     pub fn select_whole_stage(&mut self) {
@@ -519,17 +519,28 @@ impl App {
         self.cursor = last;
     }
 
-    /// Characters of the selection, counted once per selection
+    /// Count only the changed part when moving one end of the selection.
     pub fn selection_len(&mut self, stage: &Stage) -> u64 {
         let Some(selection) = self.selection else { return 0 };
-        match self.selection_chars {
+        let chars = match self.selection_chars {
             Some((id, cached, chars)) if id == stage.id && cached == selection => chars,
-            _ => {
-                let chars = selection_chars(stage, &selection);
-                self.selection_chars = Some((stage.id, selection, chars));
-                chars
+            Some((id, cached, chars))
+                if id == stage.id
+                    && cached.start == selection.start
+                    && cached.start.row.max(cached.end.row).max(selection.end.row) < stage.len()
+                    && (cached.end < cached.start) == (selection.end < selection.start) =>
+            {
+                let delta = selection_chars(stage, &Selection::new(cached.end, selection.end));
+                if (selection.end > cached.end) == (selection.end >= selection.start) {
+                    chars + delta
+                } else {
+                    chars - delta
+                }
             }
-        }
+            _ => selection_chars(stage, &selection),
+        };
+        self.selection_chars = Some((stage.id, selection, chars));
+        chars
     }
 
     // --- operations ---------------------------------------------------------------------------

@@ -338,7 +338,7 @@
   "Combine files": "Spojit soubory",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Zřetězit zobrazí soubory za sebou, Proložit je střídá po řádcích.",
   "Last": "Poslední",
-  "Close file view (Ctrl+W)": "Zavřít zobrazení souborů (Ctrl+W)"
+  "Close file view": "Zavřít zobrazení souborů"
  },
  "de": {
   "Help sections": "Hilfeabschnitte",
@@ -635,7 +635,7 @@
   "Combine files": "Dateien kombinieren",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Verketten zeigt die Dateien nacheinander, Verzahnen verschränkt sie Zeile für Zeile.",
   "Last": "Zuletzt",
-  "Close file view (Ctrl+W)": "Dateiansicht schließen (Ctrl+W)"
+  "Close file view": "Dateiansicht schließen"
  },
  "es": {
   "Help sections": "Secciones de la ayuda",
@@ -937,7 +937,7 @@
   "Combine files": "Combinar archivos",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar muestra los archivos uno tras otro; Intercalar los entrelaza fila por fila.",
   "Last": "Último",
-  "Close file view (Ctrl+W)": "Cerrar la vista de archivos (Ctrl+W)"
+  "Close file view": "Cerrar la vista de archivos"
  },
  "fr": {
   "Help sections": "Sections de l'aide",
@@ -1237,7 +1237,7 @@
   "Combine files": "Combiner les fichiers",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concaténer affiche les fichiers les uns après les autres, Entrelacer les alterne ligne par ligne.",
   "Last": "Dernier",
-  "Close file view (Ctrl+W)": "Fermer la vue des fichiers (Ctrl+W)"
+  "Close file view": "Fermer la vue des fichiers"
  },
  "it": {
   "Help sections": "Sezioni della guida",
@@ -1540,7 +1540,7 @@
   "Combine files": "Combina file",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatena mostra i file uno dopo l'altro, Interfoglia li alterna riga per riga.",
   "Last": "Ultimo",
-  "Close file view (Ctrl+W)": "Chiudi la vista dei file (Ctrl+W)"
+  "Close file view": "Chiudi la vista dei file"
  },
  "ja": {
   "Help sections": "ヘルプの項目",
@@ -1844,7 +1844,7 @@
   "Combine files": "ファイルを組み合わせる",
   "Concat shows the files one after another, Zip interleaves them row by row.": "順に開くはファイルを順番に表示し、交互は 1 行ずつ交互に並べます。",
   "Last": "前回",
-  "Close file view (Ctrl+W)": "ファイルビューを閉じる (Ctrl+W)"
+  "Close file view": "ファイルビューを閉じる"
  },
  "ko": {
   "Help sections": "도움말 섹션",
@@ -2148,7 +2148,7 @@
   "Combine files": "파일 합치기",
   "Concat shows the files one after another, Zip interleaves them row by row.": "차례로 열기는 파일을 차례로 표시하고, 교차는 행 단위로 번갈아 배치합니다.",
   "Last": "마지막",
-  "Close file view (Ctrl+W)": "파일 보기 닫기 (Ctrl+W)"
+  "Close file view": "파일 보기 닫기"
  },
  "pl": {
   "Help sections": "Sekcje pomocy",
@@ -2451,7 +2451,7 @@
   "Combine files": "Połącz pliki",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Sklej pokazuje pliki jeden po drugim, Przeplataj łączy je naprzemiennie wiersz po wierszu.",
   "Last": "Ostatni",
-  "Close file view (Ctrl+W)": "Zamknij widok plików (Ctrl+W)"
+  "Close file view": "Zamknij widok plików"
  },
  "pt-BR": {
   "Help sections": "Seções da ajuda",
@@ -2752,7 +2752,7 @@
   "Combine files": "Combinar arquivos",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar mostra os arquivos um após o outro, Intercalar os alterna linha por linha.",
   "Last": "Último",
-  "Close file view (Ctrl+W)": "Fechar a visualização de arquivos (Ctrl+W)"
+  "Close file view": "Fechar a visualização de arquivos"
  },
  "zh-Hans": {
   "Help sections": "帮助章节",
@@ -3056,6 +3056,6 @@
   "Combine files": "组合文件",
   "Concat shows the files one after another, Zip interleaves them row by row.": "串联将文件依次显示，交错则逐行交替合并。",
   "Last": "上次",
-  "Close file view (Ctrl+W)": "关闭文件视图 (Ctrl+W)"
+  "Close file view": "关闭文件视图"
  }
 }

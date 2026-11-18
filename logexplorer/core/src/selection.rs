@@ -87,15 +87,13 @@ pub fn selection_chars(stage: &Stage, selection: &Selection) -> u64 {
     if selection.start.row > last {
         return 0;
     }
-    let chars: u64 = (selection.start.row..last + 1)
-        .into_par_iter()
-        .with_min_len(1 << 14)
-        .map(|row| {
-            let (start, end) = selection.cols_in_row(row).unwrap_or((0, 0));
-            let cols = stage.line_cols(row);
-            (end.min(cols).saturating_sub(start.min(cols))) as u64
-        })
-        .sum();
+    let row_chars = |row| {
+        let (start, end) = selection.cols_in_row(row).unwrap_or((0, 0));
+        let cols = stage.line_cols(row);
+        (end.min(cols).saturating_sub(start.min(cols))) as u64
+    };
+    let rows = selection.start.row..last + 1;
+    let chars: u64 = if rows.len() < (1 << 14) { rows.map(row_chars).sum() } else { rows.into_par_iter().with_min_len(1 << 14).map(row_chars).sum() };
     chars + (last - selection.start.row) as u64
 }
 

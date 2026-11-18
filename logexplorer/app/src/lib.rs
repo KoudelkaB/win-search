@@ -13,12 +13,24 @@ pub mod viewer;
 pub use app::{App, LoadAction, Options};
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if self.windows_software_renderer {
+            if let Some(mut surface) = frame.wgpu_surface_config() {
+                // Save a display interval on frames that are already expensive on WARP.
+                surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
+                frame.set_wgpu_surface_config(surface);
+            }
+        }
         panels::show(ui, self);
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         panels::one_key_press_a_frame(ctx, self, raw_input);
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        let color = if self.windows_software_renderer { theme::PANEL } else { egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180) };
+        color.to_normalized_gamma_f32()
     }
 }
 
@@ -27,6 +39,13 @@ pub fn create(ctx: &egui::Context, options: Options) -> App {
     theme::apply(ctx);
     let mut app = App::new(Options { data_dir: options.data_dir.clone(), ..options.clone() });
     app.set_repaint(ctx);
+    app
+}
+
+pub fn create_native(context: &eframe::CreationContext<'_>, options: Options) -> App {
+    let mut app = create(&context.egui_ctx, options);
+    app.windows_software_renderer =
+        cfg!(windows) && context.wgpu_render_state.as_ref().is_some_and(|render_state| render_state.adapter.get_info().device_type == eframe::wgpu::DeviceType::Cpu);
     app
 }
 

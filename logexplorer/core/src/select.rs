@@ -135,8 +135,9 @@ fn tokens() -> &'static [Token] {
             token(TIME, 3, 0),
             token(r"(?i)(^|[^A-Za-z0-9_])([+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:e[+-]?[0-9]+)?|[0-9]+e[+-]?[0-9]+))", 2, 2),
             token(r"(^|[^A-Za-z0-9_])([+-]?(?:0x[0-9A-Fa-f]+|[0-9]+))", 1, 2),
-            // Letters of any alphabet: the HTML app knows only ASCII identifiers
-            token(r"(^|[^\p{L}\p{N}_])([\p{L}_][\p{L}\p{N}_]*)", 1, 2),
+            // Identifiers such as 11ty and 11ty__eleventy-img. Ctrl+click can pick a segment.
+            token(r"(?<![\p{L}\p{N}_])\p{N}*[\p{L}_][\p{L}\p{N}_]*", 1, 0),
+            token(r"(?<![\p{L}\p{N}_])(?=(?:[\p{L}\p{N}_]+-)*\p{N}*[\p{L}_])[\p{L}\p{N}_]+(?:-[\p{L}\p{N}_]+)+", 1, 0),
         ]
     })
 }
@@ -992,6 +993,16 @@ mod tests {
         assert_eq!(click(&stage, 2, "log/"), "/var/log/syslog");
         assert_eq!(click(&stage, 2, "0x1F"), "0x1F");
         assert_eq!(click(&stage, 2, "kůň"), "žluťoučký_kůň");
+    }
+
+    #[test]
+    fn an_identifier_can_start_with_numbers_and_contain_a_hyphen() {
+        let stage = stage_of(&["plugin 11ty__eleventy-img enabled"]);
+        for needle in ["11ty", "eleventy", "-img", "img"] {
+            assert_eq!(click(&stage, 0, needle), "11ty__eleventy-img");
+        }
+        assert_eq!(click_with(&stage, 0, "img", None, true).1, "img");
+        assert_eq!(click_with(&stage, 0, "eleventy", None, true).1, "11ty__eleventy");
     }
 
     #[test]

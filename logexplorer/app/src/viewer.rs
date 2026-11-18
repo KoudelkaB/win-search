@@ -6,11 +6,12 @@ use crate::app::App;
 use crate::theme;
 use egui::{Color32, FontId, Modifiers, PointerButton, Pos2, Rect, Sense, Stroke, Vec2};
 use logexplorer_core::i18n::grouped;
+use logexplorer_core::ops::filter::FilterMatcher;
 use logexplorer_core::select::click_range;
 use logexplorer_core::selection::{Point, Selection};
 use logexplorer_core::stage::Stage;
 use logexplorer_core::text::cols_to_bytes;
-use std::sync::Arc;
+use std::{collections::HashMap, ops::Range, sync::Arc};
 
 const SCROLLBAR: f32 = 14.0;
 const TEXT_PADDING: f32 = 10.0;
@@ -31,6 +32,8 @@ pub struct ViewerState {
     drag_horizontal: Option<(f32, usize)>,
     /// Byte offset of every 4096th column of long rows that are not ASCII: `(stage, row, offsets)`
     long_rows: Vec<(u64, usize, Vec<usize>)>,
+    preview: Option<(u64, Arc<FilterMatcher>)>,
+    preview_rows: HashMap<usize, bool>,
     /// The rectangle of the rows, for tests that click into it
     pub rect: Option<Rect>,
     pub text_left: f32,
@@ -65,6 +68,21 @@ impl ViewerState {
     fn visible<'a>(&mut self, stage: &'a Stage, row: usize, scroll_left: usize, cols: usize) -> &'a str {
         let (start, end) = self.cols_to_bytes(stage, row, scroll_left, scroll_left + cols);
         &stage.line(row)[start..end]
+    }
+
+    fn prepare_preview(&mut self, stage: &Stage, matcher: Option<Arc<FilterMatcher>>, visible: Range<usize>) {
+        let next = matcher.map(|matcher| (stage.id, matcher));
+        match (&self.preview, &next) {
+            (Some((id, cached)), Some((next_id, matcher))) if id == next_id && Arc::ptr_eq(cached, matcher) => {
+                self.preview_rows.retain(|row, _| visible.contains(row));
+            }
+            _ => self.preview_rows.clear(),
+        }
+        self.preview = next;
+    }
+
+    fn preview_matches(&mut self, stage: &Stage, row: usize) -> bool {
+        self.preview.as_ref().is_some_and(|(_, matcher)| *self.preview_rows.entry(row).or_insert_with(|| matcher.matches(stage, row)))
     }
 }
 
@@ -146,7 +164,7 @@ fn begin_selection(app: &mut App, stage: &Stage, point: Point, in_gutter: bool, 
     }
     let shrink = modifiers.command || modifiers.ctrl;
     let range = click_range(stage, point, app.selection.as_ref(), shrink, modifiers.shift);
-    let anchor = if modifiers.shift { app.selection.map_or(app.cursor, |selection| selection.normalized().start) } else { point };
+    let anchor = if modifiers.shift { app.selection_anchor() } else { point };
     app.viewer.anchor = anchor;
     app.viewer.start_point = point;
     if modifiers.shift {
@@ -316,7 +334,9 @@ fn pointer_input(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage,
 fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
     let rect = metrics.rect;
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, theme::PANEL);
+    if !app.windows_software_renderer {
+        painter.rect_filled(rect, 0.0, theme::PANEL);
+    }
     let gutter = Rect::from_min_max(rect.min, Pos2::new(rect.left() + metrics.gutter, rect.bottom()));
     painter.rect_filled(gutter, 0.0, theme::SURFACE);
 
@@ -326,6 +346,7 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
     let last = (((scroll_top + rect.height() as f64) / row_height).ceil().max(0.0) as usize).min(stage.len());
     let selection = app.selection.map(|selection| selection.normalized());
     let preview = app.preview_filter(stage);
+    app.viewer.prepare_preview(stage, preview, first..last);
     let tinted = stage.multiple_sources();
     let (scroll_left, cols) = (app.view.scroll_left, app.view.viewport_cols + 1);
     let text_clip = Rect::from_min_max(Pos2::new(rect.left() + metrics.gutter, rect.top()), rect.max);
@@ -351,7 +372,7 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
         );
 
         let visible = app.viewer.visible(stage, row, scroll_left, cols);
-        let keeps = preview.as_ref().is_some_and(|matcher| matcher.matches(stage, row));
+        let keeps = app.viewer.preview_matches(stage, row);
         let galley = (!visible.is_empty()).then(|| text_painter.layout_no_wrap(visible.to_owned(), metrics.font.clone(), if keeps { theme::PREVIEW } else { theme::TEXT }));
         let text_top = top + (metrics.row_height - galley.as_ref().map_or(metrics.row_height, |galley| galley.size().y)) / 2.0;
 
@@ -379,14 +400,6 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
         }
         if let Some(galley) = galley {
             text_painter.galley(Pos2::new(metrics.text_left, text_top), galley, theme::TEXT);
-        }
-        if app.cursor.row == row && app.cursor.col >= scroll_left && selection.is_some() {
-            // The caret: where the keyboard continues from
-            let local = app.cursor.col - scroll_left;
-            let x = metrics.text_left + local as f32 * metrics.char_width;
-            if visible.is_ascii() && local <= visible.len() {
-                text_painter.line_segment([Pos2::new(x, top + 2.0), Pos2::new(x, top + metrics.row_height - 2.0)], Stroke::new(1.0, theme::ACCENT_STRONG));
-            }
         }
     }
     painter.line_segment([Pos2::new(gutter.right(), rect.top()), Pos2::new(gutter.right(), rect.bottom())], Stroke::new(1.0, theme::BORDER));
@@ -418,7 +431,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
 
     let Some(stage) = stage else {
         let painter = ui.painter().with_clip_rect(outer);
-        painter.rect_filled(outer, 0.0, theme::PANEL);
+        if !app.windows_software_renderer {
+            painter.rect_filled(outer, 0.0, theme::PANEL);
+        }
         let center = outer.center();
         let (title, hint) = (app.t("Drop files to open them").to_string(), app.t("F1 shows help and all shortcuts.").to_string());
         painter.text(center - Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, title, FontId::proportional(theme::HEADING_SIZE), theme::TEXT);

@@ -36,7 +36,7 @@ fn main() -> eframe::Result {
                     logexplorer::elevated_drop::accept(window.hwnd.get(), &context.egui_ctx);
                 }
             }
-            Ok(Box::new(logexplorer::create(&context.egui_ctx, options)))
+            Ok(Box::new(logexplorer::create_native(context, options)))
         }),
     )
 }

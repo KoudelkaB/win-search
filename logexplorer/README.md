@@ -157,9 +157,8 @@ package is made without it:
 - Identifiers of any alphabet are selected by a click, not only ASCII ones.
 - A stage that follows several edits keeps its earlier stages (the HTML app recomputes
   the whole pipeline after every change).
-- Keys that come faster than frames are taken one key press a frame, in their order
-  (`panels::one_key_press_a_frame`): a script, or a machine that draws slowly, gets what
-  the same keys give when typed slowly.
+- File view navigation shows one movement per frame. Separate presses keep their order
+  and excess repeats from holding a key are discarded.
 
 ## Windows
 
