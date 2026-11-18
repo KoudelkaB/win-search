@@ -2,9 +2,10 @@
 //! path...), the content of quotes and brackets, an expression around `=`, and how
 //! repeated clicks grow or shrink the selection through the enclosing structures.
 //!
-//! The HTML app scans the whole stage for brackets and tags on the first click. Here the
-//! structures are looked for in a window of rows around the click, so a click costs the
-//! same in a 10 KB and in a 10 GB view.
+//! Most selections only need a window around the click. When a JSON bracket extends
+//! beyond that window, a streaming scan finds the enclosing scopes of that click.
+
+mod json;
 
 use crate::selection::{Point, Selection};
 use crate::stage::Stage;
@@ -222,6 +223,7 @@ struct Window {
     /// Columns cut from the start of the (only) row of the window
     col0: usize,
     stage_rows: usize,
+    complete: bool,
     brackets: OnceLock<Vec<(Pair, bool)>>,
     angles: OnceLock<Vec<Pair>>,
     elements: OnceLock<Vec<Element>>,
@@ -238,6 +240,7 @@ impl Window {
             row0: row,
             col0: 0,
             stage_rows: stage.len(),
+            complete: false,
             brackets: OnceLock::new(),
             angles: OnceLock::new(),
             elements: OnceLock::new(),
@@ -290,6 +293,7 @@ impl Window {
             }
         }
         window.row0 = first;
+        window.complete = first == 0 && last + 1 == stage.len();
         for current in first..=last {
             if current > first {
                 window.text.push('\n');
@@ -326,6 +330,15 @@ impl Window {
     fn offset_of(&self, point: Point) -> Option<usize> {
         let (index, col) = self.local(point)?;
         Some(self.starts[index] + col.min(self.line(index).len()))
+    }
+
+    fn local_selection(&self, selection: Selection) -> Option<Range> {
+        let offset = |point: Point| {
+            let index = self.index_of(point.row)?;
+            let col = point.col.checked_sub(self.col0)?;
+            (col <= self.line(index).len()).then(|| self.starts[index] + col)
+        };
+        Some(Range::new(offset(selection.start)?, offset(selection.end)?))
     }
 
     fn row_of(&self, offset: usize) -> usize {
@@ -926,32 +939,52 @@ fn is_angle_tag_content(content: &[char]) -> bool {
     trimmed.len() >= 5 && trimmed.starts_with("!--") && trimmed.ends_with("--")
 }
 
-/// What a click at `point` selects, given the current selection: `None` leaves a caret.
-/// `shrink` is Ctrl+click (the smallest useful part, or the next smaller structure);
-/// with `extend` (Shift+click) the current selection plays no part.
+/// Remembers the distant JSON scopes of the last click that needed a document scan.
+#[derive(Default)]
+pub struct ClickSelector {
+    json_scopes: Option<(u64, Point, Vec<Selection>)>,
+}
+
+impl ClickSelector {
+    /// What a click selects. Ctrl+click shrinks and Shift+click chooses a fresh range.
+    pub fn click_range(&mut self, stage: &Stage, point: Point, current: Option<&Selection>, shrink: bool, extend: bool) -> Option<(Point, Point)> {
+        if stage.is_empty() {
+            return None;
+        }
+        let window = Window::new(stage, point);
+        let (index, col) = window.local(point)?;
+        let clicked = window.offset_of(point)?;
+        let current = current.filter(|_| !extend).map(Selection::normalized);
+        let local = current.and_then(|selection| window.local_selection(selection));
+        let mut growth = None;
+        if let Some(current) = &local {
+            if !shrink {
+                growth = window.repeated_delimiter(index, col, current);
+            }
+            if growth.is_none() && current.end > current.start && clicked >= current.start && clicked <= current.end {
+                growth = if shrink { window.shrink(index, col, current) } else { window.expansion(index, col, current) };
+            }
+        }
+        if growth.is_none() && !window.complete {
+            let in_selection = current.is_some_and(|selection| !selection.is_empty() && selection.start <= point && point <= selection.end);
+            if in_selection || (matches!(window.at(clicked), Some('[' | ']' | '{' | '}')) && window.bracket_at(clicked).is_none()) {
+                if !self.json_scopes.as_ref().is_some_and(|(id, at, _)| *id == stage.id && *at == point) {
+                    self.json_scopes = Some((stage.id, point, json::scopes(stage, point)));
+                }
+                if let Some(selection) = json::selection_at(&self.json_scopes.as_ref().unwrap().2, point, current, shrink) {
+                    return Some((selection.start, selection.end));
+                }
+            }
+        }
+        let range = growth.or_else(|| window.structural(index, col, shrink))?;
+        let (start, end) = (range.start.min(range.end), range.start.max(range.end));
+        Some((window.point_of(start), window.point_of(end)))
+    }
+}
+
+/// Select once without retaining a cache between clicks.
 pub fn click_range(stage: &Stage, point: Point, current: Option<&Selection>, shrink: bool, extend: bool) -> Option<(Point, Point)> {
-    if stage.is_empty() {
-        return None;
-    }
-    let window = Window::new(stage, point);
-    let (index, col) = window.local(point)?;
-    let clicked = window.offset_of(point)?;
-    let current = current.filter(|_| !extend).and_then(|selection| {
-        let selection = selection.normalized();
-        Some(Range::new(window.offset_of(selection.start)?, window.offset_of(selection.end)?))
-    });
-    let mut growth = None;
-    if let Some(current) = &current {
-        if !shrink {
-            growth = window.repeated_delimiter(index, col, current);
-        }
-        if growth.is_none() && current.end > current.start && clicked >= current.start && clicked <= current.end {
-            growth = if shrink { window.shrink(index, col, current) } else { window.expansion(index, col, current) };
-        }
-    }
-    let range = growth.or_else(|| window.structural(index, col, shrink))?;
-    let (start, end) = (range.start.min(range.end), range.start.max(range.end));
-    Some((window.point_of(start), window.point_of(end)))
+    ClickSelector::default().click_range(stage, point, current, shrink, extend)
 }
 
 #[cfg(test)]
@@ -1093,5 +1126,47 @@ mod tests {
         let col = 3_000_000 + line[3_000_000..].find("12345").unwrap();
         let (start, end) = click_range(&stage, Point::new(0, col), None, false, false).unwrap();
         assert_eq!((start, end), (Point::new(0, col), Point::new(0, col + 5)));
+    }
+
+    #[test]
+    fn a_large_json_array_expands_to_its_delimiters_and_root() {
+        let prefix = r#"{"plugins":["#;
+        let sibling = r#"{"name":"příliš žluťoučký kůň \"[{}]\""}"#;
+        let before = format!("{prefix}{}", format!("{sibling},").repeat(ROW_BYTES / sibling.len()));
+        let selected = r#"{"name":"clicked"}"#;
+        let line = format!("{before}{selected},{}{}]}}", format!("{sibling},").repeat(ROW_BYTES / sibling.len()), sibling);
+        let stage = stage_of(&[&line]);
+        let col = |byte| Point::new(0, byte_to_col(&line, byte));
+        let point = col(before.len() + selected.find("clicked").unwrap());
+        let object = (col(before.len()), col(before.len() + selected.len()));
+        let array_contents = (col(prefix.len()), col(line.len() - 2));
+        let array = (col(prefix.len() - 1), col(line.len() - 1));
+        let root_contents = (col(1), col(line.len() - 1));
+        let root = (col(0), col(line.len()));
+
+        let mut selector = ClickSelector::default();
+        let mut current = object;
+        for expected in [array_contents, array, root_contents, root] {
+            current = selector.click_range(&stage, point, Some(&Selection::new(current.0, current.1)), false, false).unwrap();
+            assert_eq!(current, expected);
+        }
+        for expected in [root_contents, array, array_contents, object] {
+            current = selector.click_range(&stage, point, Some(&Selection::new(current.0, current.1)), true, false).unwrap();
+            assert_eq!(current, expected);
+        }
+
+        let opening = col(prefix.len() - 1);
+        assert_eq!(selector.click_range(&stage, opening, None, false, false), Some(array_contents));
+        assert_eq!(selector.click_range(&stage, opening, Some(&Selection::new(array_contents.0, array_contents.1)), false, false), Some(array));
+    }
+
+    #[test]
+    fn a_json_scope_can_start_before_the_first_row_in_the_window() {
+        let rows = WINDOW_ROWS + 10;
+        let text = format!("{{\n  \"plugins\": [\n{}    {{\"id\":12345}}\n  ]\n}}", "    {\"id\":0},\n".repeat(rows));
+        let stage = crate::load::stage_from_text(text, "plugins.json", "plugins.json");
+        let point = Point::new(rows + 2, 10);
+        let object = Selection::new(Point::new(rows + 2, 4), Point::new(rows + 2, 16));
+        assert_eq!(click_range(&stage, point, Some(&object), false, false), Some((Point::new(1, 14), Point::new(rows + 3, 2))));
     }
 }

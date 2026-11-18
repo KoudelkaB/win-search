@@ -7,7 +7,7 @@ use crate::theme;
 use egui::{Color32, FontId, Modifiers, PointerButton, Pos2, Rect, Sense, Stroke, Vec2};
 use logexplorer_core::i18n::grouped;
 use logexplorer_core::ops::filter::FilterMatcher;
-use logexplorer_core::select::click_range;
+use logexplorer_core::select::ClickSelector;
 use logexplorer_core::selection::{Point, Selection};
 use logexplorer_core::stage::Stage;
 use logexplorer_core::text::cols_to_bytes;
@@ -23,6 +23,7 @@ const DOUBLE_CLICK_SECONDS: f64 = 0.5;
 
 #[derive(Default)]
 pub struct ViewerState {
+    click_selector: ClickSelector,
     selecting: bool,
     anchor: Point,
     start_point: Point,
@@ -163,7 +164,7 @@ fn begin_selection(app: &mut App, stage: &Stage, point: Point, in_gutter: bool, 
         return;
     }
     let shrink = modifiers.command || modifiers.ctrl;
-    let range = click_range(stage, point, app.selection.as_ref(), shrink, modifiers.shift);
+    let range = app.viewer.click_selector.click_range(stage, point, app.selection.as_ref(), shrink, modifiers.shift);
     let anchor = if modifiers.shift { app.selection_anchor() } else { point };
     app.viewer.anchor = anchor;
     app.viewer.start_point = point;

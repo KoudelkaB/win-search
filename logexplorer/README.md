@@ -52,8 +52,9 @@ current pipeline.
   expressions run row by row in parallel unless the pattern can match a line break.
 - The view lays out only the rows on screen. Scrolling is kept in `f64` with scrollbars of
   its own, so a hundred million rows do not hit the `f32` limits of a scroll area.
-- Click selection looks for brackets, tags and quotes in a window of rows around the
-  click instead of scanning the whole stage.
+- Click selection looks for brackets, tags and quotes around the click. If an enclosing
+  JSON scope extends farther, a streaming scan finds the ancestors of the click and
+  keeps their positions for subsequent clicks at the same place.
 
 Measured on a 32-thread machine, release build, the generated log of
 `core/examples/bench.rs` (10.1 million rows, 1 GiB):
