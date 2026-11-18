@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Microsoft.Web.WebView2.Core;
@@ -29,24 +32,104 @@ namespace search
         static Task running;
 
         /// <summary>
-        /// The old page may have kept something, and nothing was imported yet: the program
-        /// has no profiles of its own and the import never ran
+        /// The old page may have kept something and the import has not finished yet. Only the
+        /// marker tells: an import cut short after profiles.json (working-set.json failed) runs
+        /// again, and so does one that failed before the program saved profiles of its own.
         /// </summary>
         internal static bool Needed(string dataFolder, string legacyUserData)
-            => !File.Exists(Path.Combine(dataFolder, "profiles.json"))
-                && !File.Exists(Path.Combine(dataFolder, DoneMarker))
+            => !File.Exists(Path.Combine(dataFolder, DoneMarker))
                 && Directory.Exists(Path.Combine(legacyUserData, "EBWebView", "Default", "Local Storage", "leveldb"));
 
         /// <summary>
-        /// Write the values as the page kept them (null: it kept none). A file the program
-        /// wrote meanwhile stays; a value that is not a JSON object is left out.
+        /// Write the values as the page kept them (null: it kept none), then the marker. The
+        /// profiles are added to those the program has (profiles.json) - a name it has keeps
+        /// its profile - so running again after an interruption adds nothing twice; the last
+        /// pipeline is written only when the program has none. A value that is not a JSON
+        /// object is left out.
         /// </summary>
         internal static void Write(string dataFolder, string profiles, string workingSet)
         {
             Directory.CreateDirectory(dataFolder);
-            WriteNew(Path.Combine(dataFolder, "profiles.json"), profiles);
+            AddProfiles(dataFolder, profiles);
             WriteNew(Path.Combine(dataFolder, "working-set.json"), workingSet);
             File.WriteAllText(Path.Combine(dataFolder, DoneMarker), "");
+        }
+
+        /// <summary>
+        /// The named profiles of the page that profiles.json lacks, after its own in the order
+        /// of the page. Under the lock of the program (profiles.lock, see its storage.rs): a
+        /// window of it may be saving.
+        /// </summary>
+        static void AddProfiles(string dataFolder, string profiles)
+        {
+            if (Store(profiles) is not { } page) return;
+            using var lease = LockProfiles(dataFolder);
+            var path = Path.Combine(dataFolder, "profiles.json");
+            var own = File.Exists(path) ? Store(File.ReadAllText(path)) : null;
+            if (own == null)
+            {
+                Replace(path, page.ToJsonString());
+                return;
+            }
+            var named = (JsonObject)own["named"];
+            var order = (JsonArray)own["order"];
+            var added = new List<string>();
+            foreach (var (name, profile) in (JsonObject)page["named"])
+                if (!named.ContainsKey(name))
+                {
+                    named[name] = profile?.DeepClone();
+                    added.Add(name);
+                }
+            if (added.Count == 0) return;
+            var pageOrder = ((JsonArray)page["order"]).Select(entry => entry?.GetValue<string>()).ToList();
+            foreach (var name in added.OrderBy(name => pageOrder.IndexOf(name) is var i and >= 0 ? i : int.MaxValue))
+                order.Add(name);
+            Replace(path, own.ToJsonString());
+        }
+
+        /// <summary>
+        /// The profiles as {"named": {...}, "order": [...]}; an older store was the map of the
+        /// profiles itself. Null when it is not a JSON object.
+        /// </summary>
+        internal static JsonObject Store(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            JsonNode node;
+            try { node = JsonNode.Parse(json); }
+            catch (JsonException) { return null; }
+            if (node is not JsonObject store) return null;
+            var named = store["named"] as JsonObject ?? store;
+            var order = new JsonArray(((store["named"] is JsonObject ? store["order"] as JsonArray : null) ?? new JsonArray())
+                .Where(entry => entry is JsonValue value && value.TryGetValue<string>(out _))
+                .Select(entry => entry.DeepClone()).ToArray());
+            return new JsonObject { ["named"] = named.DeepClone(), ["order"] = order };
+        }
+
+        /// <summary>
+        /// The lock the program holds while it changes profiles.json. Its lock covers the whole
+        /// file and the one taken here fails at once while it is held: tried for a few seconds.
+        /// </summary>
+        static FileStream LockProfiles(string dataFolder)
+        {
+            var file = new FileStream(Path.Combine(dataFolder, "profiles.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    file.Lock(0, long.MaxValue);
+                    return file;
+                }
+                catch (IOException) when (attempt < 50)
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+                catch
+                {
+                    file.Dispose();
+                    throw;
+                }
+            }
         }
 
         static void WriteNew(string path, string json)
@@ -62,6 +145,14 @@ namespace search
             File.WriteAllText(staged, json, new UTF8Encoding(false));
             try { File.Move(staged, path, overwrite: false); }
             catch (IOException) { File.Delete(staged); } //The program saved its own first
+        }
+
+        /// <summary>Written beside and renamed, as the program writes it: never half a file</summary>
+        static void Replace(string path, string json)
+        {
+            var staged = path + ".import.tmp";
+            File.WriteAllText(staged, json, new UTF8Encoding(false));
+            File.Move(staged, path, overwrite: true);
         }
 
         /// <summary>
