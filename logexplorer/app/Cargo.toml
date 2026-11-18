@@ -22,6 +22,9 @@ sys-locale = "0.3"
 egui_kittest = { version = "0.37", features = ["eframe"] }
 tempfile = "3"
 
+[build-dependencies]
+embed-resource = "3"
+
 # GNOME/Wayland does not draw server-side decorations. Winit's fallback is a blank
 # bar; Adwaita draws the title and window controls, including the loaded file name.
 [target.'cfg(target_os = "linux")'.dependencies]

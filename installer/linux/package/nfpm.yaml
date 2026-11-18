@@ -48,6 +48,10 @@ contents:
     dst: /usr/lib/systemd/system/file-search-manager.service
   - src: installer/linux/io.github.koudelkab.FileSearchManager.desktop
     dst: /usr/share/applications/io.github.koudelkab.FileSearchManager.desktop
+  - src: installer/linux/io.github.koudelkab.LogExplorer.desktop
+    dst: /usr/share/applications/io.github.koudelkab.LogExplorer.desktop
+  - src: logexplorer/app/assets/logexplorer.png
+    dst: /usr/share/icons/hicolor/256x256/apps/io.github.koudelkab.LogExplorer.png
   - src: installer/linux/package/staging/io.github.koudelkab.FileSearchManager.metainfo.xml
     dst: /usr/share/metainfo/io.github.koudelkab.FileSearchManager.metainfo.xml
   - src: installer/linux/icons/16x16/io.github.koudelkab.FileSearchManager.png

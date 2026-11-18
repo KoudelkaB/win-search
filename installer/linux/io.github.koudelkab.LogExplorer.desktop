@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Log Explorer
+Exec=/usr/libexec/file-search-manager/LogExplorer/logexplorer %F
+Icon=io.github.koudelkab.LogExplorer
+NoDisplay=true
