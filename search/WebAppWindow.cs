@@ -38,7 +38,7 @@ namespace search
         /// wait ~2 s for a multicast DNS lookup before the virtual host mapping served the page.
         /// </summary>
         const string HostName = "webapps.file-search-manager.example";
-        const string Origin = "https://" + HostName + "/";
+        internal const string Origin = "https://" + HostName + "/";
 
         /// <summary>
         /// The files the page cannot read through their handles (see ServeFile) - a host of
