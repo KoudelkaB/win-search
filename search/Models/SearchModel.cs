@@ -613,8 +613,12 @@ namespace search.Models
                 //not on the pool: the changes take over in the order they were asked for. The
                 //empty filter of the window's opening, run by a busy pool after the filter typed
                 //right after it, published "" under the typed text until it was typed again.
-                lastUpdate = update;
-                pendingUserUpdate = pendingUser = new PendingUserUpdate();
+                pendingUser = new PendingUserUpdate();
+                lock (takeOverGate)
+                {
+                    lastUpdate = update;
+                    pendingUserUpdate = pendingUser;
+                }
                 Filtering = true;
             }
 
@@ -694,17 +698,23 @@ namespace search.Models
                     if (dataRefresh)
                     {
                         refreshQueued = 0; //Changes from now on queue a new refresh
-                        if ((DateTime)lastUpdate > created) return; //A newer update runs against current data anyway
-                        //A filter or sort asked for and not yet published (in its debounce, or
-                        //waiting for this lock) refilters from the current files anyway
-                        //(refreshPending). Taking over would cancel it, and the files would be
-                        //published under the previous filter - until it was typed again.
-                        if (pendingUserUpdate != null)
+                        //One step with a user change taking over: one registered between the
+                        //check and the take-over would be canceled by it
+                        lock (takeOverGate)
                         {
-                            yieldedToUser = true;
-                            return;
+                            if ((DateTime)lastUpdate > created) return; //A newer update runs against current data anyway
+                            //A filter or sort asked for and not yet published (in its debounce, or
+                            //waiting for this lock) refilters from the current files anyway
+                            //(refreshPending). Taking over would cancel it, and the files would be
+                            //published under the previous filter - until it was typed again.
+                            if (pendingUserUpdate != null)
+                            {
+                                yieldedToUser = true;
+                                return;
+                            }
+                            RefreshTakingOver?.Invoke();
+                            lastUpdate = update;
                         }
-                        lastUpdate = update;
                         Filtering = true;
                     }
 
@@ -906,9 +916,19 @@ namespace search.Models
         void EndPendingUserUpdate(PendingUserUpdate pending)
         {
             if (pending == null) return;
-            Interlocked.CompareExchange(ref pendingUserUpdate, null, pending); //Unless a newer one replaced it
+            lock (takeOverGate)
+                if (pendingUserUpdate == pending) pendingUserUpdate = null; //Unless a newer one replaced it
             pending.Done.TrySetResult();
         }
+
+        /// <summary>
+        /// Taking the pipeline over (lastUpdate) and the user change not yet over
+        /// (pendingUserUpdate) change together under it
+        /// </summary>
+        readonly object takeOverGate = new();
+
+        /// <summary>Runs as a data refresh takes the pipeline over, under takeOverGate (tests)</summary>
+        internal Action RefreshTakingOver;
 
         /// <summary>A filter or sort change asked for and not yet over (published, canceled or failed)</summary>
         sealed class PendingUserUpdate
