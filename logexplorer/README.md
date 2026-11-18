@@ -8,11 +8,14 @@ and Linux (egui/eframe) and is meant for files of gigabytes, as long as they fit
 
 ```sh
 cargo run --release -p logexplorer -- [--combine append|zip] [--filter TEXT] [--case-sensitive]
-                                      [--lang LANG] [--data-dir DIR] [FILE...]
+                                      [--lang LANG] [--data-dir DIR] [--files0-from LIST] [FILE...]
 ```
 
 The options are what the embedding API of the HTML app took (`window.logExplorer.open`):
-several files without asking how to combine them, and a first include filter. Files can
+several files without asking how to combine them, and a first include filter.
+`--files0-from` reads more files from LIST (`-` is standard input), each name ended by a NUL
+byte: File Search Manager hands over a list longer than a Windows command line (32 767
+characters) this way. Files can
 also be dropped into the window or pasted after copying them in a file manager. Profile
 bundles (`≡` menu → Download / Upload profiles) are interchangeable with the HTML app; the UI
 texts and their ten translations are taken from it (`tools/extract-translations.cjs`).

@@ -45,6 +45,21 @@ namespace search.Tests
         }
 
         [Fact]
+        public void FilesBeyondAWindowsCommandLineGoThroughTheStandardInput()
+        {
+            //400 paths of 90 characters pass the 32 767 characters of CreateProcessW
+            var files = Enumerable.Range(0, 400).Select(i => $"/logs/{new string('x', 80)}/{i:D3}.log").ToArray();
+            Assert.True(NativeLogExplorer.ListOnStandardInput(files));
+            var arguments = Arguments(files, new LogExplorerLoad("ERROR", false));
+            Assert.Equal(new[] { "--filter", "ERROR", "--files0-from", "-" }, arguments[^4..]);
+            Assert.True(arguments.Sum(a => a.Length + 3) < 1000);
+            //Each name ended by NUL, which no path holds - a line break may be in a name
+            Assert.Equal("/a b.log\0/line\nbreak.log\0",
+                System.Text.Encoding.UTF8.GetString(NativeLogExplorer.StandardInputList(new[] { "/a b.log", "/line\nbreak.log" })));
+            Assert.False(NativeLogExplorer.ListOnStandardInput(files[..10]));
+        }
+
+        [Fact]
         public void ItAsksOnlyWhenTheFilesWouldNotFitInMemory()
         {
             const ulong memory = 16UL << 30;
@@ -88,6 +103,15 @@ namespace search.Tests
                 Assert.Equal(new[] { "--combine", "append", "--filter", "ERROR", "--case-sensitive", "--", "/logs/a.log" }, start.ArgumentList.Skip(4));
                 Assert.Equal(new[] { "--lang", CultureInfo.CurrentUICulture.Name, "--data-dir" }, start.ArgumentList.Take(3));
                 Assert.EndsWith(NativeLogExplorer.Folder, start.ArgumentList[3]);
+                Assert.False(start.RedirectStandardInput);
+
+                //A long list is written to the standard input of the program
+                started.Clear();
+                var files = Enumerable.Range(0, 400).Select(i => $"/logs/{new string('x', 80)}/{i:D3}.log").ToArray();
+                Assert.True(NativeLogExplorer.Open(files));
+                start = Assert.Single(started);
+                Assert.True(start.RedirectStandardInput);
+                Assert.Equal(new[] { "--files0-from", "-" }, start.ArgumentList.Skip(4));
             }
             finally
             {
