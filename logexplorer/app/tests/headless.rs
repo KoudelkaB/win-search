@@ -6,6 +6,7 @@ mod common;
 use common::*;
 use egui::Key;
 use egui_kittest::kittest::Queryable as _;
+use logexplorer::app::Prompt;
 use logexplorer::Options;
 
 #[test]
@@ -328,6 +329,41 @@ fn profiles_and_the_last_pipeline_survive_a_restart() {
     harness.run();
     let types: Vec<&str> = harness.state().work.operators.iter().map(|operator| operator.op_type().label()).collect();
     assert_eq!(types, ["Sort", "Diff"]);
+}
+
+#[test]
+fn a_name_another_window_saved_meanwhile_is_asked_about_before_it_is_replaced() {
+    let files = Files::new();
+    let data = files.dir.path().join("data");
+    let with_data = || Options { data_dir: Some(data.clone()), ..options("en") };
+    let path = files.write("s.log", SAMPLE);
+    // Both windows are open before either saves
+    let mut first = start_with(with_data());
+    let mut second = start_with(with_data());
+    for harness in [&mut first, &mut second] {
+        harness.state_mut().open_paths(vec![path.clone()], None, None);
+        harness.run();
+    }
+    key(&mut first, Key::S);
+    assert!(first.state_mut().save_profile_as("shared", false));
+    key(&mut second, Key::D);
+
+    assert!(!second.state_mut().save_profile_as("shared", false));
+    assert!(matches!(&second.state().prompt, Some(Prompt::Overwrite { name, rename_from: None }) if name == "shared"));
+    second.state_mut().prompt = None;
+    // A rename onto that name asks as well
+    assert!(second.state_mut().save_profile_as("own", false));
+    assert!(!second.state_mut().rename_profile("own", "shared", false));
+    assert!(matches!(&second.state().prompt, Some(Prompt::Overwrite { name, rename_from: Some(from) }) if name == "shared" && from == "own"));
+
+    let reopened = start_with(with_data());
+    let types: Vec<&str> = reopened.state().profiles.get("shared").unwrap().set.operators.iter().map(|operator| operator.op_type().label()).collect();
+    assert_eq!(types, ["Sort"]);
+    // Confirmed, it is replaced
+    assert!(second.state_mut().save_profile_as("shared", true));
+    let reopened = start_with(with_data());
+    let types: Vec<&str> = reopened.state().profiles.get("shared").unwrap().set.operators.iter().map(|operator| operator.op_type().label()).collect();
+    assert_eq!(types, ["Diff"]);
 }
 
 #[test]

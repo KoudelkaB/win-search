@@ -980,11 +980,19 @@ impl App {
             self.set_status("Choose a different name for Save as.");
             return false;
         }
-        if self.profiles.contains(name) && !confirmed {
+        // Asked against the profiles as the file holds them now: another window may have
+        // saved one under this name since this one read them
+        let saved = self.change_profiles(|profiles, work| {
+            if profiles.contains(name) && !confirmed {
+                return false;
+            }
+            profiles.save_as(name, work);
+            true
+        });
+        if !saved {
             self.prompt = Some(Prompt::Overwrite { name: name.to_string(), rename_from: None });
             return false;
         }
-        self.change_profiles(|profiles, work| profiles.save_as(name, work));
         self.loaded_profile = name.to_string();
         self.set_status_text(self.tf("Saved current profile as '{0}'.", &[&name]));
         true
@@ -1003,14 +1011,25 @@ impl App {
             self.set_status("'Last' is reserved.");
             return false;
         }
-        if new_name != profile && self.profiles.contains(new_name) && !confirmed {
-            self.prompt = Some(Prompt::Overwrite { name: new_name.to_string(), rename_from: Some(profile.to_string()) });
-            return false;
-        }
         let overwrote_loaded = new_name != profile && self.loaded_profile == new_name;
         let was_implicit = self.profiles.get(profile).is_some_and(|stored| stored.implicit);
-        if !self.change_profiles(|profiles, _| profiles.rename(profile, new_name)) {
-            return false;
+        // Asked against the profiles as the file holds them now (see save_profile_as)
+        let renamed = self.change_profiles(|profiles, _| {
+            if !profiles.contains(profile) {
+                Some(false)
+            } else if new_name != profile && profiles.contains(new_name) && !confirmed {
+                None
+            } else {
+                Some(profiles.rename(profile, new_name))
+            }
+        });
+        match renamed {
+            None => {
+                self.prompt = Some(Prompt::Overwrite { name: new_name.to_string(), rename_from: Some(profile.to_string()) });
+                return false;
+            }
+            Some(false) => return false,
+            Some(true) => {}
         }
         if !was_implicit && self.loaded_profile == profile {
             self.loaded_profile = new_name.to_string();
