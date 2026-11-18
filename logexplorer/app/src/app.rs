@@ -5,7 +5,7 @@ use logexplorer_core::cancel::{Cancel, OpError};
 use logexplorer_core::find::{find_backward, find_forward};
 use logexplorer_core::i18n::{grouped, I18n};
 use logexplorer_core::literal::Needle;
-use logexplorer_core::load::{self, Bundle, Input, LoadProgress, TextSource};
+use logexplorer_core::load::{self, Bundle, LoadProgress, TextSource};
 use logexplorer_core::operator::{create_default, Clause, OpKind, OpType, Operator};
 use logexplorer_core::ops::diff::uses_expanded_output;
 use logexplorer_core::ops::filter::FilterMatcher;
@@ -114,7 +114,7 @@ struct ComputeJob {
 }
 
 struct LoadJob {
-    receiver: Receiver<Vec<Result<Input, String>>>,
+    receiver: Receiver<Vec<Result<TextSource, String>>>,
     progress: Arc<LoadProgress>,
     cancel: Cancel,
     action: Option<LoadAction>,
@@ -1078,9 +1078,7 @@ impl App {
         let cancel = Cancel::new();
         let read = {
             let (progress, cancel) = (progress.clone(), cancel.clone());
-            move || {
-                paths.iter().map(|path| load::read_input(path, &progress, &cancel).map_err(|error| format!("{} - {error}", path.display()))).collect::<Vec<Result<Input, String>>>()
-            }
+            move || paths.iter().map(|path| load::read_source(path, &progress, &cancel).map_err(|error| format!("{} - {error}", path.display()))).collect()
         };
         if self.synchronous {
             let results = read();
@@ -1119,19 +1117,13 @@ impl App {
         }
     }
 
-    fn loaded(&mut self, results: Vec<Result<Input, String>>, action: Option<LoadAction>, filter: Option<(String, bool)>) {
+    fn loaded(&mut self, results: Vec<Result<TextSource, String>>, action: Option<LoadAction>, filter: Option<(String, bool)>) {
         self.drop_note = None;
         let mut sources = Vec::new();
         let mut unreadable = Vec::new();
-        let mut bundles = 0;
         for result in results {
             match result {
-                Ok(Input::Text(source)) => sources.push(source),
-                Ok(Input::Profiles(bundle)) => {
-                    if self.import_profiles(&bundle) {
-                        bundles += 1;
-                    }
-                }
+                Ok(source) => sources.push(source),
                 Err(problem) => unreadable.push(problem),
             }
         }
@@ -1147,8 +1139,6 @@ impl App {
                 self.work.operators.push(operator);
                 self.changed();
             }
-        } else if bundles > 1 {
-            self.set_status_text(self.tf("Imported profile bundles: {0}.", &[&bundles]));
         }
         if !unreadable.is_empty() {
             // One unreadable file must not hide the others
@@ -1157,14 +1147,9 @@ impl App {
         }
     }
 
-    /// Text from the clipboard: a profile bundle is imported, the files it names are opened,
-    /// anything else is shown
+    /// Opens paths copied in a file manager or shows the pasted text.
     pub fn paste_text(&mut self, text: String) {
         if text.is_empty() {
-            return;
-        }
-        if let Some(bundle) = load::profile_bundle(text.as_bytes()) {
-            self.import_profiles(&bundle);
             return;
         }
         // Files copied in a file manager arrive as the text of their paths
@@ -1256,26 +1241,43 @@ impl App {
         }
     }
 
-    fn show_source(&mut self, stage: Stage, name: String, encoding: String, chars: u64) {
+    pub fn close_source(&mut self) {
+        self.cancel_load();
+        self.pending_load = None;
+        self.source = None;
+        self.reset_source_view(0);
+        self.find = Find::default();
+        self.focus_viewer = true;
+        self.set_status("Ready.");
+    }
+
+    fn reset_source_view(&mut self, source_bytes: usize) {
         if let Some(job) = self.job.take() {
             job.cancel.cancel();
         }
-        {
-            let mut cache = self.cache.lock().unwrap();
-            cache.clear();
-            cache.set_source_bytes(stage.bufs.iter().map(|buf| buf.len()).sum());
-        }
+        // A canceled worker may still finish a stage in the previous source's cache.
+        let mut cache = StageCache::default();
+        cache.set_source_bytes(source_bytes);
+        self.cache = Arc::new(Mutex::new(cache));
         self.offer_zip = false;
         self.drop_note = None;
-        self.source = Some(Source { name, encoding, raw: Arc::new(stage), chars });
-        // The source itself is shown first; a click on an operation applies the pipeline
         self.work.selected_operator_id = None;
         self.view.scroll_top = 0.0;
         self.view.scroll_left = 0;
         self.view.hovered_row = None;
+        self.viewer = Default::default();
         self.selection = None;
+        self.selection_chars = None;
         self.cursor = Point::default();
         self.failed = None;
+        self.preview = None;
+        self.last_stage = 0;
+    }
+
+    fn show_source(&mut self, stage: Stage, name: String, encoding: String, chars: u64) {
+        // The source itself is shown first; a click on an operation applies the pipeline.
+        self.reset_source_view(stage.bufs.iter().map(|buf| buf.len()).sum());
+        self.source = Some(Source { name, encoding, raw: Arc::new(stage), chars });
         let name = self.source.as_ref().map(|source| source.name.clone()).unwrap_or_default();
         self.set_status_text(self.tf("Loaded source '{0}'.", &[&name]));
     }

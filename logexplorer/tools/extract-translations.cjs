@@ -29,6 +29,42 @@ const remap = (entries) => Object.fromEntries(Object.entries(entries).map(([key,
 const ordered = { en: remap(english) };
 for (const language of Object.keys(translations).sort()) ordered[language] = remap(translations[language]);
 
+// The native viewer opens dropped JSON as text. Keep the shared help apart from the
+// HTML app's final sentence about drops and its profile import instructions.
+const profileHelp = {
+    en: 'Profiles are stored locally. Use the app menu (≡) to export or import a JSON profile bundle.',
+    cs: 'Profily se ukládají lokálně. Balíček profilů JSON můžete exportovat nebo importovat v nabídce aplikace (≡).',
+    de: 'Profile werden lokal gespeichert. Über das App-Menü (≡) lassen sich JSON-Profilpakete exportieren und importieren.',
+    es: 'Los perfiles se almacenan localmente. Use el menú de la aplicación (≡) para exportar o importar un paquete de perfiles JSON.',
+    fr: 'Les profils sont stockés localement. Le menu de l’application (≡) permet d’exporter ou d’importer un lot de profils JSON.',
+    it: 'I profili sono archiviati localmente. Usa il menu dell’app (≡) per esportare o importare un pacchetto di profili JSON.',
+    ja: 'プロファイルはローカルに保存されます。アプリメニュー (≡) から JSON プロファイルバンドルをエクスポートまたはインポートできます。',
+    ko: '프로필은 로컬에 저장됩니다. 앱 메뉴(≡)에서 JSON 프로필 번들을 내보내거나 가져올 수 있습니다.',
+    pl: 'Profile są przechowywane lokalnie. Menu aplikacji (≡) umożliwia eksport i import pakietów profili JSON.',
+    'pt-BR': 'Os perfis são armazenados localmente. Use o menu do aplicativo (≡) para exportar ou importar um pacote de perfis JSON.',
+    'zh-Hans': '配置文件保存在本地。使用应用菜单 (≡) 导出或导入 JSON 配置文件包。',
+};
+const closeView = {
+    cs: 'Zavřít zobrazení souborů (Ctrl+W)',
+    de: 'Dateiansicht schließen (Ctrl+W)',
+    es: 'Cerrar la vista de archivos (Ctrl+W)',
+    fr: 'Fermer la vue des fichiers (Ctrl+W)',
+    it: 'Chiudi la vista dei file (Ctrl+W)',
+    ja: 'ファイルビューを閉じる (Ctrl+W)',
+    ko: '파일 보기 닫기 (Ctrl+W)',
+    pl: 'Zamknij widok plików (Ctrl+W)',
+    'pt-BR': 'Fechar a visualização de arquivos (Ctrl+W)',
+    'zh-Hans': '关闭文件视图 (Ctrl+W)',
+};
+for (const [language, entries] of Object.entries(ordered)) {
+    entries['help.load.1'] = entries['help.load.1']
+        .replace(/([.。])\s*[^.。]+[.。]$/u, '$1')
+        .replace('▤', `<strong>${entries['Open file'] || 'Open file'}</strong>`);
+    entries['help.profiles.2'] = profileHelp[language];
+    delete entries['A JSON profile bundle is imported instead.'];
+    if (closeView[language]) entries['Close file view (Ctrl+W)'] = closeView[language];
+}
+
 const target = path.join(__dirname, '..', 'core', 'assets', 'translations.json');
 fs.writeFileSync(target, JSON.stringify(ordered, null, 1) + '\n');
 console.log(`${target}: ${Object.keys(ordered).join(', ')}; ${Object.keys(english).length} help texts`);

@@ -155,6 +155,10 @@ fn handle_keys(ctx: &egui::Context, app: &mut App) {
     if app.pending_load.is_some() || app.prompt.is_some() {
         return;
     }
+    if app.source.is_some() && !app.help_open && pressed(ctx, Modifiers::COMMAND, Key::W) {
+        app.close_source();
+        return;
+    }
     if pressed(ctx, Modifiers::COMMAND, Key::F) {
         app.show_find_bar(true, true);
         return;
@@ -256,6 +260,67 @@ fn handle_keys(ctx: &egui::Context, app: &mut App) {
 
 // --- the toolbar ----------------------------------------------------------------------------------
 
+const CLOSE_FILE_VIEW: &str = "Close file view (Ctrl+W)";
+
+#[derive(Clone, Copy)]
+enum ToolbarIcon {
+    Open,
+    Close,
+    Copy,
+    Help,
+    Menu,
+}
+
+impl ToolbarIcon {
+    fn button(self) -> egui::Button<'static> {
+        let button = egui::Button::new("").min_size(egui::vec2(28.0, 28.0));
+        if matches!(self, Self::Open) {
+            button.fill(theme::ACCENT_SOFT)
+        } else {
+            button
+        }
+    }
+
+    fn paint(self, ui: &egui::Ui, response: egui::Response, name: &str) -> egui::Response {
+        let painter = ui.painter();
+        let color = ui.style().interact(&response).fg_stroke.color;
+        let stroke = Stroke::new(1.4, color);
+        let center = response.rect.center();
+        let at = |x, y| center + egui::vec2(x, y);
+        let line = |x1, y1, x2, y2| painter.line_segment([at(x1, y1), at(x2, y2)], stroke);
+        match self {
+            Self::Open => {
+                let folder = [at(-8.0, 6.0), at(-8.0, -6.0), at(-2.0, -6.0), at(0.0, -3.5), at(7.0, -3.5), at(7.0, 6.0)];
+                painter.add(egui::Shape::closed_line(folder.to_vec(), stroke));
+                line(-7.0, 0.0, 6.0, 0.0);
+            }
+            Self::Close => {
+                line(-5.0, -5.0, 5.0, 5.0);
+                line(-5.0, 5.0, 5.0, -5.0);
+            }
+            Self::Copy => {
+                painter.add(egui::Shape::line(vec![at(-6.0, 3.0), at(-6.0, -7.0), at(3.0, -7.0)], stroke));
+                painter.rect_stroke(egui::Rect::from_min_max(at(-2.5, -3.5), at(6.5, 7.0)), 1.5, stroke, egui::StrokeKind::Middle);
+            }
+            Self::Help => {
+                painter.circle_stroke(center, 7.5, stroke);
+                painter.text(center, egui::Align2::CENTER_CENTER, "?", FontId::proportional(theme::SMALL_SIZE), color);
+            }
+            Self::Menu => {
+                for y in [-4.5, 0.0, 4.5] {
+                    line(-6.5, y, 6.5, y);
+                }
+            }
+        }
+        named(response.on_hover_text(name), egui::Role::Button, name)
+    }
+
+    fn show(self, ui: &mut egui::Ui, name: &str, enabled: bool) -> egui::Response {
+        let response = ui.add_enabled(enabled, self.button());
+        self.paint(ui, response, name)
+    }
+}
+
 fn toolbar(ui: &mut egui::Ui, app: &mut App) {
     ui.horizontal(|ui| {
         for (label, tip, op_type) in [
@@ -295,14 +360,16 @@ fn toolbar(ui: &mut egui::Ui, app: &mut App) {
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             app_menu(ui, app);
-            if icon(ui, egui::Button::new("?"), app.t("Help and shortcuts (F1)")).clicked() {
+            if ToolbarIcon::Help.show(ui, app.t("Help and shortcuts (F1)"), true).clicked() {
                 app.help_open = true;
             }
-            let copy = ui.add_enabled(app.selection.is_some(), egui::Button::new("▣")).on_hover_text(app.t("Copy selection (Ctrl+C)"));
-            if named(copy, egui::Role::Button, app.t("Copy selection (Ctrl+C)")).clicked() {
+            if ToolbarIcon::Copy.show(ui, app.t("Copy selection (Ctrl+C)"), app.selection.is_some()).clicked() {
                 app.copy_selection();
             }
-            if icon(ui, egui::Button::new("▤").fill(theme::ACCENT_SOFT), app.t("Open file")).clicked() {
+            if ToolbarIcon::Close.show(ui, app.t(CLOSE_FILE_VIEW), app.source.is_some()).clicked() {
+                app.close_source();
+            }
+            if ToolbarIcon::Open.show(ui, app.t("Open file"), true).clicked() {
                 app.dialog = Some(FileDialog::Open);
             }
             match &app.source {
@@ -321,8 +388,6 @@ fn toolbar(ui: &mut egui::Ui, app: &mut App) {
                     pill(ui, app.t("No source loaded"));
                 }
             }
-            let hint = app.t("Select text in the file: Enter keeps lines with it, Esc hides them, Delete removes the text. F1 shows all shortcuts.");
-            ui.add(egui::Label::new(RichText::new(hint).small().color(theme::MUTED)).truncate());
         });
     });
 }
@@ -331,7 +396,7 @@ fn app_menu(ui: &mut egui::Ui, app: &mut App) {
     let has_source = app.source.is_some();
     let has_selection = app.selection.is_some();
     let several = app.source.as_ref().is_some_and(|source| source.raw.sources.len() > 1);
-    let menu = ui.menu_button("≡", |ui| {
+    let (response, _) = egui::containers::menu::MenuButton::from_button(ToolbarIcon::Menu.button()).ui(ui, |ui| {
         ui.label(RichText::new(app.t("View")).small().color(theme::MUTED));
         let item = |ui: &mut egui::Ui, app: &mut App, enabled: bool, label: &str, tip: &str| {
             let clicked = ui.add_enabled(enabled, egui::Button::new(app.t(label))).on_hover_text(app.t(tip)).clicked();
@@ -367,7 +432,7 @@ fn app_menu(ui: &mut egui::Ui, app: &mut App) {
             app.dialog = Some(FileDialog::ImportProfiles);
         }
     });
-    named(menu.response.on_hover_text(app.t("App menu")), egui::Role::Button, app.t("App menu"));
+    ToolbarIcon::Menu.paint(ui, response, app.t("App menu"));
 }
 
 // --- the operations -------------------------------------------------------------------------------
@@ -746,7 +811,12 @@ fn profiles_panel(ui: &mut egui::Ui, app: &mut App) {
 
 fn operations(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
     ui.horizontal(|ui| {
-        let title = ui.add(egui::Button::new(RichText::new(app.t("Operations")).heading()).frame(false));
+        let title = ui
+            .scope(|ui| {
+                ui.spacing_mut().button_padding.x = 0.0;
+                ui.add(egui::Button::new(RichText::new(app.t("Operations")).heading()).frame(false))
+            })
+            .inner;
         if title.clicked() {
             app.toggle_raw();
         }
@@ -826,15 +896,10 @@ fn viewer_toolbar(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) 
             app.show_find_bar(true, true);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let scroll = match stage {
-                None => app.tf("Row {0}/{1}, col {2}/{3}", &[&1, &1, &1, &1]),
-                Some(stage) => {
-                    let rows = stage.len().max(1);
-                    let row = ((app.view.scroll_top / app.view.row_height as f64).floor().max(0.0) as usize + 1).min(rows);
-                    app.tf("Row {0}/{1}, col {2}/{3}", &[&grouped(row as u64), &grouped(rows as u64), &grouped(app.view.scroll_left as u64 + 1), &grouped(stage.max_cols.max(1))])
-                }
-            };
-            pill(ui, scroll);
+            if let Some(stage) = stage {
+                let row = app.view.hovered_row.filter(|&row| row < stage.len()).map_or_else(|| "—".to_string(), |row| grouped(row as u64 + 1));
+                pill(ui, format!("{} {row} / {}", app.t("Rows"), grouped(stage.len() as u64)));
+            }
             let selection = match (stage, app.selection.map(|selection| selection.normalized())) {
                 (Some(stage), Some(selection)) => {
                     let chars = app.selection_len(stage);
@@ -854,8 +919,6 @@ fn viewer_toolbar(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) 
                 _ => app.t("Selection: none").to_string(),
             };
             pill(ui, selection);
-            let hint = app.t("Click selects a value, Ctrl+click a smaller part. Middle click shows the previous stage.");
-            ui.add(egui::Label::new(RichText::new(hint).small().color(theme::MUTED)).truncate());
         });
     });
 }
@@ -864,8 +927,9 @@ fn find_bar(ui: &mut egui::Ui, app: &mut App) {
     ui.horizontal(|ui| {
         let label = ui.label(app.t("Find"));
         let hint = app.t("Text in current file view").to_string();
+        let input_width = (ui.available_width() * 0.45).clamp(70.0, 260.0);
         let input =
-            ui.add(TextEdit::singleline(&mut app.find.query).id(find_input_id()).desired_width(260.0).hint_text(hint).font(egui::TextStyle::Monospace)).labelled_by(label.id);
+            ui.add(TextEdit::singleline(&mut app.find.query).id(find_input_id()).desired_width(input_width).hint_text(hint).font(egui::TextStyle::Monospace)).labelled_by(label.id);
         if input.changed() {
             app.find_query_changed();
         }
@@ -894,12 +958,12 @@ fn find_bar(ui: &mut egui::Ui, app: &mut App) {
         if icon(ui, egui::Button::new("Aa").selected(app.find.case_sensitive), case_tip).clicked() {
             app.toggle_find_case();
         }
-        ui.label(RichText::new(&app.find.status).color(if app.find.not_found { theme::DANGER } else { theme::MUTED }));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if icon(ui, egui::Button::new("×"), app.t("Close find (Esc)")).clicked() {
                 app.close_find_bar();
             }
-            ui.label(RichText::new("Enter / Shift+Enter").small().color(theme::MUTED));
+            ui.add(egui::Label::new(RichText::new(&app.find.status).color(if app.find.not_found { theme::DANGER } else { theme::MUTED })).truncate())
+                .on_hover_text(&app.find.status);
         });
     });
 }
@@ -1211,14 +1275,7 @@ fn dropped_files(ctx: &egui::Context, app: &mut App) {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("drop zone")));
         painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(0xee, 0xf3, 0xfb, 235));
         painter.rect_stroke(rect.shrink(16.0), 16.0, Stroke::new(3.0, theme::ACCENT), egui::StrokeKind::Inside);
-        painter.text(rect.center() - egui::vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, app.t("Drop files to open them"), FontId::proportional(24.0), theme::TEXT);
-        painter.text(
-            rect.center() + egui::vec2(0.0, 18.0),
-            egui::Align2::CENTER_CENTER,
-            app.t("A JSON profile bundle is imported instead."),
-            FontId::proportional(14.0),
-            theme::MUTED,
-        );
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, app.t("Drop files to open them"), FontId::proportional(theme::HEADING_SIZE), theme::TEXT);
     }
 }
 
@@ -1232,13 +1289,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     // Before any field reads the input: the clipboard keys as cut, copy and paste
     app.pasted_files = crate::clipboard::translate_keys(&ctx, app.clipboard_source.as_mut());
     handle_keys(&ctx, app);
-    let stage = app.stage();
-
-    let bar = egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(8, 6));
+    let bar = egui::Frame::NONE.fill(theme::BG).inner_margin(theme::PANEL_MARGIN);
     egui::Panel::top("toolbar").frame(bar).show_separator_line(true).show(ui, |ui| toolbar(ui, app));
+    let stage = app.stage();
     egui::Panel::bottom("status").frame(bar).show_separator_line(true).show(ui, |ui| status_bar(ui, app, stage.as_ref()));
-    egui::Panel::left("operations").frame(bar).resizable(true).default_size(390.0).size_range(280.0..=720.0).show(ui, |ui| operations(ui, app, stage.as_ref()));
-    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin { left: 0, right: 8, top: 6, bottom: 0 })).show(ui, |ui| {
+    egui::Panel::left("operations").frame(bar).resizable(true).default_size(250.0).size_range(250.0..=720.0).show(ui, |ui| operations(ui, app, stage.as_ref()));
+    egui::CentralPanel::default().frame(bar).show(ui, |ui| {
         viewer_toolbar(ui, app, stage.as_ref());
         if app.find.open {
             find_bar(ui, app);

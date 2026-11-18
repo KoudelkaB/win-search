@@ -18,6 +18,12 @@ pub const DANGER: Color32 = Color32::from_rgb(0xcb, 0x3b, 0x46);
 pub const SELECTION: Color32 = Color32::from_rgb(0xb9, 0xd4, 0xfb);
 pub const HOVER_ROW: Color32 = Color32::from_rgb(0xf1, 0xf5, 0xfc);
 
+pub const PANEL_MARGIN: egui::Margin = egui::Margin::symmetric(12, 8);
+pub const BODY_SIZE: f32 = 14.0;
+pub const SMALL_SIZE: f32 = 12.0;
+pub const HEADING_SIZE: f32 = 17.0;
+const MONO_SIZE: f32 = 13.0;
+
 /// Base colors of the per-file tints
 const TONES: [(u8, u8, u8); 8] = [(211, 83, 70), (28, 125, 108), (45, 116, 209), (181, 123, 16), (122, 79, 179), (0, 137, 173), (156, 79, 124), (98, 119, 42)];
 
@@ -30,7 +36,7 @@ pub fn source_tint(tone: usize, hovered: bool) -> Color32 {
 }
 
 pub fn mono_font() -> FontId {
-    FontId::monospace(13.0)
+    FontId::monospace(MONO_SIZE)
 }
 
 pub fn apply(ctx: &egui::Context) {
@@ -49,8 +55,14 @@ pub fn apply(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         // A click on a label of a card selects the card instead of starting a text selection
         style.interaction.selectable_labels = false;
-        style.spacing.item_spacing = egui::vec2(6.0, 5.0);
-        style.spacing.button_padding = egui::vec2(8.0, 3.0);
+        use egui::TextStyle;
+        style.text_styles.insert(TextStyle::Body, FontId::proportional(BODY_SIZE));
+        style.text_styles.insert(TextStyle::Button, FontId::proportional(BODY_SIZE));
+        style.text_styles.insert(TextStyle::Small, FontId::proportional(SMALL_SIZE));
+        style.text_styles.insert(TextStyle::Heading, FontId::proportional(HEADING_SIZE));
+        style.text_styles.insert(TextStyle::Monospace, mono_font());
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(8.0, 4.0);
         style.visuals.panel_fill = BG;
         style.visuals.window_fill = PANEL;
         style.visuals.extreme_bg_color = PANEL;

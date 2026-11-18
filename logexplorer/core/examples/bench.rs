@@ -2,7 +2,7 @@
 //! `cargo run --release -p logexplorer-core --example bench -- <file> [--generate <megabytes>]`
 
 use logexplorer_core::cancel::Cancel;
-use logexplorer_core::load::{read_input, Input, LoadProgress};
+use logexplorer_core::load::{read_source, LoadProgress};
 use logexplorer_core::operator::{create_default, OpKind, OpType, Operator};
 use logexplorer_core::pipeline::{active_operators, compute, StageCache};
 use logexplorer_core::stage::Stage;
@@ -98,7 +98,7 @@ fn main() {
     }
     let base = resident_mib();
     let started = Instant::now();
-    let Ok(Input::Text(source)) = read_input(std::path::Path::new(path), &LoadProgress::default(), &Cancel::new()) else { panic!("not a text file") };
+    let source = read_source(std::path::Path::new(path), &LoadProgress::default(), &Cancel::new()).expect("could not read input");
     let raw: Arc<Stage> = Arc::new(source.stage);
     let file_mib = raw.bufs[0].len() as f64 / (1 << 20) as f64;
     println!(

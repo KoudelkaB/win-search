@@ -242,9 +242,8 @@ fn scrollbars(ui: &mut egui::Ui, app: &mut App, stage: &Stage, vertical: Rect, h
 
 fn pointer_input(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage, response: &egui::Response) {
     let rect = metrics.rect;
-    let (hover, modifiers, time) = ui.input(|input| (input.pointer.hover_pos(), input.modifiers, input.time));
+    let (modifiers, time) = ui.input(|input| (input.modifiers, input.time));
     let inside = response.contains_pointer();
-    app.view.hovered_row = hover.filter(|_| inside).map(|pos| metrics.row_at(pos.y, app.view.scroll_top, stage.len()));
 
     if inside {
         // The wheel scrolls rows; with Shift (egui turns it sideways) or Ctrl it scrolls columns
@@ -401,8 +400,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
     let font = theme::mono_font();
     let (char_width, font_height) = ui.fonts_mut(|fonts| (fonts.glyph_width(&font, '0'), fonts.row_height(&font)));
     let row_height = (font_height + 3.0).ceil();
-    let digits = grouped(stage.map_or(1, |stage| stage.len().max(1)) as u64).chars().count().max(5);
-    let gutter = (digits as f32 + 2.0) * char_width + 8.0;
+    let digits = grouped(stage.map_or(1, |stage| stage.len().max(1)) as u64).chars().count();
+    let gutter = digits as f32 * char_width + 16.0;
     let metrics = Metrics { rect, font, row_height, char_width: char_width.max(1.0), text_left: rect.left() + gutter + TEXT_PADDING, gutter };
 
     app.view.row_height = row_height;
@@ -421,15 +420,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
         let painter = ui.painter().with_clip_rect(outer);
         painter.rect_filled(outer, 0.0, theme::PANEL);
         let center = outer.center();
-        let (title, hint) = (app.t("Drop files here, open one with ▤, or paste with Ctrl+V").to_string(), app.t("F1 shows help and all shortcuts.").to_string());
-        painter.text(center - Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, title, FontId::proportional(20.0), theme::TEXT);
-        painter.text(center + Vec2::new(0.0, 16.0), egui::Align2::CENTER_CENTER, hint, FontId::proportional(14.0), theme::MUTED);
+        let (title, hint) = (app.t("Drop files to open them").to_string(), app.t("F1 shows help and all shortcuts.").to_string());
+        painter.text(center - Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, title, FontId::proportional(theme::HEADING_SIZE), theme::TEXT);
+        painter.text(center + Vec2::new(0.0, 16.0), egui::Align2::CENTER_CENTER, hint, FontId::proportional(theme::BODY_SIZE), theme::MUTED);
         if let Some((note, is_error)) = &app.drop_note {
             painter.text(
                 center + Vec2::new(0.0, 44.0),
                 egui::Align2::CENTER_CENTER,
                 note,
-                FontId::proportional(14.0),
+                FontId::proportional(theme::BODY_SIZE),
                 if *is_error { theme::DANGER } else { theme::ACCENT_STRONG },
             );
         }
@@ -446,5 +445,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
     let vertical = Rect::from_min_max(Pos2::new(rect.right(), outer.top()), Pos2::new(outer.right(), rect.bottom()));
     let horizontal = Rect::from_min_max(Pos2::new(outer.left(), rect.bottom()), Pos2::new(rect.right(), outer.bottom()));
     scrollbars(ui, app, stage, vertical, horizontal);
+
+    let hovered_row = response.contains_pointer().then(|| ui.input(|input| input.pointer.hover_pos())).flatten().and_then(|pos| {
+        let row = ((f64::from(pos.y - rect.top()) + app.view.scroll_top) / f64::from(row_height)).floor();
+        (row >= 0.0 && row < stage.len() as f64).then_some(row as usize)
+    });
+    if app.view.hovered_row != hovered_row {
+        app.view.hovered_row = hovered_row;
+        // The toolbar and status bar were laid out before the viewer.
+        ui.ctx().request_repaint();
+    }
     paint_rows(ui, app, &metrics, stage);
 }

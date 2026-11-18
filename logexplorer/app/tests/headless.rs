@@ -7,6 +7,21 @@ use common::*;
 use egui::Key;
 use egui_kittest::kittest::Queryable as _;
 use logexplorer::Options;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[derive(Debug)]
+struct DroppedPath(PathBuf);
+
+impl egui::DroppedFile for DroppedPath {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|error| error.to_string())
+    }
+}
 
 #[test]
 fn an_empty_window_says_so_and_offers_the_operations() {
@@ -29,6 +44,34 @@ fn an_opened_file_shows_its_name_size_and_rows() {
     assert_eq!(rows(&harness).len(), 5);
     assert_eq!(harness.state().status, "Loaded source 'sample.log'.");
     assert_eq!(harness.state().window_title(), "sample.log - Log Explorer");
+}
+
+#[test]
+fn closing_the_view_unloads_every_file_and_keeps_the_pipeline() {
+    let files = Files::new();
+    let (a, b) = (files.write("a.log", "keep this"), files.write("b.log", "other line"));
+    let mut harness = start();
+    harness.state_mut().open_paths(vec![a.clone(), b], Some(logexplorer::LoadAction::ReplaceZip), Some(("keep".into(), true)));
+    harness.run();
+    assert_eq!(rows(&harness), ["keep this"]);
+    assert!(harness.state().cache_info().0 > 0);
+
+    harness.get_by_label("Close file view (Ctrl+W)").click();
+    harness.run();
+    harness.get_by_label("No source loaded");
+    assert_eq!(harness.state().window_title(), "Log Explorer");
+    assert!(harness.state().source.is_none());
+    assert_eq!(harness.state().cache_info(), (0, 0));
+    assert_eq!(harness.state().work.operators.len(), 1);
+
+    harness.state_mut().open_paths(vec![a], None, None);
+    harness.run();
+    assert_eq!(rows(&harness), ["keep this"]);
+    key_with(&mut harness, egui::Modifiers::COMMAND, Key::F);
+    assert!(harness.state().find.open);
+    key_with(&mut harness, egui::Modifiers::COMMAND, Key::W);
+    assert!(harness.state().source.is_none());
+    assert!(!harness.state().find.open);
 }
 
 #[test]
@@ -277,6 +320,38 @@ fn pasted_text_is_loaded_as_the_clipboard_source() {
     assert_eq!(rows(&harness), ["one    tab", "two"]);
     harness.get_by_label("Clipboard");
     harness.get_by_label("Encoding: clipboard");
+}
+
+#[test]
+fn a_profile_bundle_can_be_viewed_via_drop_or_paste_and_imported_explicitly() {
+    let (mut dropped, mut pasted) = (start(), start());
+    let files = Files::new();
+    let bundle = dropped.state_mut().export_profiles_json();
+    let path = files.write("profiles.json", &bundle);
+    dropped.input_mut().dropped_files.push(Arc::new(DroppedPath(path.clone())));
+    dropped.run();
+    pasted.event(egui::Event::Paste(bundle.clone()));
+    pasted.run();
+    let expected: Vec<_> = bundle.lines().collect();
+    assert_eq!(rows(&dropped), expected);
+    assert_eq!(rows(&pasted), expected);
+    assert_eq!(dropped.state().status, "Loaded source 'profiles.json'.");
+    assert_eq!(pasted.state().status, "Loaded source 'Clipboard'.");
+
+    dropped.state_mut().import_profiles_file(&path);
+    assert_eq!(dropped.state().status, "Imported profile bundle.");
+}
+
+#[test]
+fn the_viewer_shows_the_row_under_the_pointer_and_ignores_blank_space() {
+    let (mut harness, _files) = with_sample();
+    harness.get_by_label("Rows — / 5");
+    harness.event(egui::Event::PointerMoved(cell(&harness, 2, 0)));
+    harness.run();
+    harness.get_by_label("Rows 3 / 5");
+    harness.event(egui::Event::PointerMoved(cell(&harness, 7, 0)));
+    harness.run();
+    harness.get_by_label("Rows — / 5");
 }
 
 #[test]

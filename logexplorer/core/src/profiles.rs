@@ -1,9 +1,9 @@
 //! Saved pipelines. The stored JSON and the exported bundle are those of the HTML app.
 
-use crate::load::PROFILE_KIND;
 use crate::operator::{operators_from_json, Operator};
 use serde_json::{json, Map, Value};
 
+const PROFILE_KIND: &str = "LogExplorerProfiles";
 pub const PROFILE_VERSION: u64 = 1;
 /// How many profile chips are shown
 pub const PROFILE_RECENT_LIMIT: usize = 6;

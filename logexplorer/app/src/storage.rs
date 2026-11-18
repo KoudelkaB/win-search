@@ -2,16 +2,19 @@
 //! the content the HTML app keeps in localStorage.
 
 use logexplorer_core::profiles::{ProfileStore, WorkingSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self, JoinHandle};
 
 pub struct Storage {
     dir: Option<PathBuf>,
+    working_set_writer: Option<(Sender<WorkingSet>, JoinHandle<()>)>,
 }
 
 impl Storage {
     /// `None` keeps nothing
     pub fn new(dir: Option<PathBuf>) -> Self {
-        Storage { dir }
+        Storage { dir, working_set_writer: None }
     }
 
     /// The data folder of the user, unless the command line names one
@@ -24,11 +27,10 @@ impl Storage {
         serde_json::from_slice(&bytes).ok()
     }
 
-    fn write(&self, name: &str, value: &serde_json::Value) {
-        let Some(dir) = &self.dir else { return };
+    fn write(dir: &Path, name: &str, value: &serde_json::Value) {
         // Written beside and renamed: a crash never leaves half a file
         let target = dir.join(name);
-        let temporary = dir.join(format!("{name}.tmp"));
+        let temporary = dir.join(format!("{name}.{}.tmp", std::process::id()));
         let written = std::fs::create_dir_all(dir)
             .and_then(|_| std::fs::write(&temporary, serde_json::to_vec_pretty(value).unwrap_or_default()))
             .and_then(|_| std::fs::rename(&temporary, &target));
@@ -42,14 +44,38 @@ impl Storage {
     }
 
     pub fn save_profiles(&self, profiles: &mut ProfileStore) {
-        self.write("profiles.json", &profiles.to_storage_json());
+        if let Some(dir) = &self.dir {
+            Self::write(dir, "profiles.json", &profiles.to_storage_json());
+        }
     }
 
     pub fn load_working_set(&self) -> Option<WorkingSet> {
         self.read("working-set.json").map(|value| WorkingSet::from_json(&value))
     }
 
-    pub fn save_working_set(&self, set: &WorkingSet) {
-        self.write("working-set.json", &set.to_json());
+    pub fn save_working_set(&mut self, set: &WorkingSet) {
+        let Some(dir) = &self.dir else { return };
+        let (sender, _) = self.working_set_writer.get_or_insert_with(|| {
+            let dir = dir.clone();
+            let (sender, receiver) = mpsc::channel::<WorkingSet>();
+            let writer = thread::spawn(move || {
+                while let Ok(queued) = receiver.recv() {
+                    // If editing outpaces the disk, persist the newest snapshot of the pipeline.
+                    let latest = receiver.try_iter().last().unwrap_or(queued);
+                    Self::write(&dir, "working-set.json", &latest.to_json());
+                }
+            });
+            (sender, writer)
+        });
+        let _ = sender.send(set.clone());
+    }
+}
+
+impl Drop for Storage {
+    fn drop(&mut self) {
+        if let Some((sender, writer)) = self.working_set_writer.take() {
+            drop(sender);
+            let _ = writer.join();
+        }
     }
 }

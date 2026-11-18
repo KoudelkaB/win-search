@@ -33,14 +33,6 @@ pub struct TextSource {
     pub chars: u64,
 }
 
-pub enum Input {
-    Text(TextSource),
-    /// A profile bundle (see `profiles`), imported instead of shown
-    Profiles(serde_json::Value),
-}
-
-pub const PROFILE_KIND: &str = "LogExplorerProfiles";
-
 pub struct Detected {
     pub encoding: &'static str,
     pub offset: usize,
@@ -279,26 +271,12 @@ fn read_file(path: &Path, progress: &LoadProgress, cancel: &Cancel) -> OpResult<
     Ok(data)
 }
 
-/// Reads one file: a profile bundle when it is one, otherwise its text.
-pub fn read_input(path: &Path, progress: &LoadProgress, cancel: &Cancel) -> OpResult<Input> {
+/// Reads and decodes one file for the viewer.
+pub fn read_source(path: &Path, progress: &LoadProgress, cancel: &Cancel) -> OpResult<TextSource> {
     let bytes = read_file(path, progress, cancel)?;
     let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    if name.to_lowercase().ends_with(".json") {
-        if let Some(payload) = profile_bundle(&bytes) {
-            return Ok(Input::Profiles(payload));
-        }
-    }
     cancel.check()?;
-    Ok(Input::Text(source_from_bytes(bytes, &name, &path.to_string_lossy())?))
-}
-
-/// The parsed bundle when `bytes` is a profile bundle (never a log that merely is JSON).
-pub fn profile_bundle(bytes: &[u8]) -> Option<serde_json::Value> {
-    if bytes.len() > (64 << 20) || memchr::memmem::find(bytes, PROFILE_KIND.as_bytes()).is_none() {
-        return None;
-    }
-    let payload: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    (payload.get("kind").and_then(|kind| kind.as_str()) == Some(PROFILE_KIND)).then_some(payload)
+    source_from_bytes(bytes, &name, &path.to_string_lossy())
 }
 
 /// Total size of the files, for the progress display
@@ -516,13 +494,6 @@ mod tests {
         assert_eq!(flat.sources.len(), 1);
     }
 
-    #[test]
-    fn only_a_profile_bundle_is_taken_for_one() {
-        assert!(profile_bundle(br#"{"kind":"LogExplorerProfiles","version":1}"#).is_some());
-        assert!(profile_bundle(br#"{"kind":"other"}"#).is_none());
-        assert!(profile_bundle(br#"{"message":"LogExplorerProfiles"}"#).is_none());
-    }
-
     /// Windows refuses such a path to programs that do not ask for long paths
     #[test]
     fn a_file_under_a_path_longer_than_260_characters_is_read() {
@@ -535,7 +506,7 @@ mod tests {
         let path = folder.join("long path.log");
         std::fs::write(&path, "one\r\ntwo").unwrap();
         assert_eq!(total_size(std::slice::from_ref(&path)), 8);
-        let Ok(Input::Text(source)) = read_input(&path, &LoadProgress::default(), &Cancel::new()) else { panic!("the file is read as text") };
+        let source = read_source(&path, &LoadProgress::default(), &Cancel::new()).unwrap();
         assert_eq!(lines_of(&source.stage), ["one", "two"]);
         assert_eq!(source.stage.sources[0].label, "long path.log");
     }

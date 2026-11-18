@@ -1,6 +1,6 @@
 {
  "en": {
-  "help.load.1": "Drop files into the window, open one with the ▤ button, or paste text or files with <code>Ctrl+V</code>. Every input is decoded to UTF-8. A dropped JSON profile bundle is imported instead of loaded.",
+  "help.load.1": "Drop files into the window, open one with the <strong>Open file</strong> button, or paste text or files with <code>Ctrl+V</code>. Every input is decoded to UTF-8.",
   "help.load.2": "When several files arrive together, Log Explorer asks whether to show them one after another (<code>Concat</code>) or interleaved row by row (<code>Zip</code>). When content is already loaded, it asks whether to add the new files to it (<code>Append</code> or <code>Zip</code>) or to replace it (<code>Concat</code> or <code>Zip</code>). Files opened already concatenated, for example by Show in files in File Search Manager, can be switched with <code>Interleave rows (Zip)</code> in the status bar. <code>Esc</code> cancels the load.",
   "help.load.3": "Each file keeps its own background tint in every stage, so its rows stay recognizable after filtering, sorting, replacing, or diffing. Hover a row to see the path of its file in the status bar. <code>Merge sources</code> in the app menu (≡) turns the loaded content into a single source.",
   "help.browse.1": "Rows are never wrapped. Scroll with the scrollbars, the mouse wheel, the arrow keys, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code>, and <code>End</code>; <code>Ctrl</code> + wheel scrolls horizontally. Hold <code>Shift</code> while moving to extend the selection.",
@@ -15,7 +15,7 @@
   "help.operations.join": "<strong>Join:</strong> combines all rows into one value with a delimiter, prefix, and suffix; escape sequences such as <code>\\n</code> and <code>\\t</code> are supported.",
   "help.operations.2": "The <code>Transform</code> menu adds Extract, Unique, or Join. <code>Collect unique values</code> adds all three at once; configure Extract, then select Join to see and copy the final delimiter-separated value.",
   "help.profiles.1": "The pipeline is kept automatically. The chips under Profiles switch between pipelines: <code>New</code> starts an empty pipeline and keeps the loaded files, <code>Last</code> is the pipeline from the previous session. Right-click a chip to save, rename, or delete it; drag named chips to reorder them.",
-  "help.profiles.2": "Profiles are stored locally. The app menu (≡) downloads them as a JSON bundle and uploads one back; dropping a bundle into the window imports it too.",
+  "help.profiles.2": "Profiles are stored locally. Use the app menu (≡) to export or import a JSON profile bundle.",
   "help.select.1": "A single click selects the structure under the pointer: an identifier, a number with its unit, a decimal, an IP address, a version, a path, a URL, a GUID-like value, a date, a time, or whitespace with nearby line endings. Clicking a quote selects the quoted text; clicking a bracket, including an HTML/XML tag bracket, selects the content between the matching pair. Clicking <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code>, or <code>&gt;=</code> selects the surrounding expression.",
   "help.select.2": "Clicking inside a selection grows it: token, content between delimiters, the delimiters, then enclosing JSON/XML/HTML structures. <code>Ctrl</code>+click inside shrinks it back toward the clicked part; <code>Ctrl</code>+click outside picks the smallest useful part, such as a GUID group or a date component. Drag to select a block; click the line numbers to clear the selection.",
   "help.select.3": "<code>Ctrl+C</code> copies the selection. The app menu (≡) also copies the whole view, a column (the selection width across all rows), or a block (the selected rectangle). With several files loaded, double-click a row to add a filter that keeps only its file.",
@@ -47,7 +47,7 @@
   "Selecting and copying": "Výběr a kopírování",
   "Find": "Najít",
   "Keyboard shortcuts": "Klávesové zkratky",
-  "help.load.1": "Přetáhněte soubory do okna, otevřete soubor tlačítkem ▤ nebo vložte text či soubory pomocí <code>Ctrl+V</code>. Každý vstup se dekóduje do UTF-8. Přetažený balíček profilů JSON se místo načtení importuje.",
+  "help.load.1": "Přetáhněte soubory do okna, otevřete soubor tlačítkem <strong>Otevřít soubor</strong> nebo vložte text či soubory pomocí <code>Ctrl+V</code>. Každý vstup se dekóduje do UTF-8.",
   "help.load.2": "Pokud dorazí několik souborů najednou, Log Explorer se zeptá, zda je zobrazit za sebou (<code>Zřetězit</code>), nebo střídavě po řádcích (<code>Proložit</code>). Pokud je obsah již načten, zeptá se, zda k němu nové soubory přidat (<code>Připojit</code> nebo <code>Proložit</code>), nebo jimi obsah nahradit (<code>Zřetězit</code> nebo <code>Proložit</code>). Soubory otevřené už zřetězené, například příkazem Zobrazit v souborech ve File Search Manageru, lze přepnout tlačítkem <code>Střídat řádky (Proložit)</code> ve stavovém řádku. <code>Esc</code> načítání zruší.",
   "help.load.3": "Každý soubor si ve všech fázích zachovává vlastní barvu pozadí, takže jeho řádky zůstanou rozpoznatelné i po filtrování, řazení, nahrazování nebo výpočtu rozdílů. Po najetí myší na řádek se ve stavovém řádku zobrazí cesta k jeho souboru. <code>Sloučit zdroje</code> v nabídce aplikace (≡) z načteného obsahu udělá jediný zdroj.",
   "help.browse.1": "Řádky se nikdy nezalamují. Posouvejte posuvníky, kolečkem myši, šipkami, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> a <code>End</code>; <code>Ctrl</code> + kolečko posouvá vodorovně. Podržením <code>Shift</code> při pohybu rozšíříte výběr.",
@@ -62,7 +62,7 @@
   "help.operations.join": "<strong>Spojit:</strong> spojí všechny řádky do jedné hodnoty s oddělovačem, předponou a příponou; podporovány jsou escape sekvence jako <code>\\n</code> a <code>\\t</code>.",
   "help.operations.2": "Nabídka <code>Transformovat</code> přidává Extrahovat, Unikátní nebo Spojit. <code>Sebrat unikátní hodnoty</code> přidá všechny tři najednou; nastavte Extrahovat a potom vyberte Spojit, abyste viděli a mohli zkopírovat výslednou hodnotu oddělenou oddělovačem.",
   "help.profiles.1": "Řetězec operací se uchovává automaticky. Čipy pod Profily přepínají mezi řetězci operací: <code>Nový</code> začne prázdný řetězec operací a ponechá načtené soubory, <code>Poslední</code> je řetězec operací z předchozí relace. Pravým kliknutím na čip jej uložíte, přejmenujete nebo odstraníte; přetažením pojmenovaných čipů změníte jejich pořadí.",
-  "help.profiles.2": "Profily se ukládají lokálně. Nabídka aplikace (≡) je stáhne jako balíček JSON a balíček zase nahraje; importovat jej lze i přetažením do okna.",
+  "help.profiles.2": "Profily se ukládají lokálně. Balíček profilů JSON můžete exportovat nebo importovat v nabídce aplikace (≡).",
   "help.select.1": "Kliknutí vybere strukturu pod ukazatelem: identifikátor, číslo s jednotkou, desetinné číslo, IP adresu, verzi, cestu, URL, hodnotu podobnou GUID, datum, čas nebo mezery včetně blízkých konců řádků. Kliknutí na uvozovku vybere text v uvozovkách; kliknutí na závorku, včetně závorky značky HTML/XML, vybere obsah mezi párovými závorkami. Kliknutí na <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> nebo <code>&gt;=</code> vybere okolní výraz.",
   "help.select.2": "Kliknutí dovnitř výběru jej rozšíří: token, obsah mezi oddělovači, oddělovače a poté obklopující struktury JSON/XML/HTML. <code>Ctrl</code>+kliknutí uvnitř jej zmenší zpět ke kliknuté části; <code>Ctrl</code>+kliknutí mimo vybere nejmenší užitečnou část, například skupinu GUID nebo složku data. Tažením vyberete blok; kliknutím na čísla řádků výběr zrušíte.",
   "help.select.3": "<code>Ctrl+C</code> zkopíruje výběr. Nabídka aplikace (≡) umí zkopírovat také celé zobrazení, sloupec (šířku výběru přes všechny řádky) nebo blok (vybraný obdélník). Při více načtených souborech poklepáním na řádek přidáte filtr, který ponechá jen jeho soubor.",
@@ -286,7 +286,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Zobrazit načtené soubory proložené po řádcích místo za sebou",
   "⇄ Interleave rows (Zip)": "⇄ Střídat řádky (Proložit)",
   "Drop files to open them": "Přetažením soubory otevřete",
-  "A JSON profile bundle is imported instead.": "Balíček profilů JSON se místo toho importuje.",
   "Loading files: {0}…": "Načítání souborů: {0}…",
   "Could not read files ({0}): {1}": "Nepodařilo se přečíst soubory ({0}): {1}",
   "Click or press Esc to close.": "Kliknutím nebo klávesou Esc zavřete.",
@@ -338,7 +337,8 @@
   "Files: {0}.": "Soubory: {0}.",
   "Combine files": "Spojit soubory",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Zřetězit zobrazí soubory za sebou, Proložit je střídá po řádcích.",
-  "Last": "Poslední"
+  "Last": "Poslední",
+  "Close file view (Ctrl+W)": "Zavřít zobrazení souborů (Ctrl+W)"
  },
  "de": {
   "Help sections": "Hilfeabschnitte",
@@ -349,7 +349,7 @@
   "Selecting and copying": "Auswählen und kopieren",
   "Find": "Suchen",
   "Keyboard shortcuts": "Tastenkürzel",
-  "help.load.1": "Legen Sie Dateien im Fenster ab, öffnen Sie eine mit der Schaltfläche ▤ oder fügen Sie Text oder Dateien mit <code>Ctrl+V</code> ein. Jede Eingabe wird nach UTF-8 dekodiert. Ein abgelegtes JSON-Profilpaket wird importiert statt geladen.",
+  "help.load.1": "Legen Sie Dateien im Fenster ab, öffnen Sie eine mit der Schaltfläche <strong>Datei öffnen</strong> oder fügen Sie Text oder Dateien mit <code>Ctrl+V</code> ein. Jede Eingabe wird nach UTF-8 dekodiert.",
   "help.load.2": "Wenn mehrere Dateien gleichzeitig eintreffen, fragt Log Explorer, ob sie nacheinander (<code>Verketten</code>) oder Zeile für Zeile abwechselnd (<code>Verzahnen</code>) angezeigt werden sollen. Wenn bereits Inhalt geladen ist, fragt er, ob die neuen Dateien hinzugefügt (<code>Anhängen</code> oder <code>Verzahnen</code>) oder der Inhalt ersetzt werden soll (<code>Verketten</code> oder <code>Verzahnen</code>). Bereits verkettet geöffnete Dateien, zum Beispiel über In Dateien anzeigen in File Search Manager, lassen sich mit <code>Zeilen abwechseln (Verzahnen)</code> in der Statusleiste umschalten. <code>Esc</code> bricht das Laden ab.",
   "help.load.3": "Jede Datei behält in jeder Stufe ihre eigene Hintergrundtönung, sodass ihre Zeilen auch nach Filter, Sortieren, Ersetzen oder Differenz erkennbar bleiben. Zeigen Sie auf eine Zeile, um den Pfad ihrer Datei in der Statusleiste zu sehen. <code>Quellen zusammenführen</code> im App-Menü (≡) macht den geladenen Inhalt zu einer einzigen Quelle.",
   "help.browse.1": "Zeilen werden nie umbrochen. Scrollen Sie mit den Scrollleisten, dem Mausrad, den Pfeiltasten, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> und <code>End</code>; <code>Ctrl</code> + Mausrad scrollt horizontal. Halten Sie beim Bewegen <code>Shift</code> gedrückt, um die Auswahl zu erweitern.",
@@ -364,7 +364,7 @@
   "help.operations.join": "<strong>Verbinden:</strong> verbindet alle Zeilen zu einem Wert mit Trennzeichen, Präfix und Suffix; Escape-Sequenzen wie <code>\\n</code> und <code>\\t</code> werden unterstützt.",
   "help.operations.2": "Das Menü <code>Transformieren</code> fügt Extrahieren, Eindeutig oder Verbinden hinzu. <code>Eindeutige Werte sammeln</code> fügt alle drei auf einmal hinzu; konfigurieren Sie Extrahieren und wählen Sie dann Verbinden, um den endgültigen, durch Trennzeichen getrennten Wert zu sehen und zu kopieren.",
   "help.profiles.1": "Die Pipeline wird automatisch gespeichert. Die Chips unter Profile wechseln zwischen Pipelines: <code>Neu</code> startet eine leere Pipeline und behält die geladenen Dateien, <code>Zuletzt</code> ist die Pipeline der vorherigen Sitzung. Klicken Sie mit der rechten Maustaste auf einen Chip, um ihn zu speichern, umzubenennen oder zu löschen; ziehen Sie benannte Chips, um sie neu anzuordnen.",
-  "help.profiles.2": "Profile werden lokal gespeichert. Über das App-Menü (≡) werden sie als JSON-Paket heruntergeladen und wieder hochgeladen; auch das Ablegen eines Pakets im Fenster importiert es.",
+  "help.profiles.2": "Profile werden lokal gespeichert. Über das App-Menü (≡) lassen sich JSON-Profilpakete exportieren und importieren.",
   "help.select.1": "Ein einfacher Klick wählt die Struktur unter dem Mauszeiger aus: einen Bezeichner, eine Zahl mit Einheit, eine Dezimalzahl, eine IP-Adresse, eine Version, einen Pfad, eine URL, einen GUID-ähnlichen Wert, ein Datum, eine Uhrzeit oder Leerraum mit benachbarten Zeilenenden. Ein Klick auf ein Anführungszeichen wählt den Text in Anführungszeichen aus; ein Klick auf eine Klammer, einschließlich einer HTML/XML-Tag-Klammer, wählt den Inhalt zwischen dem zugehörigen Paar aus. Ein Klick auf <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> oder <code>&gt;=</code> wählt den umgebenden Ausdruck aus.",
   "help.select.2": "Ein Klick in eine Auswahl erweitert sie: Token, Inhalt zwischen Trennzeichen, die Trennzeichen, dann umschließende JSON/XML/HTML-Strukturen. <code>Ctrl</code>+Klick innerhalb verkleinert sie wieder zum angeklickten Teil hin; <code>Ctrl</code>+Klick außerhalb wählt den kleinsten sinnvollen Teil, etwa eine GUID-Gruppe oder eine Datumskomponente. Ziehen Sie, um einen Block auszuwählen; klicken Sie auf die Zeilennummern, um die Auswahl aufzuheben.",
   "help.select.3": "<code>Ctrl+C</code> kopiert die Auswahl. Das App-Menü (≡) kopiert außerdem die ganze Ansicht, eine Spalte (die Auswahlbreite über alle Zeilen) oder einen Block (das ausgewählte Rechteck). Sind mehrere Dateien geladen, doppelklicken Sie auf eine Zeile, um einen Filter hinzuzufügen, der nur ihre Datei behält.",
@@ -584,7 +584,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Geladene Dateien Zeile für Zeile abwechselnd statt nacheinander anzeigen",
   "⇄ Interleave rows (Zip)": "⇄ Zeilen abwechseln (Verzahnen)",
   "Drop files to open them": "Dateien zum Öffnen ablegen",
-  "A JSON profile bundle is imported instead.": "Ein JSON-Profilpaket wird stattdessen importiert.",
   "Loading files: {0}…": "Dateien werden geladen: {0}…",
   "Could not read files ({0}): {1}": "Nicht lesbare Dateien ({0}): {1}",
   "Click or press Esc to close.": "Zum Schließen klicken oder Esc drücken.",
@@ -635,7 +634,8 @@
   "Files: {0}.": "Dateien: {0}.",
   "Combine files": "Dateien kombinieren",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Verketten zeigt die Dateien nacheinander, Verzahnen verschränkt sie Zeile für Zeile.",
-  "Last": "Zuletzt"
+  "Last": "Zuletzt",
+  "Close file view (Ctrl+W)": "Dateiansicht schließen (Ctrl+W)"
  },
  "es": {
   "Help sections": "Secciones de la ayuda",
@@ -646,7 +646,7 @@
   "Selecting and copying": "Selección y copia",
   "Find": "Buscar",
   "Keyboard shortcuts": "Atajos de teclado",
-  "help.load.1": "Suelte archivos en la ventana, abra uno con el botón ▤ o pegue texto o archivos con <code>Ctrl+V</code>. Todas las entradas se decodifican a UTF-8. Un paquete de perfiles JSON soltado se importa en lugar de cargarse.",
+  "help.load.1": "Suelte archivos en la ventana, abra uno con el botón <strong>Abrir archivo</strong> o pegue texto o archivos con <code>Ctrl+V</code>. Todas las entradas se decodifican a UTF-8.",
   "help.load.2": "Cuando llegan varios archivos a la vez, Log Explorer pregunta si mostrarlos uno tras otro (<code>Concatenar</code>) o intercalados fila por fila (<code>Intercalar</code>). Cuando ya hay contenido cargado, pregunta si agregar los archivos nuevos a él (<code>Anexar</code> o <code>Intercalar</code>) o reemplazarlo (<code>Concatenar</code> o <code>Intercalar</code>). Los archivos que se abren ya concatenados, por ejemplo con Mostrar en archivos en File Search Manager, se pueden alternar con <code>Intercalar filas</code> en la barra de estado. <code>Esc</code> cancela la carga.",
   "help.load.3": "Cada archivo conserva su propio tono de fondo en todas las etapas, de modo que sus filas siguen siendo reconocibles tras filtrar, ordenar, reemplazar o calcular diferencias. Pase el puntero sobre una fila para ver la ruta de su archivo en la barra de estado. <code>Unificar orígenes</code> en el menú de la aplicación (≡) convierte el contenido cargado en un único origen.",
   "help.browse.1": "Las filas nunca se ajustan. Desplácese con las barras de desplazamiento, la rueda del ratón, las teclas de flecha, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> y <code>End</code>; <code>Ctrl</code> + rueda desplaza en horizontal. Mantenga pulsada <code>Shift</code> mientras se mueve para ampliar la selección.",
@@ -661,7 +661,7 @@
   "help.operations.join": "<strong>Unión:</strong> combina todas las filas en un solo valor con un delimitador, un prefijo y un sufijo; se admiten secuencias de escape como <code>\\n</code> y <code>\\t</code>.",
   "help.operations.2": "El menú <code>Transformar</code> agrega Extracción, Únicos o Unión. <code>Recopilar valores únicos</code> agrega las tres a la vez; configure Extracción y luego seleccione Unión para ver y copiar el valor final separado por delimitadores.",
   "help.profiles.1": "La canalización se conserva automáticamente. Los chips de Perfiles cambian entre canalizaciones: <code>Nuevo</code> inicia una canalización vacía y conserva los archivos cargados, y <code>Último</code> es la canalización de la sesión anterior. Haga clic derecho en un chip para guardarlo, cambiarle el nombre o eliminarlo; arrastre los chips con nombre para reordenarlos.",
-  "help.profiles.2": "Los perfiles se almacenan localmente. El menú de la aplicación (≡) los descarga como un paquete JSON y permite volver a cargar uno; soltar un paquete en la ventana también lo importa.",
+  "help.profiles.2": "Los perfiles se almacenan localmente. Use el menú de la aplicación (≡) para exportar o importar un paquete de perfiles JSON.",
   "help.select.1": "Un clic selecciona la estructura bajo el puntero: un identificador, un número con su unidad, un decimal, una dirección IP, una versión, una ruta, una URL, un valor tipo GUID, una fecha, una hora o espacios en blanco con los finales de línea cercanos. Al hacer clic en unas comillas se selecciona el texto entrecomillado; al hacer clic en un corchete, incluido el de una etiqueta HTML/XML, se selecciona el contenido entre la pareja correspondiente. Al hacer clic en <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> o <code>&gt;=</code> se selecciona la expresión circundante.",
   "help.select.2": "Al hacer clic dentro de una selección, esta se amplía: token, contenido entre delimitadores, los delimitadores y después las estructuras JSON/XML/HTML que la contienen. <code>Ctrl</code>+clic dentro la reduce hacia la parte en la que se hizo clic; <code>Ctrl</code>+clic fuera elige la parte útil más pequeña, como un grupo de un GUID o un componente de una fecha. Arrastre para seleccionar un bloque; haga clic en los números de línea para borrar la selección.",
   "help.select.3": "<code>Ctrl+C</code> copia la selección. El menú de la aplicación (≡) también copia toda la vista, una columna (el ancho de la selección en todas las filas) o un bloque (el rectángulo seleccionado). Con varios archivos cargados, haga doble clic en una fila para agregar un filtro que conserve solo su archivo.",
@@ -886,7 +886,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Mostrar los archivos cargados intercalados fila por fila en lugar de uno tras otro",
   "⇄ Interleave rows (Zip)": "⇄ Intercalar filas",
   "Drop files to open them": "Suelte archivos para abrirlos",
-  "A JSON profile bundle is imported instead.": "Un paquete de perfiles JSON se importa en su lugar.",
   "Loading files: {0}…": "Cargando archivos: {0}…",
   "Could not read files ({0}): {1}": "No se pudieron leer archivos ({0}): {1}",
   "Click or press Esc to close.": "Haga clic o pulse Esc para cerrar.",
@@ -937,7 +936,8 @@
   "Files: {0}.": "Archivos: {0}.",
   "Combine files": "Combinar archivos",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar muestra los archivos uno tras otro; Intercalar los entrelaza fila por fila.",
-  "Last": "Último"
+  "Last": "Último",
+  "Close file view (Ctrl+W)": "Cerrar la vista de archivos (Ctrl+W)"
  },
  "fr": {
   "Help sections": "Sections de l'aide",
@@ -948,7 +948,7 @@
   "Selecting and copying": "Sélection et copie",
   "Find": "Rechercher",
   "Keyboard shortcuts": "Raccourcis clavier",
-  "help.load.1": "Déposez des fichiers dans la fenêtre, ouvrez-en un avec le bouton ▤, ou collez du texte ou des fichiers avec <code>Ctrl+V</code>. Chaque entrée est décodée en UTF-8. Un lot de profils JSON déposé est importé au lieu d'être chargé.",
+  "help.load.1": "Déposez des fichiers dans la fenêtre, ouvrez-en un avec le bouton <strong>Ouvrir un fichier</strong>, ou collez du texte ou des fichiers avec <code>Ctrl+V</code>. Chaque entrée est décodée en UTF-8.",
   "help.load.2": "Lorsque plusieurs fichiers arrivent ensemble, Log Explorer demande s'il faut les afficher les uns après les autres (<code>Concaténer</code>) ou en alternant les lignes (<code>Entrelacer</code>). Lorsque du contenu est déjà chargé, il demande s'il faut y ajouter les nouveaux fichiers (<code>Ajouter à la suite</code> ou <code>Entrelacer</code>) ou le remplacer (<code>Concaténer</code> ou <code>Entrelacer</code>). Les fichiers ouverts déjà concaténés, par exemple via Afficher dans les fichiers dans File Search Manager, peuvent être basculés avec <code>Alterner les lignes (Entrelacer)</code> dans la barre d'état. <code>Esc</code> annule le chargement.",
   "help.load.3": "Chaque fichier conserve sa propre teinte d'arrière-plan à chaque étape, de sorte que les lignes ajoutées à la suite et entrelacées restent identifiables après filtre, tri, remplacement ou différence. Survolez une ligne pour voir le chemin de son fichier dans la barre d'état. <code>Fusionner les sources</code> dans le menu de l'application (≡) refait du contenu chargé une source unique.",
   "help.browse.1": "Les lignes ne sont jamais renvoyées à la ligne. Faites défiler avec les barres de défilement, la molette de la souris, les touches fléchées, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> et <code>End</code> ; <code>Ctrl</code> + molette fait défiler horizontalement. Maintenez <code>Shift</code> pendant le déplacement pour étendre la sélection.",
@@ -963,7 +963,7 @@
   "help.operations.join": "<strong>Jointure :</strong> combine toutes les lignes en une seule valeur avec un délimiteur, un préfixe et un suffixe ; les séquences d'échappement telles que <code>\\n</code> et <code>\\t</code> sont prises en charge.",
   "help.operations.2": "Le menu <code>Transformer</code> ajoute Extraction, Dédoublonnage ou Jointure. <code>Collecter les valeurs uniques</code> ajoute les trois en une fois ; configurez Extraction, puis sélectionnez Jointure pour voir et copier la valeur finale séparée par le délimiteur.",
   "help.profiles.1": "Le pipeline est conservé automatiquement. Les puces sous Profils permettent de passer d'un pipeline à l'autre : <code>Nouveau</code> démarre un pipeline vide et conserve les fichiers chargés, <code>Dernier</code> est le pipeline de la session précédente. Cliquez avec le bouton droit sur une puce pour l'enregistrer, la renommer ou la supprimer ; faites glisser les puces nommées pour les réordonner.",
-  "help.profiles.2": "Les profils sont stockés localement. Le menu de l'application (≡) les télécharge sous forme de lot JSON et permet d'en importer un ; déposer un lot dans la fenêtre l'importe également.",
+  "help.profiles.2": "Les profils sont stockés localement. Le menu de l’application (≡) permet d’exporter ou d’importer un lot de profils JSON.",
   "help.select.1": "Un clic simple sélectionne la structure sous le pointeur : un identificateur, un nombre avec son unité, un décimal, une adresse IP, une version, un chemin, une URL, une valeur de type GUID, une date, une heure, ou des espaces avec les fins de ligne voisines. Un clic sur un guillemet sélectionne le texte entre guillemets ; un clic sur un crochet ou une parenthèse, y compris un chevron de balise HTML/XML, sélectionne le contenu entre la paire correspondante. Un clic sur <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> ou <code>&gt;=</code> sélectionne l'expression environnante.",
   "help.select.2": "Un clic dans une sélection l'agrandit : élément, contenu entre délimiteurs, délimiteurs, puis structures JSON/XML/HTML englobantes. <code>Ctrl</code>+clic à l'intérieur la réduit vers la partie cliquée ; <code>Ctrl</code>+clic à l'extérieur choisit la plus petite partie utile, comme un groupe de GUID ou un composant de date. Faites glisser pour sélectionner un bloc ; cliquez sur les numéros de ligne pour effacer la sélection.",
   "help.select.3": "<code>Ctrl+C</code> copie la sélection. Le menu de l'application (≡) copie aussi l'affichage entier, une colonne (la largeur de la sélection sur toutes les lignes) ou un bloc (le rectangle sélectionné). Lorsque plusieurs fichiers sont chargés, double-cliquez sur une ligne pour ajouter un filtre qui ne conserve que son fichier.",
@@ -1185,7 +1185,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Afficher les fichiers chargés en alternant les lignes au lieu de les uns après les autres",
   "⇄ Interleave rows (Zip)": "⇄ Alterner les lignes (Entrelacer)",
   "Drop files to open them": "Déposez des fichiers pour les ouvrir",
-  "A JSON profile bundle is imported instead.": "Un lot de profils JSON est importé à la place.",
   "Loading files: {0}…": "Chargement des fichiers : {0}…",
   "Could not read files ({0}): {1}": "Fichiers illisibles ({0}) : {1}",
   "Click or press Esc to close.": "Cliquez ou appuyez sur Échap pour fermer.",
@@ -1237,7 +1236,8 @@
   "Files: {0}.": "Fichiers : {0}.",
   "Combine files": "Combiner les fichiers",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concaténer affiche les fichiers les uns après les autres, Entrelacer les alterne ligne par ligne.",
-  "Last": "Dernier"
+  "Last": "Dernier",
+  "Close file view (Ctrl+W)": "Fermer la vue des fichiers (Ctrl+W)"
  },
  "it": {
   "Help sections": "Sezioni della guida",
@@ -1248,7 +1248,7 @@
   "Selecting and copying": "Selezione e copia",
   "Find": "Trova",
   "Keyboard shortcuts": "Scorciatoie da tastiera",
-  "help.load.1": "Trascina i file nella finestra, aprine uno con il pulsante ▤ oppure incolla testo o file con <code>Ctrl+V</code>. Ogni input viene decodificato in UTF-8. Un pacchetto di profili JSON trascinato viene importato anziché caricato.",
+  "help.load.1": "Trascina i file nella finestra, aprine uno con il pulsante <strong>Apri file</strong> oppure incolla testo o file con <code>Ctrl+V</code>. Ogni input viene decodificato in UTF-8.",
   "help.load.2": "Quando arrivano più file insieme, Log Explorer chiede se mostrarli uno dopo l'altro (<code>Concatena</code>) o alternati riga per riga (<code>Interfoglia</code>). Quando è già caricato un contenuto, chiede se aggiungervi i nuovi file (<code>Accoda</code> o <code>Interfoglia</code>) o sostituirlo (<code>Concatena</code> o <code>Interfoglia</code>). I file aperti già concatenati, ad esempio con Mostra nei file in File Search Manager, possono essere commutati con <code>Interfoglia righe</code> nella barra di stato. <code>Esc</code> annulla il caricamento.",
   "help.load.3": "Ogni file mantiene la propria tinta di sfondo in tutte le fasi, così le sue righe restano riconoscibili dopo filtro, ordinamento, sostituzione o differenza. Passa il puntatore su una riga per vedere il percorso del suo file nella barra di stato. <code>Unifica origini</code> nel menu dell'app (≡) trasforma il contenuto caricato in un'unica origine.",
   "help.browse.1": "Le righe non vanno mai a capo. Scorri con le barre di scorrimento, la rotellina del mouse, i tasti freccia, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> e <code>End</code>; <code>Ctrl</code> + rotellina scorre in orizzontale. Tieni premuto <code>Shift</code> mentre ti sposti per estendere la selezione.",
@@ -1263,7 +1263,7 @@
   "help.operations.join": "<strong>Unione:</strong> combina tutte le righe in un unico valore con delimitatore, prefisso e suffisso; sono supportate sequenze di escape come <code>\\n</code> e <code>\\t</code>.",
   "help.operations.2": "Il menu <code>Trasforma</code> aggiunge Estrazione, Univoci o Unione. <code>Raccogli valori univoci</code> le aggiunge tutte e tre insieme; configura Estrazione, quindi seleziona Unione per vedere e copiare il valore finale separato da delimitatori.",
   "help.profiles.1": "La pipeline viene conservata automaticamente. I chip in Profili passano da una pipeline all'altra: <code>Nuovo</code> avvia una pipeline vuota e mantiene i file caricati, <code>Ultimo</code> è la pipeline della sessione precedente. Fai clic con il pulsante destro su un chip per salvarlo, rinominarlo o eliminarlo; trascina i chip con nome per riordinarli.",
-  "help.profiles.2": "I profili vengono archiviati localmente. Il menu dell'app (≡) li scarica come pacchetto JSON e permette di caricarne uno; anche trascinare un pacchetto nella finestra lo importa.",
+  "help.profiles.2": "I profili sono archiviati localmente. Usa il menu dell’app (≡) per esportare o importare un pacchetto di profili JSON.",
   "help.select.1": "Un clic seleziona la struttura sotto il puntatore: un identificatore, un numero con la sua unità, un decimale, un indirizzo IP, una versione, un percorso, un URL, un valore simile a un GUID, una data, un'ora o spazi con i fine riga vicini. Facendo clic su una virgoletta si seleziona il testo racchiuso; facendo clic su una parentesi, inclusa quella di un tag HTML/XML, si seleziona il contenuto tra la coppia corrispondente. Facendo clic su <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> o <code>&gt;=</code> si seleziona l'espressione circostante.",
   "help.select.2": "Facendo clic all'interno di una selezione, questa si espande: token, contenuto tra delimitatori, i delimitatori, poi le strutture JSON/XML/HTML che la racchiudono. <code>Ctrl</code>+clic all'interno la riduce verso la parte cliccata; <code>Ctrl</code>+clic all'esterno sceglie la parte utile più piccola, come un gruppo di un GUID o un componente di una data. Trascina per selezionare un blocco; fai clic sui numeri di riga per cancellare la selezione.",
   "help.select.3": "<code>Ctrl+C</code> copia la selezione. Il menu dell'app (≡) copia anche l'intera vista, una colonna (la larghezza della selezione su tutte le righe) o un blocco (il rettangolo selezionato). Con più file caricati, fai doppio clic su una riga per aggiungere un filtro che mantiene solo il suo file.",
@@ -1488,7 +1488,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Mostra i file caricati alternati riga per riga anziché uno dopo l'altro",
   "⇄ Interleave rows (Zip)": "⇄ Interfoglia righe",
   "Drop files to open them": "Trascina i file per aprirli",
-  "A JSON profile bundle is imported instead.": "Un pacchetto di profili JSON viene invece importato.",
   "Loading files: {0}…": "Caricamento file: {0}…",
   "Could not read files ({0}): {1}": "File non leggibili ({0}): {1}",
   "Click or press Esc to close.": "Fai clic o premi Esc per chiudere.",
@@ -1540,7 +1539,8 @@
   "Files: {0}.": "File: {0}.",
   "Combine files": "Combina file",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatena mostra i file uno dopo l'altro, Interfoglia li alterna riga per riga.",
-  "Last": "Ultimo"
+  "Last": "Ultimo",
+  "Close file view (Ctrl+W)": "Chiudi la vista dei file (Ctrl+W)"
  },
  "ja": {
   "Help sections": "ヘルプの項目",
@@ -1551,7 +1551,7 @@
   "Selecting and copying": "選択とコピー",
   "Find": "検索",
   "Keyboard shortcuts": "キーボード ショートカット",
-  "help.load.1": "ファイルをウィンドウにドロップするか、▤ ボタンで開くか、<code>Ctrl+V</code> でテキストやファイルを貼り付けます。すべての入力は UTF-8 にデコードされます。JSON プロファイル バンドルをドロップすると、読み込まれる代わりにインポートされます。",
+  "help.load.1": "ファイルをウィンドウにドロップするか、<strong>ファイルを開く</strong> ボタンで開くか、<code>Ctrl+V</code> でテキストやファイルを貼り付けます。すべての入力は UTF-8 にデコードされます。",
   "help.load.2": "複数のファイルが同時に届いた場合、Log Explorer は順番に表示する (<code>順に開く</code>) か、1 行ずつ交互に表示する (<code>交互</code>) かを確認します。すでにコンテンツが読み込まれている場合は、新しいファイルを現在の内容に追加する (<code>連結</code> または <code>交互</code>) か、置き換える (<code>順に開く</code> または <code>交互</code>) かを確認します。File Search Manager の「ファイル内に表示」などで、すでに順番につなげた状態で開かれたファイルは、ステータス バーの <code>行を交互に並べる</code> で切り替えられます。<code>Esc</code> で読み込みをキャンセルします。",
   "help.load.3": "各ファイルはすべてのステージで独自の背景色を保つため、フィルター、並べ替え、置換、差分の後でもその行を見分けられます。行にポインターを合わせると、そのファイルのパスがステータス バーに表示されます。アプリ メニュー (≡) の <code>ソースを統合</code> で、読み込んだコンテンツを単一のソースにします。",
   "help.browse.1": "行は折り返されません。スクロール バー、マウス ホイール、方向キー、<code>Page Up</code>、<code>Page Down</code>、<code>Home</code>、<code>End</code> でスクロールします。<code>Ctrl</code> + ホイールで水平方向にスクロールします。<code>Shift</code> を押しながら移動すると選択範囲が拡張されます。",
@@ -1566,7 +1566,7 @@
   "help.operations.join": "<strong>結合:</strong> 区切り文字、接頭辞、接尾辞を使ってすべての行を 1 つの値に結合します。<code>\\n</code> や <code>\\t</code> などのエスケープ シーケンスに対応しています。",
   "help.operations.2": "<code>変換</code> メニューで抽出、重複除去、結合を追加します。<code>一意の値を収集</code> は 3 つをまとめて追加します。抽出を設定してから結合を選択すると、区切り文字で区切られた最終的な値を確認してコピーできます。",
   "help.profiles.1": "パイプラインは自動的に保持されます。プロファイルの下のチップでパイプラインを切り替えます。<code>新規</code> は読み込んだファイルを保持したまま空のパイプラインを開始し、<code>前回</code> は前回のセッションのパイプラインです。チップを右クリックすると、保存、名前の変更、または削除ができます。名前付きのチップはドラッグして並べ替えられます。",
-  "help.profiles.2": "プロファイルはローカルに保存されます。アプリ メニュー (≡) から JSON バンドルとしてダウンロードしたり、バンドルをアップロードして戻したりできます。バンドルをウィンドウにドロップしてもインポートされます。",
+  "help.profiles.2": "プロファイルはローカルに保存されます。アプリメニュー (≡) から JSON プロファイルバンドルをエクスポートまたはインポートできます。",
   "help.select.1": "シングル クリックで、ポインターの下にある構造を選択します: 識別子、単位付きの数値、小数、IP アドレス、バージョン、パス、URL、GUID 形式の値、日付、時刻、または近くの行末を含む空白。引用符をクリックすると引用テキストが選択され、括弧 (HTML/XML タグの山括弧を含む) をクリックすると対応する括弧の間の内容が選択されます。<code>=</code>、<code>==</code>、<code>===</code>、<code>=&gt;</code>、<code>!=</code>、<code>&lt;=</code>、または <code>&gt;=</code> をクリックすると、周囲の式が選択されます。",
   "help.select.2": "選択範囲内をクリックすると選択範囲が拡大します: トークン、区切り文字間の内容、区切り文字、さらに外側の JSON/XML/HTML 構造。内側で <code>Ctrl</code>+クリックするとクリックした部分に向かって縮小し、外側で <code>Ctrl</code>+クリックすると GUID のグループや日付の構成要素など、最小の有用な部分が選択されます。ドラッグでブロックを選択し、行番号をクリックすると選択が解除されます。",
   "help.select.3": "<code>Ctrl+C</code> で選択範囲をコピーします。アプリ メニュー (≡) からは、ビュー全体、列 (選択範囲の幅ですべての行)、またはブロック (選択した矩形) もコピーできます。複数のファイルを読み込んでいる場合、行をダブルクリックすると、そのファイルだけを残すフィルターが追加されます。",
@@ -1791,7 +1791,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "読み込んだファイルを順番ではなく 1 行ずつ交互に表示",
   "⇄ Interleave rows (Zip)": "⇄ 行を交互に並べる",
   "Drop files to open them": "ドロップしてファイルを開く",
-  "A JSON profile bundle is imported instead.": "JSON プロファイル バンドルの場合はインポートされます。",
   "Loading files: {0}…": "ファイルを読み込み中: {0}…",
   "Could not read files ({0}): {1}": "読み取れなかったファイル ({0}): {1}",
   "Click or press Esc to close.": "クリックまたは Esc キーで閉じます。",
@@ -1844,7 +1843,8 @@
   "Files: {0}.": "ファイル: {0}。",
   "Combine files": "ファイルを組み合わせる",
   "Concat shows the files one after another, Zip interleaves them row by row.": "順に開くはファイルを順番に表示し、交互は 1 行ずつ交互に並べます。",
-  "Last": "前回"
+  "Last": "前回",
+  "Close file view (Ctrl+W)": "ファイルビューを閉じる (Ctrl+W)"
  },
  "ko": {
   "Help sections": "도움말 섹션",
@@ -1855,7 +1855,7 @@
   "Selecting and copying": "선택 및 복사",
   "Find": "찾기",
   "Keyboard shortcuts": "바로 가기 키",
-  "help.load.1": "파일을 창에 끌어 놓거나, ▤ 버튼으로 파일을 열거나, <code>Ctrl+V</code>로 텍스트나 파일을 붙여 넣습니다. 모든 입력은 UTF-8로 디코딩됩니다. JSON 프로필 번들을 끌어 놓으면 로드하는 대신 가져옵니다.",
+  "help.load.1": "파일을 창에 끌어 놓거나, <strong>파일 열기</strong> 버튼으로 파일을 열거나, <code>Ctrl+V</code>로 텍스트나 파일을 붙여 넣습니다. 모든 입력은 UTF-8로 디코딩됩니다.",
   "help.load.2": "여러 파일이 함께 들어오면 Log Explorer는 파일을 차례로 표시할지(<code>차례로 열기</code>) 행 단위로 번갈아 표시할지(<code>교차</code>) 묻습니다. 콘텐츠가 이미 로드되어 있으면 새 파일을 현재 내용에 추가할지(<code>연결</code> 또는 <code>교차</code>), 현재 내용을 대체할지(<code>차례로 열기</code> 또는 <code>교차</code>) 묻습니다. File Search Manager의 '파일에서 보기' 등으로 이미 이어 붙인 상태로 열린 파일은 상태 표시줄의 <code>행 교차 배치</code>로 전환할 수 있습니다. <code>Esc</code>를 누르면 로드가 취소됩니다.",
   "help.load.3": "각 파일은 모든 단계에서 고유한 배경색을 유지하므로, 필터, 정렬, 바꾸기, 차이를 적용한 후에도 해당 행을 알아볼 수 있습니다. 행 위에 마우스를 올리면 상태 표시줄에 해당 파일의 경로가 표시됩니다. 앱 메뉴(≡)의 <code>소스 병합</code>은 로드된 콘텐츠를 단일 소스로 만듭니다.",
   "help.browse.1": "행은 줄 바꿈되지 않습니다. 스크롤 막대, 마우스 휠, 화살표 키, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code>, <code>End</code>로 스크롤하며, <code>Ctrl</code> + 휠은 가로로 스크롤합니다. <code>Shift</code>를 누른 채 이동하면 선택 영역이 확장됩니다.",
@@ -1870,7 +1870,7 @@
   "help.operations.join": "<strong>결합:</strong> 구분 기호, 접두사, 접미사를 사용하여 모든 행을 하나의 값으로 결합합니다. <code>\\n</code> 및 <code>\\t</code> 같은 이스케이프 시퀀스를 지원합니다.",
   "help.operations.2": "<code>변환</code> 메뉴는 추출, 중복 제거 또는 결합을 추가합니다. <code>고유 값 수집</code>은 세 가지를 한 번에 추가합니다. 추출을 구성한 다음 결합을 선택하면 구분 기호로 구분된 최종 값을 확인하고 복사할 수 있습니다.",
   "help.profiles.1": "파이프라인은 자동으로 유지됩니다. 프로필 아래의 칩으로 파이프라인을 전환합니다. <code>신규</code>는 로드된 파일을 유지한 채 빈 파이프라인을 시작하고, <code>마지막</code>은 이전 세션의 파이프라인입니다. 칩을 오른쪽 클릭하면 저장, 이름 바꾸기 또는 삭제할 수 있으며, 이름이 있는 칩은 끌어서 순서를 바꿀 수 있습니다.",
-  "help.profiles.2": "프로필은 로컬에 저장됩니다. 앱 메뉴(≡)에서 JSON 번들로 다운로드하고 다시 업로드할 수 있으며, 번들을 창에 끌어 놓아도 가져올 수 있습니다.",
+  "help.profiles.2": "프로필은 로컬에 저장됩니다. 앱 메뉴(≡)에서 JSON 프로필 번들을 내보내거나 가져올 수 있습니다.",
   "help.select.1": "한 번 클릭하면 포인터 아래의 구조가 선택됩니다: 식별자, 단위가 있는 숫자, 소수, IP 주소, 버전, 경로, URL, GUID 형식 값, 날짜, 시간 또는 인접한 줄 끝을 포함한 공백. 따옴표를 클릭하면 인용 텍스트가 선택되고, HTML/XML 태그 괄호를 포함한 괄호를 클릭하면 짝이 맞는 괄호 사이의 내용이 선택됩니다. <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> 또는 <code>&gt;=</code>를 클릭하면 주변 식이 선택됩니다.",
   "help.select.2": "선택 영역 안을 클릭하면 선택 영역이 토큰, 구분 기호 사이의 내용, 구분 기호, 바깥쪽 JSON/XML/HTML 구조 순으로 확장됩니다. 안쪽에서 <code>Ctrl</code>+클릭하면 클릭한 부분 쪽으로 다시 축소되고, 바깥쪽에서 <code>Ctrl</code>+클릭하면 GUID 그룹이나 날짜 구성 요소처럼 가장 작은 유용한 부분이 선택됩니다. 끌어서 블록을 선택하고, 줄 번호를 클릭하면 선택이 해제됩니다.",
   "help.select.3": "<code>Ctrl+C</code>는 선택 영역을 복사합니다. 앱 메뉴(≡)에서는 보기 전체, 열(모든 행에 걸친 선택 영역 너비) 또는 블록(선택한 사각형)도 복사할 수 있습니다. 여러 파일이 로드된 경우 행을 두 번 클릭하면 해당 파일만 남기는 필터가 추가됩니다.",
@@ -2095,7 +2095,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "로드된 파일을 차례로 표시하지 않고 행 단위로 번갈아 표시",
   "⇄ Interleave rows (Zip)": "⇄ 행 교차 배치",
   "Drop files to open them": "파일을 끌어 놓아 열기",
-  "A JSON profile bundle is imported instead.": "JSON 프로필 번들은 대신 가져옵니다.",
   "Loading files: {0}…": "파일 로드 중: {0}…",
   "Could not read files ({0}): {1}": "읽을 수 없는 파일({0}): {1}",
   "Click or press Esc to close.": "클릭하거나 Esc 키를 눌러 닫습니다.",
@@ -2148,7 +2147,8 @@
   "Files: {0}.": "파일: {0}.",
   "Combine files": "파일 합치기",
   "Concat shows the files one after another, Zip interleaves them row by row.": "차례로 열기는 파일을 차례로 표시하고, 교차는 행 단위로 번갈아 배치합니다.",
-  "Last": "마지막"
+  "Last": "마지막",
+  "Close file view (Ctrl+W)": "파일 보기 닫기 (Ctrl+W)"
  },
  "pl": {
   "Help sections": "Sekcje pomocy",
@@ -2159,7 +2159,7 @@
   "Selecting and copying": "Zaznaczanie i kopiowanie",
   "Find": "Znajdź",
   "Keyboard shortcuts": "Skróty klawiaturowe",
-  "help.load.1": "Upuść pliki w oknie, otwórz plik przyciskiem ▤ lub wklej tekst albo pliki za pomocą <code>Ctrl+V</code>. Każde dane wejściowe są dekodowane do UTF-8. Upuszczony pakiet profili JSON jest importowany zamiast ładowany.",
+  "help.load.1": "Upuść pliki w oknie, otwórz plik przyciskiem <strong>Otwórz plik</strong> lub wklej tekst albo pliki za pomocą <code>Ctrl+V</code>. Każde dane wejściowe są dekodowane do UTF-8.",
   "help.load.2": "Gdy jednocześnie pojawi się kilka plików, Log Explorer pyta, czy pokazać je jeden po drugim (<code>Sklej</code>), czy naprzemiennie wiersz po wierszu (<code>Przeplataj</code>). Gdy zawartość jest już załadowana, pyta, czy dodać do niej nowe pliki (<code>Dołącz</code> lub <code>Przeplataj</code>), czy ją zastąpić (<code>Sklej</code> lub <code>Przeplataj</code>). Pliki otwarte już jako sklejone, np. poleceniem Pokaż w plikach w File Search Manager, można przełączyć przyciskiem <code>Naprzemienne wiersze (Przeplataj)</code> na pasku stanu. <code>Esc</code> anuluje ładowanie.",
   "help.load.3": "Każdy plik zachowuje własny kolor tła na każdym etapie, dzięki czemu jego wiersze pozostają rozpoznawalne po filtrowaniu, sortowaniu, zamianie lub obliczaniu różnic. Najedź na wiersz, aby zobaczyć ścieżkę jego pliku na pasku stanu. <code>Scal źródła</code> w menu aplikacji (≡) zamienia załadowaną zawartość w jedno źródło.",
   "help.browse.1": "Wiersze nigdy nie są zawijane. Przewijaj paskami przewijania, kółkiem myszy, klawiszami strzałek, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> i <code>End</code>; <code>Ctrl</code> + kółko przewija w poziomie. Przytrzymaj <code>Shift</code> podczas przesuwania, aby rozszerzyć zaznaczenie.",
@@ -2174,7 +2174,7 @@
   "help.operations.join": "<strong>Połącz:</strong> łączy wszystkie wiersze w jedną wartość z separatorem, prefiksem i sufiksem; obsługiwane są sekwencje ucieczki, takie jak <code>\\n</code> i <code>\\t</code>.",
   "help.operations.2": "Menu <code>Przekształć</code> dodaje Wyodrębnij, Unikalne lub Połącz. <code>Zbierz unikalne wartości</code> dodaje wszystkie trzy naraz; skonfiguruj Wyodrębnij, a następnie wybierz Połącz, aby zobaczyć i skopiować końcową wartość rozdzieloną separatorem.",
   "help.profiles.1": "Potok jest zachowywany automatycznie. Etykiety w sekcji Profile przełączają między potokami: <code>Nowy</code> rozpoczyna pusty potok i zachowuje załadowane pliki, <code>Ostatni</code> to potok z poprzedniej sesji. Kliknij etykietę prawym przyciskiem, aby ją zapisać, zmienić jej nazwę lub ją usunąć; przeciągaj nazwane etykiety, aby zmienić ich kolejność.",
-  "help.profiles.2": "Profile są przechowywane lokalnie. Menu aplikacji (≡) pobiera je jako pakiet JSON i przesyła pakiet z powrotem; upuszczenie pakietu w oknie również go importuje.",
+  "help.profiles.2": "Profile są przechowywane lokalnie. Menu aplikacji (≡) umożliwia eksport i import pakietów profili JSON.",
   "help.select.1": "Pojedyncze kliknięcie zaznacza strukturę pod kursorem: identyfikator, liczbę z jednostką, liczbę dziesiętną, adres IP, wersję, ścieżkę, adres URL, wartość podobną do GUID, datę, godzinę lub białe znaki wraz z pobliskimi końcami wierszy. Kliknięcie cudzysłowu zaznacza tekst w cudzysłowie; kliknięcie nawiasu, także nawiasu znacznika HTML/XML, zaznacza zawartość między pasującą parą. Kliknięcie <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> lub <code>&gt;=</code> zaznacza otaczające wyrażenie.",
   "help.select.2": "Kliknięcie wewnątrz zaznaczenia rozszerza je: token, zawartość między ogranicznikami, same ograniczniki, a potem otaczające struktury JSON/XML/HTML. <code>Ctrl</code>+kliknięcie wewnątrz zmniejsza je z powrotem do klikniętej części; <code>Ctrl</code>+kliknięcie poza nim wybiera najmniejszą użyteczną część, np. grupę GUID lub składnik daty. Przeciągnij, aby zaznaczyć blok; kliknij numery wierszy, aby wyczyścić zaznaczenie.",
   "help.select.3": "<code>Ctrl+C</code> kopiuje zaznaczenie. Menu aplikacji (≡) kopiuje też cały widok, kolumnę (szerokość zaznaczenia we wszystkich wierszach) lub blok (zaznaczony prostokąt). Gdy załadowano kilka plików, kliknij dwukrotnie wiersz, aby dodać filtr zachowujący tylko jego plik.",
@@ -2399,7 +2399,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Pokaż załadowane pliki przeplatane wiersz po wierszu zamiast jeden po drugim",
   "⇄ Interleave rows (Zip)": "⇄ Naprzemienne wiersze (Przeplataj)",
   "Drop files to open them": "Upuść pliki, aby je otworzyć",
-  "A JSON profile bundle is imported instead.": "Pakiet profili JSON zostanie zamiast tego zaimportowany.",
   "Loading files: {0}…": "Wczytywanie plików: {0}…",
   "Could not read files ({0}): {1}": "Nie udało się odczytać plików ({0}): {1}",
   "Click or press Esc to close.": "Kliknij lub naciśnij Esc, aby zamknąć.",
@@ -2451,7 +2450,8 @@
   "Files: {0}.": "Pliki: {0}.",
   "Combine files": "Połącz pliki",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Sklej pokazuje pliki jeden po drugim, Przeplataj łączy je naprzemiennie wiersz po wierszu.",
-  "Last": "Ostatni"
+  "Last": "Ostatni",
+  "Close file view (Ctrl+W)": "Zamknij widok plików (Ctrl+W)"
  },
  "pt-BR": {
   "Help sections": "Seções da ajuda",
@@ -2462,7 +2462,7 @@
   "Selecting and copying": "Selecionar e copiar",
   "Find": "Localizar",
   "Keyboard shortcuts": "Atalhos de teclado",
-  "help.load.1": "Solte arquivos na janela, abra um com o botão ▤ ou cole texto ou arquivos com <code>Ctrl+V</code>. Todas as entradas são decodificadas para UTF-8. Um pacote de perfis JSON solto é importado em vez de carregado.",
+  "help.load.1": "Solte arquivos na janela, abra um com o botão <strong>Abrir arquivo</strong> ou cole texto ou arquivos com <code>Ctrl+V</code>. Todas as entradas são decodificadas para UTF-8.",
   "help.load.2": "Quando vários arquivos chegam juntos, o Log Explorer pergunta se deve mostrá-los um após o outro (<code>Concatenar</code>) ou intercalados linha por linha (<code>Intercalar</code>). Quando já há conteúdo carregado, pergunta se deve adicionar os novos arquivos a ele (<code>Anexar</code> ou <code>Intercalar</code>) ou substituí-lo (<code>Concatenar</code> ou <code>Intercalar</code>). Arquivos abertos já concatenados, por exemplo por Mostrar nos arquivos no File Search Manager, podem ser alternados com <code>Intercalar linhas</code> na barra de status. <code>Esc</code> cancela o carregamento.",
   "help.load.3": "Cada arquivo mantém sua própria cor de fundo em todos os estágios, de modo que suas linhas continuam reconhecíveis após filtrar, ordenar, substituir ou calcular diferenças. Passe o mouse sobre uma linha para ver o caminho do arquivo dela na barra de status. <code>Mesclar fontes</code> no menu do aplicativo (≡) transforma o conteúdo carregado em uma única fonte.",
   "help.browse.1": "As linhas nunca são quebradas. Role com as barras de rolagem, a roda do mouse, as teclas de seta, <code>Page Up</code>, <code>Page Down</code>, <code>Home</code> e <code>End</code>; <code>Ctrl</code> + roda do mouse rola na horizontal. Mantenha <code>Shift</code> pressionado ao mover para estender a seleção.",
@@ -2477,7 +2477,7 @@
   "help.operations.join": "<strong>Unir:</strong> combina todas as linhas em um único valor com delimitador, prefixo e sufixo; sequências de escape como <code>\\n</code> e <code>\\t</code> são suportadas.",
   "help.operations.2": "O menu <code>Transformar</code> adiciona Extrair, Únicos ou Unir. <code>Coletar valores únicos</code> adiciona os três de uma vez; configure Extrair e depois selecione Unir para ver e copiar o valor final separado pelo delimitador.",
   "help.profiles.1": "O pipeline é mantido automaticamente. Os chips em Perfis alternam entre pipelines: <code>Novo</code> inicia um pipeline vazio e mantém os arquivos carregados, <code>Último</code> é o pipeline da sessão anterior. Clique com o botão direito em um chip para salvá-lo, renomeá-lo ou excluí-lo; arraste os chips nomeados para reordená-los.",
-  "help.profiles.2": "Os perfis são armazenados localmente. O menu do aplicativo (≡) os baixa como um pacote JSON e carrega um pacote de volta; soltar um pacote na janela também o importa.",
+  "help.profiles.2": "Os perfis são armazenados localmente. Use o menu do aplicativo (≡) para exportar ou importar um pacote de perfis JSON.",
   "help.select.1": "Um clique seleciona a estrutura sob o ponteiro: um identificador, um número com sua unidade, um decimal, um endereço IP, uma versão, um caminho, uma URL, um valor semelhante a GUID, uma data, uma hora ou espaços em branco com finais de linha próximos. Clicar em aspas seleciona o texto entre aspas; clicar em um colchete, incluindo o colchete de uma tag HTML/XML, seleciona o conteúdo entre o par correspondente. Clicar em <code>=</code>, <code>==</code>, <code>===</code>, <code>=&gt;</code>, <code>!=</code>, <code>&lt;=</code> ou <code>&gt;=</code> seleciona a expressão ao redor.",
   "help.select.2": "Clicar dentro de uma seleção a amplia: token, conteúdo entre delimitadores, os delimitadores e, em seguida, as estruturas JSON/XML/HTML envolventes. <code>Ctrl</code>+clique dentro a reduz de volta à parte clicada; <code>Ctrl</code>+clique fora escolhe a menor parte útil, como um grupo de GUID ou um componente de data. Arraste para selecionar um bloco; clique nos números de linha para limpar a seleção.",
   "help.select.3": "<code>Ctrl+C</code> copia a seleção. O menu do aplicativo (≡) também copia a exibição inteira, uma coluna (a largura da seleção em todas as linhas) ou um bloco (o retângulo selecionado). Com vários arquivos carregados, clique duas vezes em uma linha para adicionar um filtro que mantém apenas o arquivo dela.",
@@ -2701,7 +2701,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "Mostrar os arquivos carregados intercalados linha por linha em vez de um após o outro",
   "⇄ Interleave rows (Zip)": "⇄ Intercalar linhas",
   "Drop files to open them": "Solte arquivos para abri-los",
-  "A JSON profile bundle is imported instead.": "Um pacote de perfis JSON é importado em vez disso.",
   "Loading files: {0}…": "Carregando arquivos: {0}…",
   "Could not read files ({0}): {1}": "Não foi possível ler arquivos ({0}): {1}",
   "Click or press Esc to close.": "Clique ou pressione Esc para fechar.",
@@ -2752,7 +2751,8 @@
   "Files: {0}.": "Arquivos: {0}.",
   "Combine files": "Combinar arquivos",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar mostra os arquivos um após o outro, Intercalar os alterna linha por linha.",
-  "Last": "Último"
+  "Last": "Último",
+  "Close file view (Ctrl+W)": "Fechar a visualização de arquivos (Ctrl+W)"
  },
  "zh-Hans": {
   "Help sections": "帮助章节",
@@ -2763,7 +2763,7 @@
   "Selecting and copying": "选择和复制",
   "Find": "查找",
   "Keyboard shortcuts": "键盘快捷键",
-  "help.load.1": "将文件拖放到窗口中，使用 ▤ 按钮打开文件，或按 <code>Ctrl+V</code> 粘贴文本或文件。所有输入都会解码为 UTF-8。拖放的 JSON 配置文件包会被导入，而不是加载。",
+  "help.load.1": "将文件拖放到窗口中，使用 <strong>打开文件</strong> 按钮打开文件，或按 <code>Ctrl+V</code> 粘贴文本或文件。所有输入都会解码为 UTF-8。",
   "help.load.2": "当同时传入多个文件时，Log Explorer 会询问是依次显示 (<code>串联</code>) 还是逐行交错显示 (<code>交错</code>)。当已加载内容时，它会询问是将新文件添加到其中 (<code>追加</code> 或 <code>交错</code>)，还是替换它 (<code>串联</code> 或 <code>交错</code>)。已按串联方式打开的文件 (例如通过 File Search Manager 中的“在文件中显示”打开) 可以使用状态栏中的 <code>逐行交错</code> 进行切换。<code>Esc</code> 取消加载。",
   "help.load.3": "每个文件在所有阶段都保留自己的背景色，因此在筛选、排序、替换或差异计算之后，其行仍可辨认。鼠标悬停在某行上可在状态栏中查看其所属文件的路径。应用菜单 (≡) 中的 <code>合并源</code> 会将已加载的内容变为单一源。",
   "help.browse.1": "行从不换行。可使用滚动条、鼠标滚轮、方向键、<code>Page Up</code>、<code>Page Down</code>、<code>Home</code> 和 <code>End</code> 滚动；<code>Ctrl</code> + 滚轮水平滚动。移动时按住 <code>Shift</code> 可扩展选择。",
@@ -2778,7 +2778,7 @@
   "help.operations.join": "<strong>连接:</strong> 使用分隔符、前缀和后缀将所有行合并为一个值；支持 <code>\\n</code> 和 <code>\\t</code> 等转义序列。",
   "help.operations.2": "<code>转换</code> 菜单可添加提取、去重或连接。<code>收集唯一值</code> 一次添加这三项；请先配置提取，然后选择连接以查看并复制最终以分隔符分隔的值。",
   "help.profiles.1": "管道会自动保存。“配置文件”下的标签用于在管道之间切换: <code>新建</code> 开始一个空管道并保留已加载的文件，<code>上次</code> 是上一会话的管道。右键单击标签可保存、重命名或删除它；拖动已命名的标签可重新排序。",
-  "help.profiles.2": "配置文件保存在本地。应用菜单 (≡) 可将其下载为 JSON 配置文件包，也可上传配置文件包；将配置文件包拖放到窗口中同样会导入。",
+  "help.profiles.2": "配置文件保存在本地。使用应用菜单 (≡) 导出或导入 JSON 配置文件包。",
   "help.select.1": "单击会选择指针下的结构: 标识符、带单位的数字、小数、IP 地址、版本号、路径、URL、类 GUID 值、日期、时间，或包含相邻行尾的空白。单击引号会选择引号内的文本；单击括号 (包括 HTML/XML 标签括号) 会选择匹配的一对括号之间的内容。单击 <code>=</code>、<code>==</code>、<code>===</code>、<code>=&gt;</code>、<code>!=</code>、<code>&lt;=</code> 或 <code>&gt;=</code> 会选择周围的表达式。",
   "help.select.2": "在选择内单击会逐步扩大选择: 标记、分隔符之间的内容、分隔符本身，然后是外层 JSON/XML/HTML 结构。在选择内 <code>Ctrl</code>+单击会缩小回单击的部分；在选择外 <code>Ctrl</code>+单击会选择最小的有用部分，例如 GUID 分组或日期组成部分。拖动可选择块；单击行号可清除选择。",
   "help.select.3": "<code>Ctrl+C</code> 复制所选内容。应用菜单 (≡) 还可以复制整个视图、一列 (所有行上的选择宽度) 或一个块 (所选矩形)。加载了多个文件时，双击某行可添加仅保留该行所属文件的筛选。",
@@ -3003,7 +3003,6 @@
   "Show the loaded files interleaved row by row instead of one after another": "将已加载的文件逐行交错显示，而不是依次排列",
   "⇄ Interleave rows (Zip)": "⇄ 逐行交错",
   "Drop files to open them": "拖放文件以打开",
-  "A JSON profile bundle is imported instead.": "JSON 配置文件包将被导入。",
   "Loading files: {0}…": "正在加载文件: {0}…",
   "Could not read files ({0}): {1}": "无法读取的文件 ({0}): {1}",
   "Click or press Esc to close.": "单击或按 Esc 关闭。",
@@ -3056,6 +3055,7 @@
   "Files: {0}.": "文件: {0}。",
   "Combine files": "组合文件",
   "Concat shows the files one after another, Zip interleaves them row by row.": "串联将文件依次显示，交错则逐行交替合并。",
-  "Last": "上次"
+  "Last": "上次",
+  "Close file view (Ctrl+W)": "关闭文件视图 (Ctrl+W)"
  }
 }
