@@ -606,6 +606,7 @@ namespace search.Models
 
             var created = DateTime.Now;
             object update = created;
+            PendingUserUpdate pendingUser = null;
             if (!dataRefreshRequest)
             {
                 //User change - take over the pipeline, the running update is canceled. Here and
@@ -613,15 +614,17 @@ namespace search.Models
                 //empty filter of the window's opening, run by a busy pool after the filter typed
                 //right after it, published "" under the typed text until it was typed again.
                 lastUpdate = update;
+                pendingUserUpdate = pendingUser = new PendingUserUpdate();
                 Filtering = true;
             }
 
             // Return immediately => do not slow down UI!!!
-            await Task.Run(async () =>
+            var run = Task.Run(async () =>
             {
                 // null in both filter and sort means unchanged => pure data refresh
                 var dataRefresh = dataRefreshRequest;
                 TaskCompletionSource published = null;
+                var yieldedToUser = false;
                 var authoritativePublished = false;
                 var plannedDelayMs = 0L;
                 if (dataRefresh)
@@ -668,7 +671,11 @@ namespace search.Models
                         var delayWatch = Stopwatch.StartNew();
                         await Task.Delay(150);
                         plannedDelayMs = delayWatch.ElapsedMilliseconds;
-                        if (!ReferenceEquals(update, lastUpdate)) return;
+                        if (!ReferenceEquals(update, lastUpdate))
+                        {
+                            EndPendingUserUpdate(pendingUser);
+                            return;
+                        }
                     }
                 }
 
@@ -688,6 +695,15 @@ namespace search.Models
                     {
                         refreshQueued = 0; //Changes from now on queue a new refresh
                         if ((DateTime)lastUpdate > created) return; //A newer update runs against current data anyway
+                        //A filter or sort asked for and not yet published (in its debounce, or
+                        //waiting for this lock) refilters from the current files anyway
+                        //(refreshPending). Taking over would cancel it, and the files would be
+                        //published under the previous filter - until it was typed again.
+                        if (pendingUserUpdate != null)
+                        {
+                            yieldedToUser = true;
+                            return;
+                        }
                         lastUpdate = update;
                         Filtering = true;
                     }
@@ -871,13 +887,51 @@ namespace search.Models
                     health?.RefreshCompleted();
                     if (authoritativePublished) health?.GridUpdateReflected();
                     if (!IsCanceled()) Filtering = false; //When canceled the newer update owns the indicator
+                    //Over before the lock is free: a refresh that takes it next must not leave
+                    //its files to an update that has already published
+                    EndPendingUserUpdate(pendingUser);
                     Updating.Release(); //Allow next change
-                    published?.SetResult();
+                    //The refreshed files reach the grid with the user's update: "Loaded" and a
+                    //finished drive scan wait for that
+                    if (yieldedToUser && published != null) _ = PublishedWithUserUpdates(published);
+                    else published?.SetResult();
                     if (queueDeferredReconciliation) QueueDeferredReconciliation();
                     if (queueTailReconciliation) QueueTailReconciliation();
                 }
             });
+            try { await run; }
+            finally { EndPendingUserUpdate(pendingUser); } //Whatever ended it
         }
+
+        void EndPendingUserUpdate(PendingUserUpdate pending)
+        {
+            if (pending == null) return;
+            Interlocked.CompareExchange(ref pendingUserUpdate, null, pending); //Unless a newer one replaced it
+            pending.Done.TrySetResult();
+        }
+
+        /// <summary>A filter or sort change asked for and not yet over (published, canceled or failed)</summary>
+        sealed class PendingUserUpdate
+        {
+            public readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        volatile PendingUserUpdate pendingUserUpdate;
+
+        /// <summary>Completes a data refresh that left its files to the user's updates once they are over</summary>
+        async Task PublishedWithUserUpdates(TaskCompletionSource published)
+        {
+            try
+            {
+                //A newer change replaces the pending one before the older is over
+                for (var pending = pendingUserUpdate; pending != null; pending = pendingUserUpdate)
+                    await pending.Done.Task;
+            }
+            finally { published.SetResult(); }
+        }
+
+        /// <summary>The refresh a published drive scan asks for, at once (tests)</summary>
+        internal Task RefreshFromFilesNow() => UpdateCore(null, null, healthRecovery: false, skipDataDebounce: true);
 
         void CutDebounceShort()
             => Interlocked.Exchange(ref debounceShortcut,
