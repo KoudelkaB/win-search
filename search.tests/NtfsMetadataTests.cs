@@ -35,11 +35,11 @@ namespace search.Tests
             {
                 try { PipeServer.WaitForConnection(listener, cancellation.Token); }
                 catch (ObjectDisposedException) when (cancellation.IsCancellationRequested) { }
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
 
             cancellation.Cancel();
 
-            await wait.WaitAsync(TimeSpan.FromSeconds(3));
+            await wait.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         [Fact]

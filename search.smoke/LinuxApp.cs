@@ -48,6 +48,9 @@ namespace search.Smoke
             var exe = PublishedApp.Executable;
             var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
             start.Environment[PublishedApp.DataFolderVariable] = Data;
+            // Native child apps must use this test's X display as well, even when the
+            // developer's desktop session is Wayland.
+            start.Environment.Remove("WAYLAND_DISPLAY");
             Process = Process.Start(start);
             Window = await WaitFor(() => X11.FindWindow(Title, Process.Id), TimeSpan.FromSeconds(60), "the main window");
         }
@@ -133,6 +136,33 @@ namespace search.Smoke
             System.Threading.Thread.Sleep(300);
             var text = X11.Clipboard()?.Trim();
             return string.IsNullOrEmpty(text) || text == none ? null : text;
+        }
+
+        /// <summary>
+        /// What the app showed and wrote when a wait ran out: a screenshot and its logs in
+        /// TestResults/Diagnostics, the artifact of the workflow
+        /// </summary>
+        public void SaveDiagnostics(string name)
+        {
+            var diagnostics = Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE")
+                ?? Environment.CurrentDirectory, "TestResults", "Diagnostics");
+            Directory.CreateDirectory(diagnostics);
+            try { PublishedApp.Run("xwd", $"-root -silent -out {Path.Combine(diagnostics, name + ".xwd")}"); }
+            catch (Exception captureError) { Console.WriteLine(captureError.Message); }
+            var log = Path.Combine(Data, "log.txt");
+            if (File.Exists(log)) File.Copy(log, Path.Combine(diagnostics, name + "-app.log"), overwrite: true);
+            foreach (var trace in Directory.GetFiles(Data, "*.log"))
+                File.Copy(trace, Path.Combine(diagnostics, name + "-" + Path.GetFileName(trace)), overwrite: true);
+        }
+
+        /// <summary>The text of the filter box (copied); the keyboard is left there</summary>
+        public string FilterText()
+        {
+            ToFilter();
+            Keys("ctrl+a");
+            Keys("ctrl+c");
+            System.Threading.Thread.Sleep(300);
+            return X11.Clipboard()?.Trim();
         }
 
         public static async Task<T> WaitFor<T>(Func<T> probe, TimeSpan timeout, string what) where T : class

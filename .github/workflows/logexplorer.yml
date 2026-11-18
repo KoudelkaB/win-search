@@ -71,7 +71,7 @@ jobs:
       # The X server and the tools that drive it, and Mesa's software renderers for the window
       - name: X server tools
         working-directory: .
-        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip openbox libegl1 libgl1-mesa-dri mesa-vulkan-drivers
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xclip openbox libxkbcommon-x11-0 libxcursor1 libxi6 libegl1 libgl1-mesa-dri mesa-vulkan-drivers
 
       # Every test starts an X server of its own, so they run side by side.
       # CI=true turns "could not run" from a skip into a failure.

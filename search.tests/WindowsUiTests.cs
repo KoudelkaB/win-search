@@ -88,8 +88,8 @@ namespace search.Tests
             scene.Keys(Key.F1);
             var help = await scene.Dialog<HelpWindow>();
 
-            Assert.NotEmpty(help.GetVisualDescendants().OfType<SelectableTextBlock>()
-                .Where(t => !string.IsNullOrWhiteSpace(t.Text) || t.Inlines?.Count > 0));
+            Assert.Contains(help.GetVisualDescendants().OfType<SelectableTextBlock>(),
+                t => !string.IsNullOrWhiteSpace(t.Text) || t.Inlines?.Count > 0);
             //Not modal: the main window keeps working beside it
             scene.ClickRow(scene.OtherNode);
             Assert.Same(scene.OtherNode, Assert.Single(scene.Selected));
@@ -196,7 +196,7 @@ namespace search.Tests
             help.KeyPress(Key.F, RawInputModifiers.Control, PhysicalKey.F, null);
             scene.Settle();
 
-            Assert.True(help.GetVisualDescendants().OfType<TextBox>().Any(t => t.IsKeyboardFocusWithin));
+            Assert.Contains(help.GetVisualDescendants().OfType<TextBox>(), t => t.IsKeyboardFocusWithin);
             help.Close();
         }
 

@@ -184,6 +184,56 @@ namespace search.Tests
             Assert.Equal(new[] { scene.File }, start.ArgumentList);
         }
 
+        [AvaloniaFact]
+        public async Task APhotoWithTheExecutePermissionIsNoProgramTarget()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows tells a program by its extension");
+            using var scene = await UiScene.Open();
+            var photo = Photo(scene);
+            var box = scene.Find<Avalonia.Controls.Border>("BasketItemsZone");
+            var at = scene.Center(box);
+
+            scene.DropAt(new Avalonia.Point(at.X + box.Bounds.Width / 2 - 20, at.Y), await scene.Files(photo));
+
+            Assert.Empty(scene.Window.BasketTargets);
+            Assert.Equal(L.Text("NoNewTargets"), scene.Status);
+        }
+
+        [AvaloniaFact]
+        public async Task ASavedProgramTargetThatIsAPhotoComesBackAsAFile()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows tells a program by its extension");
+            using var scene = await UiScene.Open();
+            var photo = Photo(scene);
+            var tool = Program(scene);
+            var path = Path.Combine(scene.Root, "old.winsearch-settings.json");
+            WorkspaceSettingsStore.Export(new WorkspaceSettings
+            {
+                BasketTargets =
+                {
+                    new BasketTarget { Path = photo, Kind = BasketTargetKind.Executable },
+                    new BasketTarget { Path = tool, Kind = BasketTargetKind.Executable },
+                },
+            }, path);
+            scene.Window.PickImportFile = _ => Task.FromResult(path);
+
+            scene.Click(scene.ButtonOf(L.Text("Import")));
+
+            await scene.Until(() => scene.Status == L.Format("SettingsImported", 0, 2));
+            Assert.Equal(new[] { BasketTargetKind.File, BasketTargetKind.Executable },
+                scene.Window.BasketTargets.Select(t => t.Kind));
+        }
+
+        /// <summary>A JPEG with the execute permission, as photos copied from a memory card often are</summary>
+        static string Photo(UiScene scene)
+        {
+            var photo = Path.Combine(scene.Root, "IMAG0005.JPG");
+            File.WriteAllBytes(photo, new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46 });
+            File.SetUnixFileMode(photo, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+            return photo;
+        }
+
         /// <summary>A program in the test's folder: a batch file on Windows, an executable script on Linux</summary>
         static string Program(UiScene scene)
         {

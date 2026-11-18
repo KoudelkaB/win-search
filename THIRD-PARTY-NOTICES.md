@@ -2,19 +2,15 @@
 
 File Search Manager (MIT, see `LICENSE`) incorporates or is built with the third-party
 components below. Their licenses are MIT, BSD-3-Clause and Apache-2.0, all reproduced at the
-end of this document. Three components carry further third-party code, whose notices ship
-verbatim next to this file:
+end of this document. Additional dependency and runtime notices ship next to this file:
 
 - `licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt` - the native SkiaSharp and HarfBuzzSharp
   libraries: Skia, HarfBuzz, FreeType, libpng, libjpeg-turbo, zlib, piex, the Adobe DNG SDK
   and more.
 - `licenses/dotnet-THIRD-PARTY-NOTICES.txt` - the .NET runtime, where a package carries it
   (the Windows installer, the portable tar.gz and the .rpm and .deb packages).
-- `licenses/logexplorer-THIRD-PARTY-NOTICES.txt` - Log Explorer (`LogExplorer/logexplorer`),
-  a Rust program: every crate built into it with its version, license and project, and the
-  license texts the crates ship (the fonts of egui among them). The release writes it from
-  the crates of that very build (`logexplorer/tools/third-party-notices.cjs`) and fails on
-  a crate whose license is not among the accepted ones.
+- `licenses/logexplorer-THIRD-PARTY-NOTICES.txt` - the Rust libraries used by the built-in
+  Log Explorer, including their versions, licenses and bundled fonts.
 
 Every package the build references must be listed here: the release workflow checks it
 (`tools/check-third-party-notices.py`).
@@ -24,7 +20,7 @@ Every package the build references must be listed here: the release workflow che
 ### Avalonia 12.1.6, Avalonia.Controls.DataGrid 12.1.2, Avalonia.Controls.WebView 12.1.1
 
 The user interface: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent, Avalonia.Skia,
-Avalonia.HarfBuzz, Avalonia.X11, Avalonia.FreeDesktop, Avalonia.FreeDesktop.AtSpi,
+Avalonia.HarfBuzz, Avalonia.X11, Avalonia.Wayland, Avalonia.FreeDesktop, Avalonia.FreeDesktop.AtSpi,
 Avalonia.Win32, Avalonia.Native, Avalonia.Remote.Protocol, Avalonia.Controls.DataGrid and
 Avalonia.Controls.WebView.
 
@@ -71,6 +67,14 @@ COM interop used by Avalonia.
 - Copyright (c) 2021 Nikita Tsukanov
 - License: MIT
 
+### NWayland 0.11.0
+
+The Wayland protocol bindings behind Avalonia's Wayland backend.
+
+- Project: https://github.com/kekekeks/NWayland
+- Copyright (c) 2014 Steven Kirk
+- License: MIT
+
 ### Microsoft.Web.WebView2 1.0.4314.35
 
 - Project: https://www.nuget.org/packages/Microsoft.Web.WebView2
@@ -93,15 +97,12 @@ managed interop assembly is shipped, and it is not used there.
 - Copyright (c) 2014 Adam Hathcock
 - License: MIT
 
-### Log Explorer (`LogExplorer/logexplorer`)
+### Rust libraries
 
-- Part of this project (`logexplorer/`), MIT like the application
-- Its user interface texts and their translations come from the Log Explorer page of
-  singleHtmlApps (below)
-- Built from Rust crates: egui and eframe (the user interface), wgpu (drawing), winit (the
-  window), AccessKit (accessibility), regex, rayon and others, under MIT, Apache-2.0, BSD,
-  ISC, Zlib, BSL-1.0, Unicode-3.0, MPL-2.0 and the font licenses OFL-1.1 and Ubuntu Font
-  Licence 1.0 - listed with their texts in `licenses/logexplorer-THIRD-PARTY-NOTICES.txt`
+The built-in Log Explorer uses egui and eframe (the user interface), wgpu (drawing),
+winit (the window), AccessKit (accessibility), regex, rayon and other Rust libraries.
+Their licenses and font notices are included in
+`licenses/logexplorer-THIRD-PARTY-NOTICES.txt`.
 
 ### singleHtmlApps (Hex Editor and Comparer, Calculator)
 

@@ -111,6 +111,12 @@ for (const crate of crates) {
     lines.push(`${name} - ${license || 'unknown'}${crate.repository ? ` - ${crate.repository}` : ''}`);
 
     const files = shipped(directory);
+    // sctk-adwaita embeds Cantarell under OFL-1.1, but its crate only ships the
+    // code's MIT license file. Preserve the font's embedded copyright as well.
+    if (crate.name === 'sctk-adwaita') {
+        add(fs.readFileSync(path.join(__dirname, 'license-texts', 'Cantarell-OFL.txt'), 'utf8'),
+            `${name} (src/title/Cantarell-Regular.ttf)`);
+    }
     if (crate.license_file && !files.includes(path.join(directory, crate.license_file))) files.push(path.join(directory, crate.license_file));
     for (const file of files) add(fs.readFileSync(file, 'utf8'), `${name} (${path.relative(directory, file).replace(/\\/g, '/')})`);
     if (files.length || !chosen) continue;
@@ -133,9 +139,9 @@ if (problems.length) {
 
 const rule = '-'.repeat(78);
 const document = [
-    'Log Explorer - third-party notices',
+    'File Search Manager - Rust dependency notices',
     '',
-    `The Log Explorer program (logexplorer, MIT, see LICENSE) is built from the Rust crates`,
+    'The built-in Log Explorer uses the third-party Rust libraries listed',
     `below (target ${target}). Each line gives the crate, its version, its license and its`,
     'project; the license texts the crates ship follow, each once, with the crates it',
     'comes from. Where a crate offers a choice of licenses, it is used under the first of',

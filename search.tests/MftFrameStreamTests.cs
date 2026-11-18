@@ -112,7 +112,7 @@ namespace search.Tests
             {
                 for (var i = 0; i < count; i++)
                     Assert.True(seen.TryAdd(first + i, buffer.AsSpan(i * 100, 100).ToArray()));
-            }, chunkBytes: 300);
+            }, chunkBytes: 300, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(20, total);
             foreach (var record in Enumerable.Range(0, 20).Where(r => !zero(r)))

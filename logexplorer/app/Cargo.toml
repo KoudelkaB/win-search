@@ -22,6 +22,11 @@ sys-locale = "0.3"
 egui_kittest = { version = "0.37", features = ["eframe"] }
 tempfile = "3"
 
+# GNOME/Wayland does not draw server-side decorations. Winit's fallback is a blank
+# bar; Adwaita draws the title and window controls, including the loaded file name.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+
 # Files dropped into the program while it is elevated (elevated_drop.rs)
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"

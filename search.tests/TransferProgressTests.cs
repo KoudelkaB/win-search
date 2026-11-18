@@ -265,7 +265,7 @@ namespace search.Tests
                 var absent = Path.Combine(root, "absent.txt");
                 var destination = Path.Combine(root, "link.txt");
                 File.CreateSymbolicLink(destination, absent);
-                var errors = source.UniversalCopyOrMove(destination, overwrite);
+                var errors = source.UniversalCopyOrMove(destination, overwrite, cancellationToken: TestContext.Current.CancellationToken);
                 Assert.Equal(overwrite, errors.Count == 0);
                 Assert.False(File.Exists(absent));
                 Assert.Equal(overwrite ? null : absent, new FileInfo(destination).LinkTarget);
@@ -283,7 +283,7 @@ namespace search.Tests
                 File.WriteAllText(Path.Combine(source.FullName, "payload.txt"), "payload");
                 File.CreateSymbolicLink(Path.Combine(source.FullName, "link.txt"), "payload.txt");
                 var destination = Path.Combine(root, "copy");
-                Assert.Empty(source.FullName.UniversalCopyOrMove(destination, false));
+                Assert.Empty(source.FullName.UniversalCopyOrMove(destination, false, cancellationToken: TestContext.Current.CancellationToken));
                 Assert.Equal("payload.txt", new FileInfo(Path.Combine(destination, "link.txt")).LinkTarget);
                 Assert.Equal("payload", File.ReadAllText(Path.Combine(destination, "link.txt")));
             }
@@ -504,6 +504,80 @@ namespace search.Tests
         }
 
         [Fact]
+        public void AFailedLinkKeepsTheDestinationItWouldHaveReplaced()
+        {
+            var root = CreateRoot();
+            try
+            {
+                // A hard link to another file system fails the same way: after the destination
+                // used to be deleted
+                var missing = Path.Combine(root, "missing.txt");
+                var destination = Path.Combine(root, "destination.txt");
+                File.WriteAllText(destination, "kept");
+
+                Assert.NotEmpty(missing.Hardlink(destination, overwrite: true));
+
+                Assert.Equal("kept", File.ReadAllText(destination));
+                Assert.Equal(new[] { destination }, Directory.GetFileSystemEntries(root));
+
+                var folder = Directory.CreateDirectory(Path.Combine(root, "folder")).FullName;
+                File.WriteAllText(Path.Combine(folder, "inside.txt"), "kept");
+                Assert.Throws<IOException>(() => folder.CreateReplacing(missing, _ => throw new IOException("no link")));
+                Assert.Equal("kept", File.ReadAllText(Path.Combine(folder, "inside.txt")));
+                Assert.Equal(new[] { destination, folder }, Directory.GetFileSystemEntries(root).Order(StringComparer.Ordinal));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void ALinkReplacesAFileOrAFolderOnceItExists()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var source = Path.Combine(root, "source.txt");
+                File.WriteAllText(source, "new");
+                var file = Path.Combine(root, "file.txt");
+                File.WriteAllText(file, "old");
+                var folder = Directory.CreateDirectory(Path.Combine(root, "folder")).FullName;
+                File.WriteAllText(Path.Combine(folder, "old.txt"), "old");
+
+                Assert.Empty(source.Hardlink(file, overwrite: true));
+                Assert.Empty(source.Hardlink(folder, overwrite: true));
+
+                Assert.Equal("new", File.ReadAllText(file));
+                Assert.Equal("new", File.ReadAllText(folder));
+                //Nothing staged or set aside is left
+                Assert.Equal(new[] { file, folder, source }, Directory.GetFileSystemEntries(root).Order(StringComparer.Ordinal));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
+        public void ACopyOverAnIndexedFileReportsItsNewSizeAndTime()
+        {
+            var root = CreateRoot();
+            try
+            {
+                var copied = Path.Combine(root, "copied.txt");
+                File.WriteAllText(copied, "123456789012");
+                var moved = Path.Combine(root, "gone.txt");
+
+                //A create of an indexed path keeps the indexed node: a replaced file also changed
+                Assert.Equal(new[] { WatcherChangeTypes.Created },
+                    Models.Extensions.TransferredEvents(moved, copied, move: false, replaced: false).Select(e => e.ChangeType));
+                Assert.Equal(new[] { WatcherChangeTypes.Created, WatcherChangeTypes.Changed },
+                    Models.Extensions.TransferredEvents(moved, copied, move: false, replaced: true).Select(e => e.ChangeType));
+                Assert.All(Models.Extensions.TransferredEvents(moved, copied, move: false, replaced: true), e => Assert.Equal(copied, e.FullPath));
+                //A move renames the indexed node; a copy that left nothing reports nothing
+                var rename = Assert.Single(Models.Extensions.TransferredEvents(moved, copied, move: true, replaced: true));
+                Assert.Equal((WatcherChangeTypes.Renamed, copied, moved), (rename.ChangeType, rename.FullPath, rename.OldFullPath));
+                Assert.Empty(Models.Extensions.TransferredEvents(copied, moved, move: false, replaced: true));
+            }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+
+        [Fact]
         public void DirectoryMoveOverwriteKeepsAParentThatContainsTheSource()
         {
             var root = CreateRoot();
@@ -514,7 +588,7 @@ namespace search.Tests
                 var inner = Directory.CreateDirectory(Path.Combine(outer.FullName, "proj"));
                 File.WriteAllText(Path.Combine(inner.FullName, "payload.txt"), "payload");
 
-                Assert.NotEmpty(inner.FullName.UniversalCopyOrMove(outer.FullName, overwrite: true, move: true));
+                Assert.NotEmpty(inner.FullName.UniversalCopyOrMove(outer.FullName, overwrite: true, move: true, cancellationToken: TestContext.Current.CancellationToken));
 
                 Assert.Equal("payload", File.ReadAllText(Path.Combine(inner.FullName, "payload.txt")));
                 Assert.Single(Directory.GetDirectories(root));
@@ -533,7 +607,7 @@ namespace search.Tests
                 var destination = Directory.CreateDirectory(Path.Combine(root, "destination"));
                 File.WriteAllText(Path.Combine(destination.FullName, "old.txt"), "old");
 
-                Assert.Empty(source.FullName.UniversalCopyOrMove(destination.FullName, overwrite: true, move: true));
+                Assert.Empty(source.FullName.UniversalCopyOrMove(destination.FullName, overwrite: true, move: true, cancellationToken: TestContext.Current.CancellationToken));
 
                 Assert.False(Directory.Exists(source.FullName));
                 Assert.Equal(new[] { "new.txt" },

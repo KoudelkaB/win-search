@@ -249,7 +249,12 @@ namespace search
                 string[] files = null;
                 await WaitFor(() => files = nodes.Where(n => !n.IsDirectory).Select(n => n.GetFileOrTempPath()).ToArray());
                 if (files == null || files.Length == 0) Model.Status = L.Text("NothingSelected");
-                else if (path == Apps.LogExplorer) NativeLogExplorer.Open(files, load);
+                else if (path == Apps.LogExplorer)
+                {
+                    //The profiles of the HTML page of v0.9.6, once, before the program has its own
+                    await LogExplorerProfileImport.EnsureAsync(this);
+                    NativeLogExplorer.Open(files, load);
+                }
                 else WebAppWindow.Open(path.Split('\0')[0], files);
             }
             else

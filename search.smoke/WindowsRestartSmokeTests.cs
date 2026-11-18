@@ -33,7 +33,7 @@ namespace search.Smoke
                 await first.ShowOnly(first.Token, names => names.Contains(before));
                 PinButton(first).Invoke();
                 //The new pin opens with its suggested name in an editor: Enter keeps it
-                await Task.Delay(500);
+                await Task.Delay(500, cancellationToken: TestContext.Current.CancellationToken);
                 first.Press(VirtualKeyShort.RETURN);
                 await WindowsApp.WaitUntil(() => first.ItemsOf("pinnedItems").Any(n => n.Contains(first.Token)),
                     TimeSpan.FromSeconds(10), "the pinned filter");

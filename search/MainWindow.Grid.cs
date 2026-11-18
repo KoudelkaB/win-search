@@ -517,17 +517,31 @@ namespace search
         }
 
         /// <summary>
-        /// A program: by extension on Windows, by its execute permission on Linux (scripts
-        /// and AppImages included)
+        /// A program: by extension on Windows. On Linux a file with the execute permission that
+        /// the system can run - a binary (AppImages included) or a script. The permission alone
+        /// is not enough: photos and documents copied from a memory card or from Windows often
+        /// keep it, and such a file was taken for a program and offered as a target.
         /// </summary>
         static bool IsExecutable(string path)
         {
             if (OperatingSystem.IsWindows()) return ExecutableExtensions.Contains(IOPath.GetExtension(path));
             try
             {
-                return File.Exists(path)
-                    && (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+                if (!File.Exists(path) ||
+                    (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) == 0)
+                    return false;
             }
+            catch { return false; }
+            try
+            {
+                using var file = File.OpenRead(path);
+                Span<byte> head = stackalloc byte[4];
+                var read = file.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+                return (read >= 2 && head[0] == '#' && head[1] == '!')
+                    || (read == 4 && head[0] == 0x7f && head[1] == 'E' && head[2] == 'L' && head[3] == 'F');
+            }
+            //A program its user may run but not read: the permission is all there is to go by
+            catch (UnauthorizedAccessException) { return true; }
             catch { return false; }
         }
 

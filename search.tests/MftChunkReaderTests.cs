@@ -27,7 +27,7 @@ namespace search.Tests
             {
                 for (var i = 0; i < count; i++)
                     Assert.True(seen.TryAdd(first + i, buffer.AsSpan(i * bytesPerRecord, bytesPerRecord).ToArray()));
-            }, chunkBytes);
+            }, chunkBytes, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(records, total);
             Assert.Equal(records, seen.Count);
@@ -40,7 +40,7 @@ namespace search.Tests
         public void ZeroRecordsStillDrainTheTail()
         {
             var stream = new MemoryStream(new byte[300]);
-            var total = MftChunkReader.Read(stream, 1024, 300, (_, _, _) => Assert.Fail("no chunk expected"));
+            var total = MftChunkReader.Read(stream, 1024, 300, (_, _, _) => Assert.Fail("no chunk expected"), cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, total);
             Assert.Equal(300, stream.Position);
         }
@@ -48,15 +48,15 @@ namespace search.Tests
         [Fact]
         public void RejectsInvalidRecordSizes()
         {
-            Assert.Throws<InvalidDataException>(() => MftChunkReader.Read(new MemoryStream(), 0, 100, (_, _, _) => { }));
-            Assert.Throws<InvalidDataException>(() => MftChunkReader.Read(new MemoryStream(), -5, 100, (_, _, _) => { }));
+            Assert.Throws<InvalidDataException>(() => MftChunkReader.Read(new MemoryStream(), 0, 100, (_, _, _) => { }, cancellationToken: TestContext.Current.CancellationToken));
+            Assert.Throws<InvalidDataException>(() => MftChunkReader.Read(new MemoryStream(), -5, 100, (_, _, _) => { }, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         [Fact]
         public void ThrowsWhenTheStreamEndsPrematurely()
         {
             Assert.Throws<EndOfStreamException>(
-                () => MftChunkReader.Read(new MemoryStream(new byte[500]), 100, 1000, (_, _, _) => { }));
+                () => MftChunkReader.Read(new MemoryStream(new byte[500]), 100, 1000, (_, _, _) => { }, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         [Fact]
@@ -66,7 +66,7 @@ namespace search.Tests
             // the remainder, otherwise the sender blocks and the channel desyncs
             var stream = new MemoryStream(new byte[1000]);
             Assert.Throws<InvalidOperationException>(
-                () => MftChunkReader.Read(stream, 100, 1000, (_, _, _) => throw new InvalidOperationException(), chunkBytes: 200));
+                () => MftChunkReader.Read(stream, 100, 1000, (_, _, _) => throw new InvalidOperationException(), chunkBytes: 200, cancellationToken: TestContext.Current.CancellationToken));
             Assert.Equal(1000, stream.Position);
         }
 

@@ -35,4 +35,26 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Headless tests
-        run: dotnet test search.tests -c Release --logger "console;verbosity=normal"
+        run: dotnet test search.tests -c Release --logger "console;verbosity=normal" --logger trx --results-directory TestResults
+
+      # Ubuntu's AppArmor policy blocks unprivileged user namespaces. Exercise the
+      # real mount-namespace test as root as well, and require it to run rather than skip.
+      - name: Mount namespace integration test
+        if: runner.os == 'Linux'
+        run: |
+          sudo env "PATH=$PATH" "DOTNET_ROOT=$DOTNET_ROOT" dotnet test search.tests -c Release --no-build --filter FullyQualifiedName~AProcessInItsOwnMountNamespaceIsNotServed --logger trx --results-directory TestResults/namespace
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          results = [r for p in Path('TestResults/namespace').glob('*.trx')
+                     for r in ET.parse(p).findall('.//t:UnitTestResult', ns)]
+          assert len(results) == 1 and results[0].get('outcome') == 'Passed', 'The mount namespace test must execute and pass'
+          PY
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: headless-results-${{ runner.os }}
+          path: TestResults/**/*.trx
+          if-no-files-found: error

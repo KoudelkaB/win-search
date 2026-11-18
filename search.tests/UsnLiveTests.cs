@@ -276,7 +276,7 @@ namespace search.Tests
                 Assert.NotNull(watcher);
                 watcher.Populate(initial);
                 Directory.Move(before, after);
-                await renameQueued.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await renameQueued.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken: TestContext.Current.CancellationToken);
                 File.Delete(newFile);
                 Assert.True(await WaitFor(() => events.Any(e => e.ChangeType == WatcherChangeTypes.Deleted
                     && string.Equals(e.FullPath, newFile, StringComparison.OrdinalIgnoreCase))),
@@ -455,7 +455,7 @@ namespace search.Tests
                             d.SizeDelta == -8192 && d.CountDelta == -1))),
                     $"no targeted hard-link removal; got: {string.Join("; ", updates)}");
 
-                await Task.Delay(1500);
+                await Task.Delay(1500, cancellationToken: TestContext.Current.CancellationToken);
                 Assert.False(rescan.Task.IsCompleted,
                     "targeted hard-link repair unexpectedly requested a drive rescan");
             }

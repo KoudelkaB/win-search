@@ -28,8 +28,17 @@ namespace search.Smoke
             var name = Path.GetFileName(app.Before);
             app.Filter(name);
 
-            //Found once the walk of the drive is in: until then the filter shows nothing
-            await LinuxApp.WaitFor(() => app.SelectedName() == name ? name : null, Load, "the file in the results");
+            //Found once the walk of the drive is in: until then the filter shows nothing. Typed
+            //once, right after the start: the results must follow the filter typed then
+            try
+            {
+                await LinuxApp.WaitFor(() => app.SelectedName() == name ? name : null, Load, "the file in the results");
+            }
+            catch (TimeoutException error)
+            {
+                app.SaveDiagnostics("before");
+                throw new TimeoutException($"{error.Message}; filter: \"{app.FilterText()}\"", error);
+            }
             app.ToFilter();
             Assert.True(File.Exists(Path.Combine(app.Data, "log.txt")));
         }
@@ -76,8 +85,24 @@ namespace search.Smoke
             app.Keys("F12");
             await LinuxApp.WaitFor(() => app.SelectedName() == Path.GetFileName(file) ? "row" : null, Load, "the file's row");
 
-            app.Keys("F2");
-            await Task.Delay(500);
+            app.Keys(X11.F2);
+            // F12 may still be publishing rows. Wait until the inline editor owns the
+            // keyboard and exposes its selected stem, instead of typing after a fixed delay.
+            string copied = null;
+            try
+            {
+                await LinuxApp.WaitUntil(() =>
+                {
+                    app.Keys("ctrl+c");
+                    copied = X11.Clipboard();
+                    return copied == Path.GetFileNameWithoutExtension(file);
+                }, TimeSpan.FromSeconds(10), "the selected name in the rename editor");
+            }
+            catch (TimeoutException error)
+            {
+                app.SaveDiagnostics("rename");
+                throw new TimeoutException($"{error.Message}; clipboard: {copied}; files: {string.Join(", ", Directory.GetFiles(app.Work))}", error);
+            }
             //The name without its extension is selected in the editor: typing replaces it
             app.Type($"{app.Token}-renamed");
             app.Keys("Return");

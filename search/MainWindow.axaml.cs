@@ -850,7 +850,15 @@ namespace search
                 PinnedFilters.Add(filter);
             BasketTargets.Clear();
             foreach (var target in settings.BasketTargets)
+            {
+                //Linux tells a program by its content too, which a saved target may predate (a
+                //photo with the execute permission was taken for one). Windows goes by the
+                //extension, which does not change - and an unreachable share must not hold the start
+                if (!OperatingSystem.IsWindows() && target.Kind == BasketTargetKind.Executable &&
+                    File.Exists(target.Path) && !IsExecutable(target.Path))
+                    target.Kind = BasketTargetKind.File;
                 BasketTargets.Add(target);
+            }
         }
 
         void SaveWorkspaceSettings()

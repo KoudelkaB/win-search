@@ -139,6 +139,16 @@ impl ProfileStore {
         names
     }
 
+    /// The store as another session saved it, with the "Last" of this one: "Last" is kept
+    /// apart (the pipeline of the session), never with the named profiles
+    pub fn with_last_of(mut self, session: &ProfileStore) -> Self {
+        self.remove(IMPLICIT_PROFILE_NAME);
+        if let Some(last) = session.get(IMPLICIT_PROFILE_NAME) {
+            self.set(IMPLICIT_PROFILE_NAME, last.clone());
+        }
+        self
+    }
+
     /// The pipeline of the last session becomes the profile "Last"
     pub fn set_last(&mut self, set: &WorkingSet) {
         if !set.operators.is_empty() {
