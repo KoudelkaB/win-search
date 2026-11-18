@@ -28,8 +28,17 @@ namespace search.Smoke
             var name = Path.GetFileName(app.Before);
             app.Filter(name);
 
-            //Found once the walk of the drive is in: until then the filter shows nothing
-            await LinuxApp.WaitFor(() => app.SelectedName() == name ? name : null, Load, "the file in the results");
+            //Found once the walk of the drive is in: until then the filter shows nothing. Typed
+            //once, right after the start: the results must follow the filter typed then
+            try
+            {
+                await LinuxApp.WaitFor(() => app.SelectedName() == name ? name : null, Load, "the file in the results");
+            }
+            catch (TimeoutException error)
+            {
+                app.SaveDiagnostics("before");
+                throw new TimeoutException($"{error.Message}; filter: \"{app.FilterText()}\"", error);
+            }
             app.ToFilter();
             Assert.True(File.Exists(Path.Combine(app.Data, "log.txt")));
         }
@@ -91,15 +100,7 @@ namespace search.Smoke
             }
             catch (TimeoutException error)
             {
-                var diagnostics = Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE")
-                    ?? Environment.CurrentDirectory, "TestResults", "Diagnostics");
-                Directory.CreateDirectory(diagnostics);
-                try { PublishedApp.Run("xwd", $"-root -silent -out {Path.Combine(diagnostics, "rename.xwd")}"); }
-                catch (Exception captureError) { Console.WriteLine(captureError.Message); }
-                var log = Path.Combine(app.Data, "log.txt");
-                if (File.Exists(log)) File.Copy(log, Path.Combine(diagnostics, "app.log"), overwrite: true);
-                foreach (var trace in Directory.GetFiles(app.Data, "*.log"))
-                    File.Copy(trace, Path.Combine(diagnostics, Path.GetFileName(trace)), overwrite: true);
+                app.SaveDiagnostics("rename");
                 throw new TimeoutException($"{error.Message}; clipboard: {copied}; files: {string.Join(", ", Directory.GetFiles(app.Work))}", error);
             }
             //The name without its extension is selected in the editor: typing replaces it

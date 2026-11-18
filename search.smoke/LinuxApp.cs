@@ -138,6 +138,33 @@ namespace search.Smoke
             return string.IsNullOrEmpty(text) || text == none ? null : text;
         }
 
+        /// <summary>
+        /// What the app showed and wrote when a wait ran out: a screenshot and its logs in
+        /// TestResults/Diagnostics, the artifact of the workflow
+        /// </summary>
+        public void SaveDiagnostics(string name)
+        {
+            var diagnostics = Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE")
+                ?? Environment.CurrentDirectory, "TestResults", "Diagnostics");
+            Directory.CreateDirectory(diagnostics);
+            try { PublishedApp.Run("xwd", $"-root -silent -out {Path.Combine(diagnostics, name + ".xwd")}"); }
+            catch (Exception captureError) { Console.WriteLine(captureError.Message); }
+            var log = Path.Combine(Data, "log.txt");
+            if (File.Exists(log)) File.Copy(log, Path.Combine(diagnostics, name + "-app.log"), overwrite: true);
+            foreach (var trace in Directory.GetFiles(Data, "*.log"))
+                File.Copy(trace, Path.Combine(diagnostics, name + "-" + Path.GetFileName(trace)), overwrite: true);
+        }
+
+        /// <summary>The text of the filter box (copied); the keyboard is left there</summary>
+        public string FilterText()
+        {
+            ToFilter();
+            Keys("ctrl+a");
+            Keys("ctrl+c");
+            System.Threading.Thread.Sleep(300);
+            return X11.Clipboard()?.Trim();
+        }
+
         public static async Task<T> WaitFor<T>(Func<T> probe, TimeSpan timeout, string what) where T : class
         {
             var watch = Stopwatch.StartNew();

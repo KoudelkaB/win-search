@@ -604,13 +604,23 @@ namespace search.Models
                 }
             }
 
+            var created = DateTime.Now;
+            object update = created;
+            if (!dataRefreshRequest)
+            {
+                //User change - take over the pipeline, the running update is canceled. Here and
+                //not on the pool: the changes take over in the order they were asked for. The
+                //empty filter of the window's opening, run by a busy pool after the filter typed
+                //right after it, published "" under the typed text until it was typed again.
+                lastUpdate = update;
+                Filtering = true;
+            }
+
             // Return immediately => do not slow down UI!!!
             await Task.Run(async () =>
             {
                 // null in both filter and sort means unchanged => pure data refresh
-                var dataRefresh = (newFilter ?? newSort) == null;
-                var created = DateTime.Now;
-                object update = created;
+                var dataRefresh = dataRefreshRequest;
                 TaskCompletionSource published = null;
                 var authoritativePublished = false;
                 var plannedDelayMs = 0L;
@@ -652,10 +662,6 @@ namespace search.Models
                 }
                 else
                 {
-                    //User change - take over the pipeline immediately, the running update is canceled
-                    lastUpdate = update;
-                    Filtering = true;
-
                     //Debounce typing - the new update starts after a short pause
                     if (newFilter != null && filter != newFilter)
                     {
