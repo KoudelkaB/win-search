@@ -319,42 +319,56 @@ impl ActionIcon {
     fn paint(self, ui: &egui::Ui, response: egui::Response, name: &str) -> egui::Response {
         let painter = ui.painter();
         let color = if matches!(self, Self::Remove) && response.enabled() { theme::DANGER } else { ui.style().interact(&response).fg_stroke.color };
-        let stroke = Stroke::new(1.2, color);
+        let scale = painter.pixels_per_point();
+        let stroke_pixels = scale.round().max(1.0);
+        let half_stroke = stroke_pixels / (2.0 * scale);
+        let stroke = Stroke::new(2.0 * half_stroke, color);
+        // Align the whole mark first. Rounding each bar independently can give unequal
+        // gaps, and odd-width strokes need half-pixel centers to have sharp edges.
+        let axis = |point: f32| ((point * scale - stroke_pixels / 2.0).round() + stroke_pixels / 2.0) / scale;
         let center = response.rect.center();
-        let at = |x, y| center + 0.8 * egui::vec2(x, y);
-        let line = |x1, y1, x2, y2| painter.line_segment([at(x1, y1), at(x2, y2)], stroke);
+        let center = egui::pos2(axis(center.x), axis(center.y));
+        let distance = |points: f32| (points * scale).round() / scale;
+        let at = |x, y| center + egui::vec2(distance(x), distance(y));
+        let path = |points: &[(f32, f32)]| painter.add(egui::Shape::line(points.iter().map(|&(x, y)| at(x, y)).collect(), stroke));
+        let mut bars = egui::Mesh::default();
+        let mut bar = |x1, y1, x2, y2| {
+            let rect = egui::Rect::from_two_pos(at(x1, y1), at(x2, y2)).expand(half_stroke);
+            bars.add_colored_rect(rect, color);
+        };
         match self {
             Self::Open => {
-                let folder = [at(-8.0, 6.0), at(-8.0, -6.0), at(-2.0, -6.0), at(0.0, -3.5), at(7.0, -3.5), at(7.0, 6.0)];
-                painter.add(egui::Shape::closed_line(folder.to_vec(), stroke));
-                line(-7.0, 0.0, 6.0, 0.0);
+                let folder = vec![at(-5.0, 4.0), at(-5.0, -4.0), at(-2.0, -4.0), at(0.0, -2.0), at(5.0, -2.0), at(5.0, 4.0)];
+                painter.add(egui::Shape::closed_line(folder, stroke));
             }
             Self::Close | Self::Remove => {
-                line(-5.0, -5.0, 5.0, 5.0);
-                line(-5.0, 5.0, 5.0, -5.0);
+                path(&[(-4.0, -4.0), (4.0, 4.0)]);
+                path(&[(-4.0, 4.0), (4.0, -4.0)]);
             }
             Self::Copy => {
-                painter.add(egui::Shape::line(vec![at(-6.0, 3.0), at(-6.0, -7.0), at(3.0, -7.0)], stroke));
-                painter.rect_stroke(egui::Rect::from_min_max(at(-2.5, -3.5), at(6.5, 7.0)), 1.5, stroke, egui::StrokeKind::Middle);
+                path(&[(-5.0, 2.0), (-5.0, -5.0), (2.0, -5.0)]);
+                painter.rect_stroke(egui::Rect::from_min_max(at(-2.0, -2.0), at(5.0, 5.0)), 1.0, stroke, egui::StrokeKind::Middle);
             }
             Self::Help => {
-                painter.circle_stroke(center, 6.0, stroke);
+                painter.circle_stroke(center, distance(5.0), stroke);
                 painter.text(center, egui::Align2::CENTER_CENTER, "?", FontId::proportional(10.0), color);
             }
             Self::Menu => {
-                for y in [-4.5, 0.0, 4.5] {
-                    line(-6.5, y, 6.5, y);
+                for y in [-3.0, 0.0, 3.0] {
+                    bar(-5.0, y, 5.0, y);
                 }
             }
             Self::Add => {
-                line(-5.0, 0.0, 5.0, 0.0);
-                line(0.0, -5.0, 0.0, 5.0);
+                bar(-4.0, 0.0, 4.0, 0.0);
+                bar(0.0, -4.0, 0.0, 4.0);
             }
             Self::Up | Self::Down => {
-                let tip = if matches!(self, Self::Up) { -6.0 } else { 6.0 };
-                line(0.0, -tip, 0.0, tip);
-                painter.add(egui::Shape::line(vec![at(-4.0, 0.0), at(0.0, tip), at(4.0, 0.0)], stroke));
+                let direction = if matches!(self, Self::Up) { -1.0 } else { 1.0 };
+                path(&[(-4.0, -2.0 * direction), (0.0, 2.0 * direction), (4.0, -2.0 * direction)]);
             }
+        }
+        if !bars.is_empty() {
+            painter.add(egui::Shape::mesh(bars));
         }
         named(response.on_hover_text(name), egui::Role::Button, name)
     }
@@ -1134,14 +1148,24 @@ fn help_shortcuts(ui: &mut egui::Ui, app: &App) {
         ("help.keys.wheelKey", "help.keys.wheel"),
         ("help.keys.middleKey", "help.keys.middle"),
     ];
-    let width = ui.available_width();
-    let keys_width = (width * 0.30).min(190.0);
-    let spacing = 16.0;
-    egui::Grid::new("help keys").num_columns(2).striped(true).spacing([spacing, 7.0]).show(ui, |ui| {
-        for (keys, description) in rows {
-            ui.add_sized([keys_width, 0.0], egui::Label::new(markup(app.t(keys), theme::BODY_SIZE)).wrap());
-            ui.add_sized([width - keys_width - spacing, 0.0], egui::Label::new(markup(app.t(description), theme::BODY_SIZE)).wrap());
-            ui.end_row();
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for (index, (keys, description)) in rows.into_iter().enumerate() {
+            let fill = if index % 2 == 0 { theme::SURFACE } else { Color32::TRANSPARENT };
+            egui::Frame::NONE.fill(fill).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
+                let width = ui.available_width();
+                let keys_width = (width * 0.30).min(190.0);
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing.x = 16.0;
+                // Let the taller cell set the row height, including any wrapped lines.
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(keys_width, 0.0), Layout::top_down(Align::Min), |ui| {
+                        ui.set_width(keys_width);
+                        ui.add(egui::Label::new(markup(app.t(keys), theme::BODY_SIZE)).wrap());
+                    });
+                    ui.add(egui::Label::new(markup(app.t(description), theme::BODY_SIZE)).wrap());
+                });
+            });
         }
     });
 }

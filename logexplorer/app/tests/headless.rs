@@ -515,6 +515,21 @@ fn help_opens_with_f1_and_closes_with_escape() {
 }
 
 #[test]
+fn help_shortcut_rows_have_room_for_multiline_keys() {
+    let mut harness = start_with(options("cs"));
+    key(&mut harness, Key::F1);
+    for width in [1280.0, 680.0] {
+        harness.set_size(egui::vec2(width, 800.0));
+        harness.run();
+        let movement = harness.get_by_label_contains("Page Up").rect();
+        let mouse_wheel = harness.get_by_label("Ctrl + kolečko").rect();
+        let middle_button = harness.get_by_label("Prostřední tlačítko").rect();
+        assert!(movement.bottom() < mouse_wheel.top(), "{movement:?} overlaps {mouse_wheel:?}");
+        assert!(mouse_wheel.bottom() < middle_button.top(), "{mouse_wheel:?} overlaps {middle_button:?}");
+    }
+}
+
+#[test]
 fn help_closes_with_its_cross_and_with_ok() {
     let mut harness = start();
     for button in ["Close help", "OK"] {
