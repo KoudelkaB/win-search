@@ -935,9 +935,11 @@ impl App {
 
     pub fn save_profile(&mut self, name: &str) {
         // A profile another window deleted meanwhile is saved again under its name
-        if self.change_profiles(|profiles, work| profiles.save(name, work) || {
-            profiles.save_as(name, work);
-            true
+        if self.change_profiles(|profiles, work| {
+            profiles.save(name, work) || {
+                profiles.save_as(name, work);
+                true
+            }
         }) {
             self.set_status_text(self.tf("Saved profile '{0}'.", &[&name]));
         }
