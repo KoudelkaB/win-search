@@ -901,8 +901,11 @@ impl App {
 
     // --- profiles -----------------------------------------------------------------------------
 
-    fn persist_profiles(&mut self) {
-        self.storage.save_profiles(&mut self.profiles);
+    /// A change of the profiles, made to what the file holds now (another window may have
+    /// saved since) and saved; the chips then show that store
+    fn change_profiles<R>(&mut self, change: impl FnOnce(&mut ProfileStore, &WorkingSet) -> R) -> R {
+        let work = &self.work;
+        self.storage.update_profiles(&mut self.profiles, |profiles| change(profiles, work))
     }
 
     fn apply_working_set(&mut self, set: WorkingSet, name: &str) {
@@ -931,18 +934,20 @@ impl App {
     }
 
     pub fn save_profile(&mut self, name: &str) {
-        if self.profiles.save(name, &self.work) {
-            self.persist_profiles();
+        // A profile another window deleted meanwhile is saved again under its name
+        if self.change_profiles(|profiles, work| profiles.save(name, work) || {
+            profiles.save_as(name, work);
+            true
+        }) {
             self.set_status_text(self.tf("Saved profile '{0}'.", &[&name]));
         }
     }
 
     pub fn delete_profile(&mut self, name: &str) {
-        if self.profiles.delete(name) {
+        if self.change_profiles(|profiles, _| profiles.delete(name)) {
             if self.loaded_profile == name {
                 self.loaded_profile.clear();
             }
-            self.persist_profiles();
             self.set_status_text(self.tf("Deleted profile '{0}'.", &[&name]));
         }
     }
@@ -979,9 +984,8 @@ impl App {
             self.prompt = Some(Prompt::Overwrite { name: name.to_string(), rename_from: None });
             return false;
         }
-        self.profiles.save_as(name, &self.work);
+        self.change_profiles(|profiles, work| profiles.save_as(name, work));
         self.loaded_profile = name.to_string();
-        self.persist_profiles();
         self.set_status_text(self.tf("Saved current profile as '{0}'.", &[&name]));
         true
     }
@@ -1005,7 +1009,9 @@ impl App {
         }
         let overwrote_loaded = new_name != profile && self.loaded_profile == new_name;
         let was_implicit = self.profiles.get(profile).is_some_and(|stored| stored.implicit);
-        self.profiles.rename(profile, new_name);
+        if !self.change_profiles(|profiles, _| profiles.rename(profile, new_name)) {
+            return false;
+        }
         if !was_implicit && self.loaded_profile == profile {
             self.loaded_profile = new_name.to_string();
         }
@@ -1014,14 +1020,12 @@ impl App {
                 self.apply_working_set(stored.set, new_name);
             }
         }
-        self.persist_profiles();
         self.set_status_text(self.tf("Renamed profile '{0}' to '{1}'.", &[&profile, &new_name]));
         true
     }
 
     pub fn move_profile(&mut self, dragged: &str, target: Option<&str>) {
-        if self.profiles.move_before(dragged, target) {
-            self.persist_profiles();
+        if self.change_profiles(|profiles, _| profiles.move_before(dragged, target)) {
             let message = if target.is_some() { self.tf("Moved profile '{0}'.", &[&dragged]) } else { self.tf("Moved profile '{0}' to the end.", &[&dragged]) };
             self.set_status_text(message);
         }
@@ -1032,7 +1036,7 @@ impl App {
     }
 
     pub fn import_profiles(&mut self, bundle: &serde_json::Value) -> bool {
-        match self.profiles.import_bundle(bundle) {
+        match self.change_profiles(|profiles, _| profiles.import_bundle(bundle)) {
             Ok(working) => {
                 if let Some(working) = working {
                     if !working.operators.is_empty() || self.work.operators.is_empty() {
@@ -1040,7 +1044,6 @@ impl App {
                     }
                 }
                 self.loaded_profile.clear();
-                self.persist_profiles();
                 self.changed();
                 self.set_status("Imported profile bundle.");
                 true
