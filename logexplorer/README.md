@@ -52,9 +52,12 @@ current pipeline.
   expressions run row by row in parallel unless the pattern can match a line break.
 - The view lays out only the rows on screen. Scrolling is kept in `f64` with scrollbars of
   its own, so a hundred million rows do not hit the `f32` limits of a scroll area.
-- Click selection looks for brackets, tags and quotes around the click. If an enclosing
-  JSON scope extends farther, a streaming scan finds the ancestors of the click and
-  keeps their positions for subsequent clicks at the same place.
+- Click selection looks for brackets, tags and quotes around the click. If their boundaries
+  lie farther away, a streaming scan finds them in the original rows and caches them for
+  subsequent clicks at the same place. The same rules apply to standalone documents and to
+  fragments mixed with log text. Clicking `=` in a tag selects the attribute. In ordinary
+  expressions, clicking an operator follows the expression to its end, including multiline
+  bracketed blocks and call chains.
 
 Measured on a 32-thread machine, release build, the generated log of
 `core/examples/bench.rs` (10.1 million rows, 1 GiB):

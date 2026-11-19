@@ -2,14 +2,17 @@
 //! path...), the content of quotes and brackets, an expression around `=`, and how
 //! repeated clicks grow or shrink the selection through the enclosing structures.
 //!
-//! Most selections only need a window around the click. When a JSON bracket extends
-//! beyond that window, a streaming scan finds the enclosing scopes of that click.
+//! Most selections only need a window around the click. Delimited structures can also
+//! be found by scanning the original rows when their boundaries are farther away.
 
-mod json;
+mod delimiters;
+mod expression;
+mod xml;
 
 use crate::selection::{Point, Selection};
 use crate::stage::Stage;
-use crate::text::{byte_to_col, col_to_byte};
+use crate::text::{byte_to_col, char_len, col_to_byte};
+use std::cmp::Reverse;
 use std::sync::OnceLock;
 
 /// Rows taken around the clicked one, and the text they may add up to
@@ -19,6 +22,8 @@ const WINDOW_BYTES: usize = 1 << 20;
 const ROW_BYTES: usize = 2 << 20;
 /// Tokens are looked for this far around the click in a long row
 const TOKEN_REACH: usize = 8192;
+
+type BytePosition = (usize, usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Range {
@@ -68,16 +73,22 @@ impl Pair {
 }
 
 #[derive(Clone)]
-struct Element {
-    start: usize,
-    end: usize,
-    open_tag_end: usize,
-    close_start: usize,
+struct Delimited<P = usize> {
+    start: P,
+    end: P,
+    content_start: P,
+    content_end: P,
 }
 
-impl Element {
+impl<P> Delimited<P> {
+    fn map<Q>(self, mut point: impl FnMut(P) -> Q) -> Delimited<Q> {
+        Delimited { start: point(self.start), end: point(self.end), content_start: point(self.content_start), content_end: point(self.content_end) }
+    }
+}
+
+impl Delimited {
     fn content(&self) -> Range {
-        Range::new(self.open_tag_end, self.close_start)
+        Range::new(self.content_start, self.content_end)
     }
 
     fn full(&self) -> Range {
@@ -153,11 +164,6 @@ fn guid_tokens() -> &'static [(fancy_regex::Regex, usize)] {
     TOKENS.get_or_init(|| vec![(fancy_regex::Regex::new(GUID).unwrap(), 0), (fancy_regex::Regex::new(GUID_LIKE).unwrap(), 2)])
 }
 
-fn xml_tags() -> &'static regex::Regex {
-    static TAGS: OnceLock<regex::Regex> = OnceLock::new();
-    TAGS.get_or_init(|| regex::Regex::new(r"<\?xml\b[^?]*\?>|<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|</?([A-Za-z_][A-Za-z0-9_:.-]*)(?:\s[^<>]*)?/?>").unwrap())
-}
-
 /// A piece of a row as text for the token patterns, with character offsets
 struct Piece {
     text: String,
@@ -226,7 +232,7 @@ struct Window {
     complete: bool,
     brackets: OnceLock<Vec<(Pair, bool)>>,
     angles: OnceLock<Vec<Pair>>,
-    elements: OnceLock<Vec<Element>>,
+    elements: OnceLock<Vec<Delimited>>,
 }
 
 impl Window {
@@ -541,12 +547,22 @@ impl Window {
             let mut stack: Vec<(char, usize)> = Vec::new();
             let mut pairs = Vec::new();
             let mut quote = None;
+            let mut skip_until = 0;
             for (index, &ch) in text.iter().enumerate() {
+                if index < skip_until {
+                    continue;
+                }
                 if let Some(open_quote) = quote {
                     if ch == '\n' || (ch == open_quote && !is_escaped_at(text, index)) {
                         quote = None;
                     }
                     continue;
+                }
+                if ch == '<' {
+                    if let Some(end) = xml::cdata_end(text, index) {
+                        skip_until = end;
+                        continue;
+                    }
                 }
                 if is_quote(ch) {
                     quote = Some(ch);
@@ -589,6 +605,10 @@ impl Window {
                     index += 1;
                     continue;
                 }
+                if let Some(end) = xml::cdata_end(text, index) {
+                    index = end;
+                    continue;
+                }
                 let mut quote = None;
                 let mut end = None;
                 for cursor in index + 1..text.len() {
@@ -628,148 +648,22 @@ impl Window {
     }
 
     /// XML/HTML elements: an opening tag with its closing tag
-    fn xml_elements(&self) -> &[Element] {
+    fn xml_elements(&self) -> &[Delimited] {
         self.elements.get_or_init(|| {
             let text: String = self.text.iter().collect();
             // Character offset of every byte offset a tag can start or end at
             let ascii = text.is_ascii();
             let offsets: Vec<usize> = if ascii { Vec::new() } else { text.char_indices().map(|(index, _)| index).collect() };
-            let to_char = |byte: usize| if ascii { byte } else { offsets.partition_point(|index| *index < byte) };
-            let mut stack: Vec<(String, usize, usize)> = Vec::new();
+            let to_char = |(_, byte)| if ascii { byte } else { offsets.partition_point(|index| *index < byte) };
             let mut elements = Vec::new();
-            for captures in xml_tags().captures_iter(&text) {
-                let whole = captures.get(0).unwrap();
-                let raw = whole.as_str();
-                if raw.starts_with("<?") || raw.starts_with("<!") {
-                    continue;
-                }
-                let (start, end) = (to_char(whole.start()), to_char(whole.end()));
-                let name = captures.get(1).map_or("", |name| name.as_str());
-                if raw.ends_with("/>") && !raw.starts_with("</") {
-                    elements.push(Element { start, end, open_tag_end: end, close_start: end });
-                } else if !raw.starts_with("</") {
-                    stack.push((name.to_string(), start, end));
-                } else if let Some(position) = stack.iter().rposition(|(open, _, _)| open == name) {
-                    let (_, open_start, open_end) = stack.remove(position);
-                    elements.push(Element { start: open_start, end, open_tag_end: open_end, close_start: start });
-                }
-            }
+            xml::scan(std::iter::once(text.as_bytes()), None, |element| elements.push(element.map(to_char)), |_, _| true);
             elements.sort_by(|left, right| left.start.cmp(&right.start).then(right.end.cmp(&left.end)));
             elements
         })
     }
 
-    fn xml_element_at_tag(&self, offset: usize) -> Option<&Element> {
-        self.xml_elements().iter().find(|element| offset == element.start || offset + 1 == element.open_tag_end || offset == element.close_start || offset + 1 == element.end)
-    }
-
-    // --- expressions around = --------------------------------------------------------------------
-
-    fn assignment_operator_at(&self, index: usize, col: usize) -> Option<(usize, usize)> {
-        let line = self.line(index);
-        let operator_char = |position: Option<usize>| position.and_then(|position| line.get(position)).is_some_and(|ch| "=!<>".contains(*ch));
-        for operator in ["===", "!==", "==", "=>", "!=", "<=", ">=", "="] {
-            let operator: Vec<char> = operator.chars().collect();
-            let mut from = 0;
-            while from + operator.len() <= line.len() {
-                let Some(found) = (from..=line.len() - operator.len()).find(|&position| line[position..position + operator.len()] == operator[..]) else { break };
-                let end = found + operator.len();
-                if col >= found && col < end {
-                    if operator_char(found.checked_sub(1)) || operator_char(Some(end)) {
-                        break;
-                    }
-                    return Some((found, end));
-                }
-                from = found + 1;
-            }
-        }
-        None
-    }
-
-    /// Where the expression left of the operator starts, in the row
-    fn assignment_start(&self, line: &[char], operator_start: usize) -> usize {
-        let mut quote = None;
-        let mut depth = 0usize;
-        for index in (0..operator_start).rev() {
-            let ch = line[index];
-            if let Some(open_quote) = quote {
-                if ch == open_quote && !is_escaped_at(line, index) {
-                    quote = None;
-                }
-                continue;
-            }
-            if is_quote(ch) {
-                quote = Some(ch);
-            } else if ")]}>".contains(ch) {
-                depth += 1;
-            } else if "([{<".contains(ch) {
-                if depth == 0 {
-                    return index + 1;
-                }
-                depth -= 1;
-            } else if depth == 0 && (ch == ',' || ch == ';') {
-                return index + 1;
-            }
-        }
-        0
-    }
-
-    /// Where the expression right of the operator ends, in the window
-    fn expression_end(&self, from: usize) -> usize {
-        let text = &self.text;
-        let mut quote = None;
-        let mut depth = 0usize;
-        for index in from..text.len() {
-            let ch = text[index];
-            if let Some(open_quote) = quote {
-                if ch == '\n' || (ch == open_quote && !is_escaped_at(text, index)) {
-                    quote = None;
-                }
-                continue;
-            }
-            if is_quote(ch) {
-                quote = Some(ch);
-            } else if "([{<".contains(ch) {
-                depth += 1;
-            } else if ")]}>".contains(ch) {
-                if depth == 0 {
-                    return index;
-                }
-                depth -= 1;
-            } else if depth == 0 && (ch == ',' || ch == ';') {
-                return index;
-            } else if depth == 0 && ch == '\n' {
-                // A call chain continues on the next row with a dot
-                let next = (index + 1..text.len()).find(|&position| !is_blank(text[position]));
-                if next.and_then(|position| self.at(position)) != Some('.') {
-                    return index;
-                }
-            }
-        }
-        text.len()
-    }
-
-    fn assignment(&self, index: usize, col: usize) -> Option<Range> {
-        let (local_start, local_end) = self.assignment_operator_at(index, col)?;
-        let line_start = self.starts[index];
-        let (operator_start, operator_end) = (line_start + local_start, line_start + local_end);
-        let mut start = line_start + self.assignment_start(self.line(index), local_start);
-        let mut end = self.expression_end(operator_end);
-        while start < end && self.text[start].is_whitespace() {
-            start += 1;
-        }
-        while end > start && self.text[end - 1].is_whitespace() {
-            end -= 1;
-        }
-        // An index or call right before the operator belongs to the left side
-        let mut bracket_end = operator_start;
-        while bracket_end > 0 && self.text[bracket_end - 1].is_whitespace() {
-            bracket_end -= 1;
-        }
-        if let Some((pair, _)) = self.bracket_pairs().iter().find(|(pair, _)| pair.end == bracket_end) {
-            start = start.min(pair.start);
-        }
-        (start < end && start <= operator_start && operator_end <= end).then(|| Range::new(start, end))
+    fn xml_element_at_tag(&self, offset: usize) -> Option<&Delimited> {
+        self.xml_elements().iter().find(|element| offset == element.start || offset + 1 == element.content_start || offset == element.content_end || offset + 1 == element.end)
     }
 
     // --- choosing ---------------------------------------------------------------------------------
@@ -778,11 +672,6 @@ impl Window {
     fn direct_structure(&self, index: usize, col: usize) -> Option<Range> {
         let offset = self.starts[index] + col.min(self.line(index).len());
         let ch = self.at(offset)?;
-        if "=!<>".contains(ch) {
-            if let Some(range) = self.assignment(index, col) {
-                return Some(range);
-            }
-        }
         if is_quote(ch) {
             return self.quote_content(index, col, true);
         }
@@ -790,7 +679,7 @@ impl Window {
             if let Some(pair) = self.angle_at(offset) {
                 return Some(pair.content());
             }
-            return self.xml_element_at_tag(offset).map(Element::content);
+            return self.xml_element_at_tag(offset).map(Delimited::content);
         }
         self.bracket_at(offset).map(|pair| pair.content())
     }
@@ -808,7 +697,7 @@ impl Window {
             if !current.same(&full) {
                 continue;
             }
-            let is_top = |candidate: &Element| !elements.iter().any(|other| other.start < candidate.start && other.end > candidate.end);
+            let is_top = |candidate: &Delimited| !elements.iter().any(|other| other.start < candidate.start && other.end > candidate.end);
             let top: Vec<usize> = (0..elements.len()).filter(|&candidate| is_top(&elements[candidate])).collect();
             if top.len() == 1 && top[0] == position {
                 // With its <?xml ...?> header, when the view starts with one
@@ -880,10 +769,6 @@ impl Window {
         candidates.first().copied()
     }
 
-    fn structural(&self, index: usize, col: usize, prefer_minimal: bool) -> Option<Range> {
-        self.direct_structure(index, col).or_else(|| self.whitespace(index, col)).or_else(|| self.line_token(index, col, prefer_minimal))
-    }
-
     /// A click on the delimiter of the selected content takes the delimiters in
     fn repeated_delimiter(&self, index: usize, col: usize, current: &Range) -> Option<Range> {
         let clicked = self.starts[index] + col.min(self.line(index).len());
@@ -933,19 +818,129 @@ fn is_angle_tag_content(content: &[char]) -> bool {
     if bytes[0] == b'!' && bytes.get(1).is_some_and(u8::is_ascii_alphabetic) {
         return true;
     }
-    if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("?xml") && !bytes.get(4).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') {
+    if bytes.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"?xml")) && !bytes.get(4).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') {
         return true;
     }
     trimmed.len() >= 5 && trimmed.starts_with("!--") && trimmed.ends_with("--")
 }
 
-/// Remembers the distant JSON scopes of the last click that needed a document scan.
+struct DocumentScopes {
+    elements: Vec<Delimited<Point>>,
+}
+
+impl DocumentScopes {
+    fn read(stage: &Stage, point: Point) -> Self {
+        let clicked = (point.row, col_to_byte(stage.line(point.row), point.col));
+        let mut matches = Vec::new();
+
+        let mut tags = Vec::new();
+        let lines = (0..stage.len()).map(|row| stage.line_bytes(row));
+        xml::scan(
+            lines,
+            Some(clicked),
+            |element| {
+                if element.start <= clicked && clicked < element.end {
+                    matches.push(element);
+                }
+            },
+            |start, end| {
+                if start <= clicked && clicked < end {
+                    tags.push(delimiters::single_delimiters(start, end));
+                }
+                true
+            },
+        );
+        tags.extend(matches);
+        let markup = |pair: &&Delimited<BytePosition>| (pair.end, Reverse(pair.start));
+        let mut pairs = Vec::new();
+        if let Some(inner) = tags.iter().min_by_key(markup) {
+            // Brackets in one element's text must not pair with prose in another element.
+            if inner.content_start <= clicked && clicked < inner.content_end && !stage.line_bytes(inner.start.0)[inner.start.1..].starts_with(xml::CDATA) {
+                delimiters::brackets(stage, clicked, Some((inner.content_start, inner.content_end)), |pair| pairs.push(pair));
+            }
+            // Log text or source code can have brackets around an entire markup fragment.
+            let first = (0..stage.len()).find_map(|row| stage.line_bytes(row).iter().find(|byte| !byte.is_ascii_whitespace()));
+            if first != Some(&b'<') {
+                let outer = tags.iter().max_by_key(markup).unwrap();
+                delimiters::brackets(stage, clicked, None, |pair| {
+                    if pair.content_start <= outer.start && outer.end <= pair.content_end {
+                        pairs.push(pair);
+                    }
+                });
+            }
+        } else {
+            delimiters::brackets(stage, clicked, None, |pair| pairs.push(pair));
+        }
+        pairs.extend(delimiters::quoted(stage, clicked));
+        tags.extend(pairs);
+
+        // Multiple boundaries on a long Unicode row share the scan to their columns.
+        let mut positions: Vec<_> = tags.iter().flat_map(|pair| [pair.start, pair.content_start, pair.content_end, pair.end]).collect();
+        positions.sort_unstable();
+        positions.dedup();
+        let (mut row, mut previous, mut col) = (0, 0, 0);
+        let columns: Vec<_> = positions
+            .iter()
+            .map(|&(next_row, byte)| {
+                if row != next_row {
+                    (row, previous, col) = (next_row, 0, 0);
+                }
+                col += char_len(&stage.line_bytes(row)[previous..byte]);
+                previous = byte;
+                col
+            })
+            .collect();
+        let elements = tags.into_iter().map(|pair| pair.map(|position| Point::new(position.0, columns[positions.binary_search(&position).unwrap()]))).collect();
+        Self { elements }
+    }
+
+    fn direct(&self, point: Point) -> Option<&Delimited<Point>> {
+        self.elements
+            .iter()
+            .filter(|pair| point == pair.start || (point.row == pair.end.row && point.col + 1 == pair.end.col))
+            .min_by_key(|pair| selection_size(Selection::new(pair.start, pair.end)))
+    }
+
+    fn growth(&self, point: Point, current: Selection, shrink: bool) -> Option<Selection> {
+        if !shrink {
+            if let Some(pair) = self.direct(point).filter(|pair| current == Selection::new(pair.content_start, pair.content_end)) {
+                return Some(Selection::new(pair.start, pair.end));
+            }
+        }
+        if current.is_empty() || point < current.start || point > current.end {
+            return None;
+        }
+        let ranges = self.elements.iter().flat_map(|pair| [Selection::new(pair.content_start, pair.content_end), Selection::new(pair.start, pair.end)]);
+        let contains = |outer: Selection, inner: Selection| outer.start <= inner.start && outer.end >= inner.end;
+        let candidates = ranges.filter(|range| *range != current && range.start <= point && point < range.end);
+        if shrink {
+            candidates.filter(|&range| contains(current, range)).max_by_key(|&range| selection_size(range))
+        } else {
+            candidates.filter(|&range| contains(range, current)).min_by_key(|&range| selection_size(range))
+        }
+    }
+}
+
+fn selection_size(range: Selection) -> (usize, usize, Reverse<Point>, Point) {
+    let rows = range.end.row - range.start.row;
+    let cols = if rows == 0 { range.end.col - range.start.col } else { 0 };
+    (rows, cols, Reverse(range.start), range.end)
+}
+
+/// Remembers the distant scopes of the last click that needed a document scan.
 #[derive(Default)]
 pub struct ClickSelector {
-    json_scopes: Option<(u64, Point, Vec<Selection>)>,
+    document_scopes: Option<(u64, Point, DocumentScopes)>,
 }
 
 impl ClickSelector {
+    fn scopes(&mut self, stage: &Stage, point: Point) -> &DocumentScopes {
+        if !self.document_scopes.as_ref().is_some_and(|(id, at, _)| *id == stage.id && *at == point) {
+            self.document_scopes = Some((stage.id, point, DocumentScopes::read(stage, point)));
+        }
+        &self.document_scopes.as_ref().unwrap().2
+    }
+
     /// What a click selects. Ctrl+click shrinks and Shift+click chooses a fresh range.
     pub fn click_range(&mut self, stage: &Stage, point: Point, current: Option<&Selection>, shrink: bool, extend: bool) -> Option<(Point, Point)> {
         if stage.is_empty() {
@@ -965,20 +960,47 @@ impl ClickSelector {
                 growth = if shrink { window.shrink(index, col, current) } else { window.expansion(index, col, current) };
             }
         }
-        if growth.is_none() && !window.complete {
-            let in_selection = current.is_some_and(|selection| !selection.is_empty() && selection.start <= point && point <= selection.end);
-            if in_selection || (matches!(window.at(clicked), Some('[' | ']' | '{' | '}')) && window.bracket_at(clicked).is_none()) {
-                if !self.json_scopes.as_ref().is_some_and(|(id, at, _)| *id == stage.id && *at == point) {
-                    self.json_scopes = Some((stage.id, point, json::scopes(stage, point)));
-                }
-                if let Some(selection) = json::selection_at(&self.json_scopes.as_ref().unwrap().2, point, current, shrink) {
-                    return Some((selection.start, selection.end));
-                }
+        if let Some(range) = growth {
+            return Some((window.point_of(range.start), window.point_of(range.end)));
+        }
+        let ch = window.at(clicked);
+        let delimiter = ch.is_some_and(|ch| "()[]{}<>\"'`".contains(ch));
+        if let Some(current) = current.filter(|selection| {
+            !window.complete && (!shrink || local.is_none()) && ((!selection.is_empty() && selection.start <= point && point <= selection.end) || (delimiter && local.is_none()))
+        }) {
+            if let Some(selection) = self.scopes(stage, point).growth(point, current, shrink) {
+                return Some((selection.start, selection.end));
             }
         }
-        let range = growth.or_else(|| window.structural(index, col, shrink))?;
-        let (start, end) = (range.start.min(range.end), range.start.max(range.end));
-        Some((window.point_of(start), window.point_of(end)))
+        if ch == Some('=') {
+            let tag = window.angle_pairs().iter().find(|pair| pair.start < clicked && clicked < pair.end).map(|pair| (window.point_of(pair.start), window.point_of(pair.end)));
+            if let Some(attribute) = xml::attribute_at(stage, point, tag, window.complete) {
+                return Some((attribute.start, attribute.end));
+            }
+        }
+        if ch.is_some_and(|ch| "=!<>".contains(ch)) {
+            if let Some(selection) = expression::at(stage, point) {
+                return Some((selection.start, selection.end));
+            }
+        }
+        if let Some(direct) = window.direct_structure(index, col) {
+            return Some((window.point_of(direct.start), window.point_of(direct.end)));
+        }
+        if !window.complete && delimiter {
+            if ch.is_some_and(is_quote) {
+                let line = stage.line(point.row);
+                if line.len() > ROW_BYTES {
+                    let at = col_to_byte(line, point.col);
+                    if let Some(pair) = delimiters::quoted(stage, (point.row, at)).filter(|pair| pair.start.1 == at || pair.end.1 - 1 == at) {
+                        return Some((Point::new(point.row, byte_to_col(line, pair.content_start.1)), Point::new(point.row, byte_to_col(line, pair.content_end.1))));
+                    }
+                }
+            } else if let Some(pair) = self.scopes(stage, point).direct(point) {
+                return Some((pair.content_start, pair.content_end));
+            }
+        }
+        let range = window.whitespace(index, col).or_else(|| window.line_token(index, col, shrink))?;
+        Some((window.point_of(range.start), window.point_of(range.end)))
     }
 }
 
@@ -1119,6 +1141,71 @@ mod tests {
     }
 
     #[test]
+    fn an_equals_sign_in_a_tag_selects_its_attribute() {
+        let stage = stage_of(&[r#"  <member name="T:Android.Manifest" other='x > y'>"#, "  <option selected value=android>", "  </option>", "  </member>"]);
+        let (attribute, text) = click_with(&stage, 0, "=\"", None, false);
+        assert_eq!(text, r#"name="T:Android.Manifest""#);
+        assert_eq!(click(&stage, 0, "='"), "other='x > y'");
+        assert_eq!(click(&stage, 0, "\"T:"), "T:Android.Manifest");
+        assert_eq!(click_with(&stage, 0, "=\"", attribute.as_ref(), false).1, r#"member name="T:Android.Manifest" other='x > y'"#);
+        assert_eq!(click(&stage, 1, "=android"), "value=android");
+    }
+
+    #[test]
+    fn an_attribute_can_belong_to_a_tag_beyond_the_local_window() {
+        let padding = "  data-flag='value'\n".repeat(WINDOW_ROWS + 10);
+        let text = format!("<entry\n{padding}  xml:lang\n    =\n    'cs'\n{padding}/>");
+        let stage = crate::load::stage_from_text(text, "test.xml", "test.xml");
+        let row = WINDOW_ROWS + 12;
+        assert_eq!(click(&stage, row, "="), "xml:lang\n    =\n    'cs'");
+    }
+
+    #[test]
+    fn large_xml_elements_expand_past_the_local_window() {
+        let siblings = "    <member/>\n".repeat(WINDOW_ROWS + 10);
+        let text = format!("<doc>\n  <members>\n    <member>[</member>\n{siblings}    <member>needle</member>\n{siblings}    <member>]</member>\n<![CDATA[\n</members>\n]]>\n<!--\n</doc>\n-->\n  </members>\n</doc>");
+        let stage = crate::load::stage_from_text(text, "test.xml", "test.xml");
+        let row = WINDOW_ROWS + 13;
+        let point = Point::new(row, 12);
+        let mut current = Selection::new(Point::new(row, 4), Point::new(row, 27));
+        let inner = Selection::new(Point::new(1, 11), Point::new(stage.len() - 2, 2));
+        let members = Selection::new(Point::new(1, 2), Point::new(stage.len() - 2, 12));
+        let root_contents = Selection::new(Point::new(0, 5), Point::new(stage.len() - 1, 0));
+        let root = Selection::new(Point::new(0, 0), Point::new(stage.len() - 1, 6));
+        let mut selector = ClickSelector::default();
+        // A local step may group neighbouring siblings before the enclosing tag is found.
+        for _ in 0..3 {
+            let (start, end) = selector.click_range(&stage, point, Some(&current), false, false).unwrap();
+            current = Selection::new(start, end);
+            if current == inner {
+                break;
+            }
+        }
+        assert_eq!(current, inner);
+        for expected in [members, root_contents, root] {
+            let (start, end) = selector.click_range(&stage, point, Some(&current), false, false).unwrap();
+            current = Selection::new(start, end);
+            assert_eq!(current, expected);
+        }
+        for expected in [root_contents, members, inner] {
+            let (start, end) = selector.click_range(&stage, point, Some(&current), true, false).unwrap();
+            current = Selection::new(start, end);
+            assert_eq!(current, expected);
+        }
+    }
+
+    #[test]
+    fn cdata_is_a_selection_scope_and_quoted_attribute_values_still_work() {
+        let stage = stage_of(&["<root>", "  <member label=\"příliš > krátký\">", "    <![CDATA[", "      needle </root>", "    ]]>", "  </member>", "</root>"]);
+        assert_eq!(click(&stage, 1, "\"příliš"), "příliš > krátký");
+        let (token, text) = click_with(&stage, 3, "needle", None, false);
+        assert_eq!(text, "needle");
+        let (content, text) = click_with(&stage, 3, "needle", token.as_ref(), false);
+        assert_eq!(text, "\n      needle </root>\n    ");
+        assert_eq!(click_with(&stage, 3, "needle", content.as_ref(), false).1, "<![CDATA[\n      needle </root>\n    ]]>");
+    }
+
+    #[test]
     fn a_huge_row_is_only_looked_at_around_the_click() {
         let unit = r#"{"id": 12345, "name": "value"}, "#;
         let line = format!("[{}]", unit.repeat(200_000));
@@ -1168,5 +1255,107 @@ mod tests {
         let point = Point::new(rows + 2, 10);
         let object = Selection::new(Point::new(rows + 2, 4), Point::new(rows + 2, 16));
         assert_eq!(click_range(&stage, point, Some(&object), false, false), Some((Point::new(1, 14), Point::new(rows + 3, 2))));
+    }
+
+    #[test]
+    fn mixed_log_brackets_grow_and_shrink_at_their_real_boundaries() {
+        let rows = WINDOW_ROWS + 10;
+        let padding = "        \"fake \\\" ] } )\",\n".repeat(rows);
+        let text = format!("INFO result({{\n    \"items\": [\n{padding}        needle\n{padding}    ]\n}}) done");
+        let stage = crate::load::stage_from_text(text, "test.log", "test.log");
+        let point = Point::new(rows + 2, 9);
+        let mut selection = Selection::new(Point::new(point.row, 8), Point::new(point.row, 14));
+        let array_end = 2 * rows + 3;
+        let expected = [
+            Selection::new(Point::new(1, 14), Point::new(array_end, 4)),
+            Selection::new(Point::new(1, 13), Point::new(array_end, 5)),
+            Selection::new(Point::new(0, 13), Point::new(array_end + 1, 0)),
+            Selection::new(Point::new(0, 12), Point::new(array_end + 1, 1)),
+            Selection::new(Point::new(0, 11), Point::new(array_end + 1, 2)),
+        ];
+        let mut selector = ClickSelector::default();
+        for range in expected {
+            let (start, end) = selector.click_range(&stage, point, Some(&selection), false, false).unwrap();
+            selection = Selection::new(start, end);
+            assert_eq!(selection, range);
+        }
+        for range in expected[..expected.len() - 1].iter().rev() {
+            let (start, end) = selector.click_range(&stage, point, Some(&selection), true, false).unwrap();
+            selection = Selection::new(start, end);
+            assert_eq!(selection, *range);
+        }
+        let opening = Point::new(0, 11);
+        assert_eq!(selector.click_range(&stage, opening, None, false, false), Some((Point::new(0, 12), Point::new(array_end + 1, 1))));
+    }
+
+    #[test]
+    fn embedded_markup_and_a_long_attribute_list_are_selectable() {
+        let rows = WINDOW_ROWS + 10;
+        let attrs = (0..rows).map(|index| format!("    attr{index}=\"literal > value\"\n")).collect::<String>();
+        let content = "  log text\n".repeat(rows);
+        let text = format!("INFO <root\n{attrs}>\n{content}  needle\n{content}</root> end");
+        let stage = crate::load::stage_from_text(text, "test.log", "test.log");
+        let point = Point::new(0, 5);
+        let mut selector = ClickSelector::default();
+        let contents = Selection::new(Point::new(0, 6), Point::new(rows + 1, 0));
+        assert_eq!(selector.click_range(&stage, point, None, false, false), Some((contents.start, contents.end)));
+        assert_eq!(selector.click_range(&stage, point, Some(&contents), false, false), Some((Point::new(0, 5), Point::new(rows + 1, 1))));
+
+        let point = Point::new(2 * rows + 2, 3);
+        let token = Selection::new(Point::new(point.row, 2), Point::new(point.row, 8));
+        let end_row = stage.len() - 1;
+        let inner = Selection::new(Point::new(rows + 1, 1), Point::new(end_row, 0));
+        assert_eq!(selector.click_range(&stage, point, Some(&token), false, false), Some((inner.start, inner.end)));
+        assert_eq!(selector.click_range(&stage, point, Some(&inner), false, false), Some((Point::new(0, 5), Point::new(end_row, 7))));
+    }
+
+    #[test]
+    fn brackets_can_enclose_a_whole_markup_fragment_in_a_log() {
+        let rows = WINDOW_ROWS + 10;
+        let padding = "  text\n".repeat(rows);
+        let text = format!("INFO box(\n<root>\n{padding}  needle\n{padding}</root>\n) done");
+        let stage = crate::load::stage_from_text(text, "test.log", "test.log");
+        let point = Point::new(rows + 2, 3);
+        let element = Selection::new(Point::new(1, 0), Point::new(stage.len() - 2, 7));
+        let inside = Selection::new(Point::new(0, 9), Point::new(stage.len() - 1, 0));
+        let mut selector = ClickSelector::default();
+        assert_eq!(selector.click_range(&stage, point, Some(&element), false, false), Some((inside.start, inside.end)));
+        assert_eq!(selector.click_range(&stage, point, Some(&inside), false, false), Some((Point::new(0, 8), Point::new(stage.len() - 1, 1))));
+    }
+
+    #[test]
+    fn a_quote_can_be_far_away_on_the_same_row() {
+        let padding = " ".repeat(ROW_BYTES / 2 + 20);
+        for quote in ['"', '\'', '`'] {
+            let text = format!("ž {quote}{padding}\\{quote} needle {padding}{quote} end");
+            let needle = text[..text.find("needle").unwrap()].chars().count();
+            let close = text.chars().count() - " end".len();
+            let stage = crate::load::stage_from_text(text, "test.log", "test.log");
+            let point = Point::new(0, needle + 1);
+            let token = Selection::new(Point::new(0, needle), Point::new(0, needle + 6));
+            let content = Selection::new(Point::new(0, 3), Point::new(0, close - 1));
+            let full = Selection::new(Point::new(0, 2), Point::new(0, close));
+            let mut selector = ClickSelector::default();
+            assert_eq!(selector.click_range(&stage, point, Some(&token), false, false), Some((content.start, content.end)));
+            assert_eq!(selector.click_range(&stage, point, Some(&content), false, false), Some((full.start, full.end)));
+            assert_eq!(selector.click_range(&stage, point, Some(&full), true, false), Some((content.start, content.end)));
+            assert_eq!(selector.click_range(&stage, full.start, None, false, false), Some((content.start, content.end)));
+        }
+    }
+
+    #[test]
+    fn an_operator_uses_expression_boundaries_outside_the_window() {
+        let rows = WINDOW_ROWS + 10;
+        let padding = "    .map(f)\n".repeat(rows);
+        let text = format!("  value = source\n{padding}    .sum(); next");
+        let stage = crate::load::stage_from_text(text, "test.log", "test.log");
+        assert_eq!(click_range(&stage, Point::new(0, 8), None, false, false), Some((Point::new(0, 2), Point::new(rows + 1, 10))));
+
+        let padding = " ".repeat(ROW_BYTES / 2 + 10);
+        let text = format!("  value{padding}=={padding} result; next");
+        let byte = text.find("==").unwrap();
+        let end = text.find(';').unwrap();
+        let stage = crate::load::stage_from_text(text, "test.log", "test.log");
+        assert_eq!(click_range(&stage, Point::new(0, byte + 1), None, false, false), Some((Point::new(0, 2), Point::new(0, end))));
     }
 }
