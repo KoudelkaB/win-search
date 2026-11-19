@@ -172,8 +172,8 @@ it. Checked by eye: no console window, the title, the toolbar symbols, Japanese 
 the system fonts, the UI in the display language of Windows, profiles under
 `%APPDATA%\LogExplorer\config`, paths longer than 260 characters.
 
-- **Ctrl+Esc** (clear the selection) never reaches a program on Windows - it opens the
-  Start menu, in the HTML app too. A click on the line numbers clears the selection.
+- **Esc** or a click on the line numbers clears the selection in the file view.
+  **Enter** or **+** includes the selection, and **-** excludes it.
 - **Not checked by hand:** the system file dialogs (`▤`, Download view), a file copied in
   Explorer itself (the smoke test puts the same file list on the clipboard through
   `arboard`), sharpness on a scaled display, a real GPU.

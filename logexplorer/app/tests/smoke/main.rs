@@ -140,13 +140,9 @@ impl Desktop {
         panic!("the view is not the expected one.\n--- expected ---\n{expected}\n--- copied ---\n{last}\n--- pipeline ---\n{}", read(&self.data().join("working-set.json")));
     }
 
-    /// Ctrl+Esc clears the selection. Windows opens its Start menu on that key and the app
-    /// never sees it; the scenarios hold there without it (find wraps around, and Shift+End
-    /// extends from the start of the selection).
+    /// Esc clears the selection in the file view.
     fn clear_selection(&self) {
-        if cfg!(not(windows)) {
-            self.keys(&["ctrl+Escape"]);
-        }
+        self.keys(&["Escape"]);
     }
 
     /// Closes the window the way a user does and waits for the process to end cleanly

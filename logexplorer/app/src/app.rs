@@ -645,13 +645,13 @@ impl App {
         self.select_operator(next);
     }
 
-    /// Enter and Esc: the selection becomes an include or exclude text of the selected
+    /// Enter, plus and minus: the selection becomes an include or exclude text of the selected
     /// Filter, or of a new Filter after the selected operation
-    pub fn apply_selection_to_filter(&mut self, exclude: bool) -> bool {
+    pub fn apply_selection_to_filter(&mut self, exclude: bool) {
         let stage = self.stage_now();
         let filled = prefill(stage.as_deref(), self.selection.as_ref());
         if filled.selected_text.is_empty() {
-            return false;
+            return;
         }
         let clause = Clause::new(&filled.selected_text);
         if let Some(OpKind::Filter(filter)) = self.work.selected_index().map(|index| &mut self.work.operators[index].kind) {
@@ -661,7 +661,7 @@ impl App {
                 filter.include.push(clause)
             }
             self.changed();
-            return true;
+            return;
         }
         let id = self.work.take_id();
         let mut operator = create_default(id, OpType::Filter, Some(&filled));
@@ -673,7 +673,6 @@ impl App {
         }
         self.insert_after_selected(vec![operator], 0);
         self.changed();
-        true
     }
 
     /// Delete: a Replace that removes the selected text

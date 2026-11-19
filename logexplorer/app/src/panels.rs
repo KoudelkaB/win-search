@@ -252,19 +252,17 @@ fn handle_keys(ctx: &egui::Context, app: &mut App) {
         app.copy_selection();
         return;
     }
-    if pressed(ctx, Modifiers::COMMAND, Key::Escape) {
+    let plain = !ctx.input(|input| input.modifiers.command || input.modifiers.alt);
+    if pressed(ctx, Modifiers::COMMAND, Key::Escape) || (plain && pressed(ctx, Modifiers::NONE, Key::Escape)) {
         app.clear_selection();
         return;
     }
-    let plain = !ctx.input(|input| input.modifiers.command || input.modifiers.alt);
-    if plain && pressed(ctx, Modifiers::NONE, Key::Enter) {
+    if plain && (pressed(ctx, Modifiers::NONE, Key::Enter) || (!app.help_open && pressed(ctx, Modifiers::NONE, Key::Plus))) {
         app.apply_selection_to_filter(false);
         return;
     }
-    if plain && pressed(ctx, Modifiers::NONE, Key::Escape) {
-        if !app.apply_selection_to_filter(true) {
-            app.clear_selection();
-        }
+    if !app.help_open && !ctx.input(|input| input.modifiers.any()) && pressed(ctx, Modifiers::NONE, Key::Minus) {
+        app.apply_selection_to_filter(true);
         return;
     }
     if plain && !ctx.input(|input| input.modifiers.shift) && pressed(ctx, Modifiers::NONE, Key::Delete) {
@@ -382,7 +380,7 @@ impl ActionIcon {
 fn toolbar(ui: &mut egui::Ui, app: &mut App) {
     ui.horizontal(|ui| {
         for (label, tip, op_type) in [
-            ("⊕ Filter", "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)", OpType::Filter),
+            ("⊕ Filter", "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)", OpType::Filter),
             ("⇄ Replace", "Replace or delete the selected text (R; Delete deletes)", OpType::Replace),
             ("⇅ Sort", "Sort rows by a value (S)", OpType::Sort),
             ("≠ Diff", "Show how a value changes from row to row (D)", OpType::Diff),
@@ -1137,13 +1135,13 @@ fn help_shortcuts(ui: &mut egui::Ui, app: &App) {
         ("<kbd>Ctrl+W</kbd>", CLOSE_FILE_VIEW),
         ("<kbd>F3</kbd> / <kbd>Shift+F3</kbd>", "help.keys.next"),
         ("<kbd>Ctrl+F3</kbd> / <kbd>Ctrl+Shift+F3</kbd>", "help.keys.findSelection"),
-        ("<kbd>Enter</kbd>", "help.keys.enter"),
-        ("<kbd>Esc</kbd>", "help.keys.esc"),
+        ("<kbd>Enter</kbd> / <kbd>+</kbd>", "help.keys.enter"),
+        ("<kbd>-</kbd>", "help.keys.exclude"),
+        ("<kbd>Esc</kbd>", "help.keys.clear"),
         ("<kbd>Delete</kbd>", "help.keys.delete"),
         ("<kbd>F</kbd> <kbd>R</kbd> <kbd>S</kbd> <kbd>D</kbd>", "help.keys.add"),
         ("<kbd>Ctrl+A</kbd>", "help.keys.all"),
         ("<kbd>Ctrl+C</kbd>", "help.keys.copy"),
-        ("<kbd>Ctrl+Esc</kbd>", "help.keys.clear"),
         ("<kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd>\n<kbd>Page Up</kbd> <kbd>Page Down</kbd>\n<kbd>Home</kbd> <kbd>End</kbd>", "help.keys.move"),
         ("help.keys.wheelKey", "help.keys.wheel"),
         ("help.keys.middleKey", "help.keys.middle"),

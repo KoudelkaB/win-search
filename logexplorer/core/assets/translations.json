@@ -26,7 +26,6 @@
   "help.keys.next": "Next / previous match",
   "help.keys.findSelection": "Find the selected text forward / backward",
   "help.keys.enter": "Add the selection to the current Filter, or insert a new include Filter after the selected stage",
-  "help.keys.esc": "Add the selection as an exclude clause the same way, or clear the selection",
   "help.keys.delete": "Add a Replace that deletes the selected text",
   "help.keys.add": "Add a Filter, Replace, Sort, or Diff operation",
   "help.keys.all": "Select the whole stage",
@@ -36,7 +35,8 @@
   "help.keys.wheelKey": "<kbd>Ctrl</kbd> + wheel",
   "help.keys.wheel": "Scroll horizontally",
   "help.keys.middleKey": "Middle click",
-  "help.keys.middle": "Previous stage at the same row; with <kbd>Ctrl</kbd> the next one"
+  "help.keys.middle": "Previous stage at the same row; with <kbd>Ctrl</kbd> the next one",
+  "help.keys.exclude": "Add the selection as an exclude clause the same way"
  },
  "cs": {
   "Help sections": "Oddíly nápovědy",
@@ -73,7 +73,6 @@
   "help.keys.next": "Další / předchozí shoda",
   "help.keys.findSelection": "Najít vybraný text vpřed / zpět",
   "help.keys.enter": "Přidat výběr do aktuálního Filtru nebo vložit nový zahrnující Filtr za vybranou fázi",
-  "help.keys.esc": "Stejně přidat výběr jako vylučující podmínku nebo zrušit výběr",
   "help.keys.delete": "Přidat Nahradit, které vybraný text odstraní",
   "help.keys.add": "Přidat operaci Filtr, Nahradit, Seřadit nebo Rozdíl",
   "help.keys.all": "Vybrat celou fázi",
@@ -250,7 +249,6 @@
   "≡ Merge sources": "≡ Sloučit zdroje",
   "Save all profiles to a JSON file": "Uložit všechny profily do souboru JSON",
   "Import profiles from a JSON file": "Importovat profily ze souboru JSON",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Ponechat nebo skrýt řádky s vybraným textem (F; Enter ponechá, Esc skryje)",
   "Replace or delete the selected text (R; Delete deletes)": "Nahradit nebo odstranit vybraný text (R; Delete odstraní)",
   "Sort rows by a value (S)": "Seřadit řádky podle hodnoty (S)",
   "Show how a value changes from row to row (D)": "Zobrazit, jak se hodnota mění od řádku k řádku (D)",
@@ -338,7 +336,9 @@
   "Combine files": "Spojit soubory",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Zřetězit zobrazí soubory za sebou, Proložit je střídá po řádcích.",
   "Last": "Poslední",
-  "Close file view": "Zavřít zobrazení souborů"
+  "Close file view": "Zavřít zobrazení souborů",
+  "help.keys.exclude": "Stejně přidat výběr jako vylučující podmínku",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Ponechat nebo skrýt řádky s vybraným textem (F; Enter/+ ponechá, - skryje)"
  },
  "de": {
   "Help sections": "Hilfeabschnitte",
@@ -375,7 +375,6 @@
   "help.keys.next": "Nächster / vorheriger Treffer",
   "help.keys.findSelection": "Ausgewählten Text vorwärts / rückwärts suchen",
   "help.keys.enter": "Auswahl dem aktuellen Filter hinzufügen oder nach der ausgewählten Stufe einen neuen Einschluss-Filter einfügen",
-  "help.keys.esc": "Auswahl auf dieselbe Weise als Ausschlussklausel hinzufügen oder die Auswahl aufheben",
   "help.keys.delete": "Ein Ersetzen hinzufügen, das den ausgewählten Text löscht",
   "help.keys.add": "Eine Operation Filter, Ersetzen, Sortieren oder Differenz hinzufügen",
   "help.keys.all": "Die ganze Stufe auswählen",
@@ -548,7 +547,6 @@
   "≡ Merge sources": "≡ Quellen zusammenführen",
   "Save all profiles to a JSON file": "Alle Profile in einer JSON-Datei speichern",
   "Import profiles from a JSON file": "Profile aus einer JSON-Datei importieren",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Zeilen mit dem ausgewählten Text behalten oder ausblenden (F; Enter behält, Esc blendet aus)",
   "Replace or delete the selected text (R; Delete deletes)": "Ausgewählten Text ersetzen oder löschen (R; Delete löscht)",
   "Sort rows by a value (S)": "Zeilen nach einem Wert sortieren (S)",
   "Show how a value changes from row to row (D)": "Zeigen, wie sich ein Wert von Zeile zu Zeile ändert (D)",
@@ -635,7 +633,9 @@
   "Combine files": "Dateien kombinieren",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Verketten zeigt die Dateien nacheinander, Verzahnen verschränkt sie Zeile für Zeile.",
   "Last": "Zuletzt",
-  "Close file view": "Dateiansicht schließen"
+  "Close file view": "Dateiansicht schließen",
+  "help.keys.exclude": "Auswahl auf dieselbe Weise als Ausschlussklausel hinzufügen",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Zeilen mit dem ausgewählten Text behalten oder ausblenden (F; Enter/+ behält, - blendet aus)"
  },
  "es": {
   "Help sections": "Secciones de la ayuda",
@@ -672,7 +672,6 @@
   "help.keys.next": "Coincidencia siguiente / anterior",
   "help.keys.findSelection": "Buscar el texto seleccionado hacia delante / hacia atrás",
   "help.keys.enter": "Agregar la selección al Filtro actual o insertar un nuevo Filtro de inclusión después de la etapa seleccionada",
-  "help.keys.esc": "Agregar la selección como cláusula de exclusión del mismo modo o borrar la selección",
   "help.keys.delete": "Agregar un Reemplazo que elimina el texto seleccionado",
   "help.keys.add": "Agregar una operación de Filtro, Reemplazo, Ordenación o Diferencia",
   "help.keys.all": "Seleccionar toda la etapa",
@@ -849,7 +848,6 @@
   "≡ Merge sources": "≡ Unificar orígenes",
   "Save all profiles to a JSON file": "Guardar todos los perfiles en un archivo JSON",
   "Import profiles from a JSON file": "Importar perfiles desde un archivo JSON",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Conservar u ocultar líneas con el texto seleccionado (F; Enter conserva, Esc oculta)",
   "Replace or delete the selected text (R; Delete deletes)": "Reemplazar o eliminar el texto seleccionado (R; Delete elimina)",
   "Sort rows by a value (S)": "Ordenar filas por un valor (S)",
   "Show how a value changes from row to row (D)": "Mostrar cómo cambia un valor de una fila a otra (D)",
@@ -937,7 +935,9 @@
   "Combine files": "Combinar archivos",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar muestra los archivos uno tras otro; Intercalar los entrelaza fila por fila.",
   "Last": "Último",
-  "Close file view": "Cerrar la vista de archivos"
+  "Close file view": "Cerrar la vista de archivos",
+  "help.keys.exclude": "Agregar la selección como cláusula de exclusión del mismo modo",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Conservar u ocultar líneas con el texto seleccionado (F; Enter/+ conserva, - oculta)"
  },
  "fr": {
   "Help sections": "Sections de l'aide",
@@ -974,7 +974,6 @@
   "help.keys.next": "Occurrence suivante / précédente",
   "help.keys.findSelection": "Rechercher le texte sélectionné vers l'avant / l'arrière",
   "help.keys.enter": "Ajouter la sélection au Filtre actuel, ou insérer un nouveau Filtre d'inclusion après l'étape sélectionnée",
-  "help.keys.esc": "Ajouter la sélection comme clause d'exclusion de la même manière, ou effacer la sélection",
   "help.keys.delete": "Ajouter un Remplacement qui supprime le texte sélectionné",
   "help.keys.add": "Ajouter une opération Filtre, Remplacement, Tri ou Différence",
   "help.keys.all": "Sélectionner toute l'étape",
@@ -1148,7 +1147,6 @@
   "≡ Merge sources": "≡ Fusionner les sources",
   "Save all profiles to a JSON file": "Enregistrer tous les profils dans un fichier JSON",
   "Import profiles from a JSON file": "Importer des profils depuis un fichier JSON",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Conserver ou masquer les lignes contenant le texte sélectionné (F ; Enter conserve, Esc masque)",
   "Replace or delete the selected text (R; Delete deletes)": "Remplacer ou supprimer le texte sélectionné (R ; Delete supprime)",
   "Sort rows by a value (S)": "Trier les lignes selon une valeur (S)",
   "Show how a value changes from row to row (D)": "Montrer comment une valeur évolue d'une ligne à l'autre (D)",
@@ -1237,7 +1235,9 @@
   "Combine files": "Combiner les fichiers",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concaténer affiche les fichiers les uns après les autres, Entrelacer les alterne ligne par ligne.",
   "Last": "Dernier",
-  "Close file view": "Fermer la vue des fichiers"
+  "Close file view": "Fermer la vue des fichiers",
+  "help.keys.exclude": "Ajouter la sélection comme clause d’exclusion de la même manière",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Conserver ou masquer les lignes contenant le texte sélectionné (F ; Enter/+ conserve, - masque)"
  },
  "it": {
   "Help sections": "Sezioni della guida",
@@ -1274,7 +1274,6 @@
   "help.keys.next": "Corrispondenza successiva / precedente",
   "help.keys.findSelection": "Trova il testo selezionato in avanti / all'indietro",
   "help.keys.enter": "Aggiungi la selezione al Filtro corrente o inserisci un nuovo Filtro di inclusione dopo la fase selezionata",
-  "help.keys.esc": "Aggiungi la selezione come clausola di esclusione allo stesso modo o cancella la selezione",
   "help.keys.delete": "Aggiungi una Sostituzione che elimina il testo selezionato",
   "help.keys.add": "Aggiungi un'operazione di Filtro, Sostituzione, Ordinamento o Differenza",
   "help.keys.all": "Seleziona l'intera fase",
@@ -1451,7 +1450,6 @@
   "≡ Merge sources": "≡ Unifica origini",
   "Save all profiles to a JSON file": "Salva tutti i profili in un file JSON",
   "Import profiles from a JSON file": "Importa profili da un file JSON",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Mantieni o nascondi le righe con il testo selezionato (F; Enter mantiene, Esc nasconde)",
   "Replace or delete the selected text (R; Delete deletes)": "Sostituisci o elimina il testo selezionato (R; Delete elimina)",
   "Sort rows by a value (S)": "Ordina le righe per valore (S)",
   "Show how a value changes from row to row (D)": "Mostra come cambia un valore da una riga all'altra (D)",
@@ -1540,7 +1538,9 @@
   "Combine files": "Combina file",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatena mostra i file uno dopo l'altro, Interfoglia li alterna riga per riga.",
   "Last": "Ultimo",
-  "Close file view": "Chiudi la vista dei file"
+  "Close file view": "Chiudi la vista dei file",
+  "help.keys.exclude": "Aggiungi la selezione come clausola di esclusione allo stesso modo",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Mantieni o nascondi le righe con il testo selezionato (F; Enter/+ mantiene, - nasconde)"
  },
  "ja": {
   "Help sections": "ヘルプの項目",
@@ -1577,7 +1577,6 @@
   "help.keys.next": "次 / 前の一致",
   "help.keys.findSelection": "選択したテキストを前方 / 後方に検索",
   "help.keys.enter": "選択範囲を現在のフィルターに追加するか、選択したステージの後に新しい含めるフィルターを挿入",
-  "help.keys.esc": "同様に選択範囲を除外条件として追加するか、選択を解除",
   "help.keys.delete": "選択したテキストを削除する置換を追加",
   "help.keys.add": "フィルター、置換、並べ替え、または差分の操作を追加",
   "help.keys.all": "ステージ全体を選択",
@@ -1754,7 +1753,6 @@
   "≡ Merge sources": "≡ ソースを統合",
   "Save all profiles to a JSON file": "すべてのプロファイルを JSON ファイルに保存",
   "Import profiles from a JSON file": "JSON ファイルからプロファイルをインポート",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "選択したテキストを含む行を残すか非表示にする (F、Enter で残す、Esc で非表示)",
   "Replace or delete the selected text (R; Delete deletes)": "選択したテキストを置換または削除 (R、Delete で削除)",
   "Sort rows by a value (S)": "値で行を並べ替え (S)",
   "Show how a value changes from row to row (D)": "行ごとの値の変化を表示 (D)",
@@ -1844,7 +1842,9 @@
   "Combine files": "ファイルを組み合わせる",
   "Concat shows the files one after another, Zip interleaves them row by row.": "順に開くはファイルを順番に表示し、交互は 1 行ずつ交互に並べます。",
   "Last": "前回",
-  "Close file view": "ファイルビューを閉じる"
+  "Close file view": "ファイルビューを閉じる",
+  "help.keys.exclude": "同様に選択範囲を除外条件として追加",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "選択したテキストを含む行を残すか非表示にする (F、Enter/+ で残す、- で非表示)"
  },
  "ko": {
   "Help sections": "도움말 섹션",
@@ -1881,7 +1881,6 @@
   "help.keys.next": "다음 / 이전 일치 항목",
   "help.keys.findSelection": "선택한 텍스트를 앞으로 / 뒤로 찾기",
   "help.keys.enter": "선택 영역을 현재 필터에 추가하거나, 선택한 단계 뒤에 새 포함 필터 삽입",
-  "help.keys.esc": "같은 방식으로 선택 영역을 제외 조건으로 추가하거나, 선택 해제",
   "help.keys.delete": "선택한 텍스트를 삭제하는 바꾸기 추가",
   "help.keys.add": "필터, 바꾸기, 정렬 또는 차이 작업 추가",
   "help.keys.all": "단계 전체 선택",
@@ -2058,7 +2057,6 @@
   "≡ Merge sources": "≡ 소스 병합",
   "Save all profiles to a JSON file": "모든 프로필을 JSON 파일로 저장",
   "Import profiles from a JSON file": "JSON 파일에서 프로필 가져오기",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "선택한 텍스트가 있는 줄을 유지하거나 숨기기 (F, Enter 유지, Esc 숨기기)",
   "Replace or delete the selected text (R; Delete deletes)": "선택한 텍스트 바꾸기 또는 삭제 (R, Delete 삭제)",
   "Sort rows by a value (S)": "값으로 행 정렬 (S)",
   "Show how a value changes from row to row (D)": "행마다 값이 어떻게 변하는지 표시 (D)",
@@ -2148,7 +2146,9 @@
   "Combine files": "파일 합치기",
   "Concat shows the files one after another, Zip interleaves them row by row.": "차례로 열기는 파일을 차례로 표시하고, 교차는 행 단위로 번갈아 배치합니다.",
   "Last": "마지막",
-  "Close file view": "파일 보기 닫기"
+  "Close file view": "파일 보기 닫기",
+  "help.keys.exclude": "같은 방식으로 선택 영역을 제외 조건으로 추가",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "선택한 텍스트가 있는 줄을 유지하거나 숨기기 (F, Enter/+ 유지, - 숨기기)"
  },
  "pl": {
   "Help sections": "Sekcje pomocy",
@@ -2185,7 +2185,6 @@
   "help.keys.next": "Następne / poprzednie dopasowanie",
   "help.keys.findSelection": "Znajdź zaznaczony tekst do przodu / wstecz",
   "help.keys.enter": "Dodaj zaznaczenie do bieżącego Filtru lub wstaw nowy Filtr uwzględniający po zaznaczonym etapie",
-  "help.keys.esc": "W ten sam sposób dodaj zaznaczenie jako warunek wykluczania lub wyczyść zaznaczenie",
   "help.keys.delete": "Dodaj etap Zamień usuwający zaznaczony tekst",
   "help.keys.add": "Dodaj operację Filtr, Zamień, Sortuj lub Różnica",
   "help.keys.all": "Zaznacz cały etap",
@@ -2362,7 +2361,6 @@
   "≡ Merge sources": "≡ Scal źródła",
   "Save all profiles to a JSON file": "Zapisz wszystkie profile w pliku JSON",
   "Import profiles from a JSON file": "Importuj profile z pliku JSON",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Zachowaj lub ukryj wiersze z zaznaczonym tekstem (F; Enter zachowuje, Esc ukrywa)",
   "Replace or delete the selected text (R; Delete deletes)": "Zamień lub usuń zaznaczony tekst (R; Delete usuwa)",
   "Sort rows by a value (S)": "Sortuj wiersze według wartości (S)",
   "Show how a value changes from row to row (D)": "Pokaż, jak wartość zmienia się z wiersza na wiersz (D)",
@@ -2451,7 +2449,9 @@
   "Combine files": "Połącz pliki",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Sklej pokazuje pliki jeden po drugim, Przeplataj łączy je naprzemiennie wiersz po wierszu.",
   "Last": "Ostatni",
-  "Close file view": "Zamknij widok plików"
+  "Close file view": "Zamknij widok plików",
+  "help.keys.exclude": "W ten sam sposób dodaj zaznaczenie jako warunek wykluczania",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Zachowaj lub ukryj wiersze z zaznaczonym tekstem (F; Enter/+ zachowuje, - ukrywa)"
  },
  "pt-BR": {
   "Help sections": "Seções da ajuda",
@@ -2488,7 +2488,6 @@
   "help.keys.next": "Próxima / anterior ocorrência",
   "help.keys.findSelection": "Localizar o texto selecionado para frente / para trás",
   "help.keys.enter": "Adicionar a seleção ao Filtro atual ou inserir um novo Filtro de inclusão após o estágio selecionado",
-  "help.keys.esc": "Adicionar a seleção como cláusula de exclusão da mesma forma ou limpar a seleção",
   "help.keys.delete": "Adicionar um Substituir que exclui o texto selecionado",
   "help.keys.add": "Adicionar uma operação Filtro, Substituir, Ordenar ou Diferença",
   "help.keys.all": "Selecionar o estágio inteiro",
@@ -2664,7 +2663,6 @@
   "≡ Merge sources": "≡ Mesclar fontes",
   "Save all profiles to a JSON file": "Salvar todos os perfis em um arquivo JSON",
   "Import profiles from a JSON file": "Importar perfis de um arquivo JSON",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "Manter ou ocultar linhas com o texto selecionado (F; Enter mantém, Esc oculta)",
   "Replace or delete the selected text (R; Delete deletes)": "Substituir ou excluir o texto selecionado (R; Delete exclui)",
   "Sort rows by a value (S)": "Ordenar linhas por um valor (S)",
   "Show how a value changes from row to row (D)": "Mostrar como um valor muda de linha para linha (D)",
@@ -2752,7 +2750,9 @@
   "Combine files": "Combinar arquivos",
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar mostra os arquivos um após o outro, Intercalar os alterna linha por linha.",
   "Last": "Último",
-  "Close file view": "Fechar a visualização de arquivos"
+  "Close file view": "Fechar a visualização de arquivos",
+  "help.keys.exclude": "Adicionar a seleção como cláusula de exclusão da mesma forma",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Manter ou ocultar linhas com o texto selecionado (F; Enter/+ mantém, - oculta)"
  },
  "zh-Hans": {
   "Help sections": "帮助章节",
@@ -2789,7 +2789,6 @@
   "help.keys.next": "下一个 / 上一个匹配项",
   "help.keys.findSelection": "向前 / 向后查找所选文本",
   "help.keys.enter": "将所选内容添加到当前筛选，或在所选阶段之后插入新的包含筛选",
-  "help.keys.esc": "以相同方式将所选内容添加为排除子句，或清除选择",
   "help.keys.delete": "添加删除所选文本的替换",
   "help.keys.add": "添加筛选、替换、排序或差异操作",
   "help.keys.all": "选择整个阶段",
@@ -2966,7 +2965,6 @@
   "≡ Merge sources": "≡ 合并源",
   "Save all profiles to a JSON file": "将所有配置文件保存到 JSON 文件",
   "Import profiles from a JSON file": "从 JSON 文件导入配置文件",
-  "Keep or hide lines with the selected text (F; Enter keeps, Esc hides)": "保留或隐藏包含所选文本的行 (F；Enter 保留，Esc 隐藏)",
   "Replace or delete the selected text (R; Delete deletes)": "替换或删除所选文本 (R；Delete 删除)",
   "Sort rows by a value (S)": "按值对行排序 (S)",
   "Show how a value changes from row to row (D)": "显示值在各行之间的变化 (D)",
@@ -3056,6 +3054,8 @@
   "Combine files": "组合文件",
   "Concat shows the files one after another, Zip interleaves them row by row.": "串联将文件依次显示，交错则逐行交替合并。",
   "Last": "上次",
-  "Close file view": "关闭文件视图"
+  "Close file view": "关闭文件视图",
+  "help.keys.exclude": "以相同方式将所选内容添加为排除子句",
+  "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "保留或隐藏包含所选文本的行 (F；Enter/+ 保留，- 隐藏)"
  }
 }

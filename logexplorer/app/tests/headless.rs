@@ -76,7 +76,7 @@ fn closing_the_view_unloads_every_file_and_keeps_the_pipeline() {
 }
 
 #[test]
-fn a_click_selects_a_value_and_enter_keeps_the_rows_with_it() {
+fn enter_and_minus_update_the_filter_and_escape_clears_selection() {
     let (mut harness, _files) = with_sample();
     let pos = text_at(&harness, 0, "START");
     click(&mut harness, pos);
@@ -87,13 +87,53 @@ fn a_click_selects_a_value_and_enter_keeps_the_rows_with_it() {
     assert!(rows(&harness).iter().all(|row| row.contains("START")));
     harness.get_by_label("Showing: after #1 Filter");
 
-    // Esc with a selection hides the rows with it: the selected Filter gets an exclude clause
     let pos = text_at(&harness, 2, "health");
     click(&mut harness, pos);
     assert_eq!(selected(&harness), "health");
     key(&mut harness, Key::Escape);
+    assert!(harness.state().selection.is_none());
+    assert_eq!(rows(&harness).len(), 3);
+
+    click(&mut harness, pos);
+    key_with(&mut harness, egui::Modifiers::SHIFT, Key::Minus);
+    assert_eq!(rows(&harness).len(), 3);
+    key(&mut harness, Key::Minus);
     assert_eq!(rows(&harness), [SAMPLE.lines().next().unwrap(), SAMPLE.lines().nth(2).unwrap()]);
     assert_eq!(harness.state().work.operators.len(), 1);
+}
+
+#[test]
+fn plus_and_minus_type_in_find_and_filter_in_the_view() {
+    let (mut harness, _files) = with_sample();
+    key(&mut harness, Key::Minus);
+    assert!(harness.state().work.operators.is_empty());
+
+    let pos = text_at(&harness, 0, "START");
+    click(&mut harness, pos);
+    key_with(&mut harness, egui::Modifiers::COMMAND, Key::F);
+    harness.key_press(Key::Minus);
+    harness.event(egui::Event::Text("-".into()));
+    harness.run();
+    assert_eq!(harness.state().find.query, "-");
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, Key::Plus);
+    harness.event(egui::Event::Text("+".into()));
+    harness.run();
+    assert_eq!(harness.state().find.query, "-+");
+    assert!(harness.state().work.operators.is_empty());
+
+    key(&mut harness, Key::Escape);
+    assert!(!harness.state().find.open);
+    key(&mut harness, Key::Minus);
+    assert_eq!(harness.state().work.operators.len(), 1);
+    assert_eq!(rows(&harness), SAMPLE.lines().filter(|row| !row.contains("START")).collect::<Vec<_>>());
+
+    let pos = text_at(&harness, 0, "GET");
+    click(&mut harness, pos);
+    key(&mut harness, Key::Equals);
+    assert_eq!(rows(&harness).len(), 2);
+    key_with(&mut harness, egui::Modifiers::SHIFT, Key::Plus);
+    assert_eq!(harness.state().work.operators.len(), 1);
+    assert_eq!(rows(&harness), [SAMPLE.lines().nth(1).unwrap()]);
 }
 
 #[test]

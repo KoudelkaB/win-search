@@ -100,6 +100,11 @@ fn is_quote(ch: char) -> bool {
     ch == '"' || ch == '\'' || ch == '`'
 }
 
+/// Quotes can surround a whole inline tag or sit inside a tag, but cannot cross its boundary.
+fn crosses_tag_boundary<P: Ord>(quote_start: P, quote_end: P, tag_start: P, tag_end: P) -> bool {
+    (quote_start < tag_start && tag_start < quote_end && quote_end < tag_end) || (tag_start < quote_start && quote_start < tag_end && tag_end < quote_end)
+}
+
 fn is_blank(ch: char) -> bool {
     ch == ' ' || ch == '\t'
 }
@@ -391,7 +396,7 @@ impl Window {
                 }
             } else if !direct_only {
                 if let (Some(left), Some(right)) = (left, right) {
-                    if point_col > left && point_col < right {
+                    if point_col > left && point_col < right && !self.angle_pairs().iter().any(|tag| crosses_tag_boundary(start + left, start + right + 1, tag.start, tag.end)) {
                         return Some(content(left, right));
                     }
                 }
@@ -831,19 +836,24 @@ struct DocumentScopes {
 impl DocumentScopes {
     fn read(stage: &Stage, point: Point) -> Self {
         let clicked = (point.row, col_to_byte(stage.line(point.row), point.col));
+        let mut quoted = delimiters::quoted(stage, clicked);
+        let through = quoted.as_ref().map_or(clicked, |quote| quote.end);
         let mut matches = Vec::new();
 
         let mut tags = Vec::new();
         let lines = (0..stage.len()).map(|row| stage.line_bytes(row));
         xml::scan(
             lines,
-            Some(clicked),
+            Some(through),
             |element| {
                 if element.start <= clicked && clicked < element.end {
                     matches.push(element);
                 }
             },
             |start, end| {
+                if quoted.as_ref().is_some_and(|quote| crosses_tag_boundary(quote.start, quote.end, start, end)) {
+                    quoted = None;
+                }
                 if start <= clicked && clicked < end {
                     tags.push(delimiters::single_delimiters(start, end));
                 }
@@ -871,7 +881,7 @@ impl DocumentScopes {
         } else {
             delimiters::brackets(stage, clicked, None, |pair| pairs.push(pair));
         }
-        pairs.extend(delimiters::quoted(stage, clicked));
+        pairs.extend(quoted);
         tags.extend(pairs);
 
         // Multiple boundaries on a long Unicode row share the scan to their columns.
@@ -1138,6 +1148,37 @@ mod tests {
         let (inner, text) = click_with(&stage, 1, "one", element.as_ref(), false);
         assert_eq!(text, "\n  <item id=\"1\">one</item>\n  <item id=\"2\">two</item>\n");
         assert_eq!(click_with(&stage, 1, "one", inner.as_ref(), false).1, "<root>\n  <item id=\"1\">one</item>\n  <item id=\"2\">two</item>\n</root>");
+    }
+
+    #[test]
+    fn quotes_from_different_tags_do_not_enclose_xml_text() {
+        let open = r#"<para tool="javadoc-to-mdoc">"#;
+        let body = r#"This property controls which <c>jclass</c> is provided to methods like <see cref="M:Example" />."#;
+        let row = format!("  {open}{body}</para>");
+        let stage = stage_of(&["<remarks>", &row, "</remarks>"]);
+        let (word, text) = click_with(&stage, 1, "provided", None, false);
+        assert_eq!(text, "provided");
+        let (content, text) = click_with(&stage, 1, "provided", word.as_ref(), false);
+        assert_eq!(text, body);
+        assert_eq!(click_with(&stage, 1, "provided", content.as_ref(), true).1, "provided");
+        assert_eq!(click_with(&stage, 1, "provided", content.as_ref(), false).1, format!("{open}{body}</para>"));
+        assert_eq!(click(&stage, 1, "\"javadoc"), "javadoc-to-mdoc");
+
+        let quoted = stage_of(&[r#"<para tool="example">Say "provided by <c>jclass</c>" here.</para>"#]);
+        let (word, _) = click_with(&quoted, 0, "provided", None, false);
+        assert_eq!(click_with(&quoted, 0, "provided", word.as_ref(), false).1, "provided by <c>jclass</c>");
+    }
+
+    #[test]
+    fn distant_quotes_from_different_tags_do_not_enclose_xml_text() {
+        let open = r#"<para tool="example">"#;
+        let padding = " ".repeat(ROW_BYTES / 2 + 20);
+        let body = format!(r#"{padding}provided{padding}<see cref="M:Example" />."#);
+        let content = Selection::new(Point::new(0, open.len()), Point::new(0, open.len() + body.len()));
+        let point = Point::new(0, open.len() + padding.len());
+        let word = Selection::new(point, Point::new(0, point.col + "provided".len()));
+        let stage = stage_of(&[&format!("{open}{body}</para>")]);
+        assert_eq!(click_range(&stage, point, Some(&word), false, false), Some((content.start, content.end)));
     }
 
     #[test]

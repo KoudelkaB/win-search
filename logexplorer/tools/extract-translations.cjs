@@ -56,6 +56,21 @@ const closeView = {
     'pt-BR': 'Fechar a visualização de arquivos',
     'zh-Hans': '关闭文件视图',
 };
+const excludeSelection = {
+    en: 'Add the selection as an exclude clause the same way',
+    cs: 'Stejně přidat výběr jako vylučující podmínku',
+    de: 'Auswahl auf dieselbe Weise als Ausschlussklausel hinzufügen',
+    es: 'Agregar la selección como cláusula de exclusión del mismo modo',
+    fr: 'Ajouter la sélection comme clause d’exclusion de la même manière',
+    it: 'Aggiungi la selezione come clausola di esclusione allo stesso modo',
+    ja: '同様に選択範囲を除外条件として追加',
+    ko: '같은 방식으로 선택 영역을 제외 조건으로 추가',
+    pl: 'W ten sam sposób dodaj zaznaczenie jako warunek wykluczania',
+    'pt-BR': 'Adicionar a seleção como cláusula de exclusão da mesma forma',
+    'zh-Hans': '以相同方式将所选内容添加为排除子句',
+};
+const htmlFilterTooltip = 'Keep or hide lines with the selected text (F; Enter keeps, Esc hides)';
+const nativeFilterTooltip = (text) => text.replace('Enter', 'Enter/+').replace('Esc', '-');
 for (const [language, entries] of Object.entries(ordered)) {
     entries['help.load.1'] = entries['help.load.1']
         .replace(/([.。])\s*[^.。]+[.。]$/u, '$1')
@@ -63,6 +78,10 @@ for (const [language, entries] of Object.entries(ordered)) {
     entries['help.profiles.2'] = profileHelp[language];
     delete entries['A JSON profile bundle is imported instead.'];
     if (closeView[language]) entries['Close file view'] = closeView[language];
+    delete entries['help.keys.esc'];
+    entries['help.keys.exclude'] = excludeSelection[language];
+    if (entries[htmlFilterTooltip]) entries[nativeFilterTooltip(htmlFilterTooltip)] = nativeFilterTooltip(entries[htmlFilterTooltip]);
+    delete entries[htmlFilterTooltip];
 }
 
 const target = path.join(__dirname, '..', 'core', 'assets', 'translations.json');
