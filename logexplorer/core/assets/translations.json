@@ -337,6 +337,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Zřetězit zobrazí soubory za sebou, Proložit je střídá po řádcích.",
   "Last": "Poslední",
   "Close file view": "Zavřít zobrazení souborů",
+  "Show line numbers": "Zobrazit čísla řádků",
   "help.keys.exclude": "Stejně přidat výběr jako vylučující podmínku",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Ponechat nebo skrýt řádky s vybraným textem (F; Enter/+ ponechá, - skryje)"
  },
@@ -634,6 +635,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Verketten zeigt die Dateien nacheinander, Verzahnen verschränkt sie Zeile für Zeile.",
   "Last": "Zuletzt",
   "Close file view": "Dateiansicht schließen",
+  "Show line numbers": "Zeilennummern anzeigen",
   "help.keys.exclude": "Auswahl auf dieselbe Weise als Ausschlussklausel hinzufügen",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Zeilen mit dem ausgewählten Text behalten oder ausblenden (F; Enter/+ behält, - blendet aus)"
  },
@@ -936,6 +938,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar muestra los archivos uno tras otro; Intercalar los entrelaza fila por fila.",
   "Last": "Último",
   "Close file view": "Cerrar la vista de archivos",
+  "Show line numbers": "Mostrar números de línea",
   "help.keys.exclude": "Agregar la selección como cláusula de exclusión del mismo modo",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Conservar u ocultar líneas con el texto seleccionado (F; Enter/+ conserva, - oculta)"
  },
@@ -1236,6 +1239,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concaténer affiche les fichiers les uns après les autres, Entrelacer les alterne ligne par ligne.",
   "Last": "Dernier",
   "Close file view": "Fermer la vue des fichiers",
+  "Show line numbers": "Afficher les numéros de ligne",
   "help.keys.exclude": "Ajouter la sélection comme clause d’exclusion de la même manière",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Conserver ou masquer les lignes contenant le texte sélectionné (F ; Enter/+ conserve, - masque)"
  },
@@ -1539,6 +1543,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatena mostra i file uno dopo l'altro, Interfoglia li alterna riga per riga.",
   "Last": "Ultimo",
   "Close file view": "Chiudi la vista dei file",
+  "Show line numbers": "Mostra numeri di riga",
   "help.keys.exclude": "Aggiungi la selezione come clausola di esclusione allo stesso modo",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Mantieni o nascondi le righe con il testo selezionato (F; Enter/+ mantiene, - nasconde)"
  },
@@ -1843,6 +1848,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "順に開くはファイルを順番に表示し、交互は 1 行ずつ交互に並べます。",
   "Last": "前回",
   "Close file view": "ファイルビューを閉じる",
+  "Show line numbers": "行番号を表示",
   "help.keys.exclude": "同様に選択範囲を除外条件として追加",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "選択したテキストを含む行を残すか非表示にする (F、Enter/+ で残す、- で非表示)"
  },
@@ -2147,6 +2153,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "차례로 열기는 파일을 차례로 표시하고, 교차는 행 단위로 번갈아 배치합니다.",
   "Last": "마지막",
   "Close file view": "파일 보기 닫기",
+  "Show line numbers": "줄 번호 표시",
   "help.keys.exclude": "같은 방식으로 선택 영역을 제외 조건으로 추가",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "선택한 텍스트가 있는 줄을 유지하거나 숨기기 (F, Enter/+ 유지, - 숨기기)"
  },
@@ -2450,6 +2457,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Sklej pokazuje pliki jeden po drugim, Przeplataj łączy je naprzemiennie wiersz po wierszu.",
   "Last": "Ostatni",
   "Close file view": "Zamknij widok plików",
+  "Show line numbers": "Pokaż numery wierszy",
   "help.keys.exclude": "W ten sam sposób dodaj zaznaczenie jako warunek wykluczania",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Zachowaj lub ukryj wiersze z zaznaczonym tekstem (F; Enter/+ zachowuje, - ukrywa)"
  },
@@ -2751,6 +2759,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "Concatenar mostra os arquivos um após o outro, Intercalar os alterna linha por linha.",
   "Last": "Último",
   "Close file view": "Fechar a visualização de arquivos",
+  "Show line numbers": "Mostrar números de linha",
   "help.keys.exclude": "Adicionar a seleção como cláusula de exclusão da mesma forma",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "Manter ou ocultar linhas com o texto selecionado (F; Enter/+ mantém, - oculta)"
  },
@@ -3055,6 +3064,7 @@
   "Concat shows the files one after another, Zip interleaves them row by row.": "串联将文件依次显示，交错则逐行交替合并。",
   "Last": "上次",
   "Close file view": "关闭文件视图",
+  "Show line numbers": "显示行号",
   "help.keys.exclude": "以相同方式将所选内容添加为排除子句",
   "Keep or hide lines with the selected text (F; Enter/+ keeps, - hides)": "保留或隐藏包含所选文本的行 (F；Enter/+ 保留，- 隐藏)"
  }

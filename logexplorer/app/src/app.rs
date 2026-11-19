@@ -65,6 +65,7 @@ pub struct View {
     pub viewport_rows: usize,
     pub viewport_cols: usize,
     pub hovered_row: Option<usize>,
+    pub show_line_numbers: bool,
 }
 
 pub struct VerticalMetrics {
@@ -200,7 +201,7 @@ impl App {
             work: WorkingSet { next_operator_id: 1, ..Default::default() },
             profiles,
             loaded_profile: String::new(),
-            view: View { row_height: 18.0, char_width: 8.0, viewport_rows: 1, viewport_cols: 4, ..Default::default() },
+            view: View { row_height: 18.0, char_width: 8.0, viewport_rows: 1, viewport_cols: 4, show_line_numbers: storage.load_show_line_numbers(), ..Default::default() },
             selection: None,
             cursor: Point::default(),
             find: Find::default(),
@@ -320,6 +321,8 @@ impl App {
         }
         if stage.id != self.last_stage {
             self.last_stage = stage.id;
+            // The selection's row and column coordinates belong to the previous result.
+            self.clear_selection();
             self.clamp_to(&stage);
         }
         Some(stage)
@@ -489,6 +492,11 @@ impl App {
 
     pub fn clear_selection(&mut self) {
         self.selection = None;
+    }
+
+    pub(crate) fn set_show_line_numbers(&mut self, show: bool) {
+        self.view.show_line_numbers = show;
+        self.storage.save_show_line_numbers(show);
     }
 
     pub fn move_cursor(&mut self, stage: &Stage, delta_row: isize, delta_col: isize, extend: bool) {
@@ -900,7 +908,9 @@ impl App {
         let row = find_row_by_id(&target_stage, row_id, point.row);
         let col = point.col.min(target_stage.line_cols(row));
         self.work.selected_operator_id = target_index.map(|index| self.work.operators[index].id);
-        self.selection = None;
+        if target_stage.id != current_stage.id {
+            self.clear_selection();
+        }
         self.set_scroll_top(&target_stage, row as f64 * self.view.row_height as f64 - (offset_y - self.view.row_height / 2.0) as f64);
         self.set_scroll_left(&target_stage, col as i64 - cols as i64);
         self.set_cursor(&target_stage, Point::new(row, col));

@@ -85,6 +85,7 @@ fn enter_and_minus_update_the_filter_and_escape_clears_selection() {
     key(&mut harness, Key::Enter);
     assert_eq!(rows(&harness).len(), 3);
     assert!(rows(&harness).iter().all(|row| row.contains("START")));
+    assert!(harness.state().selection.is_none());
     harness.get_by_label("Showing: after #1 Filter");
 
     let pos = text_at(&harness, 2, "health");
@@ -94,12 +95,18 @@ fn enter_and_minus_update_the_filter_and_escape_clears_selection() {
     assert!(harness.state().selection.is_none());
     assert_eq!(rows(&harness).len(), 3);
 
-    click(&mut harness, pos);
+    press(&mut harness, pos, egui::PointerButton::Primary, egui::Modifiers::NONE);
     key_with(&mut harness, egui::Modifiers::SHIFT, Key::Minus);
     assert_eq!(rows(&harness).len(), 3);
     key(&mut harness, Key::Minus);
     assert_eq!(rows(&harness), [SAMPLE.lines().next().unwrap(), SAMPLE.lines().nth(2).unwrap()]);
     assert_eq!(harness.state().work.operators.len(), 1);
+    assert!(harness.state().selection.is_none());
+    let next = cell(&harness, 1, 3);
+    harness.event(egui::Event::PointerMoved(next));
+    harness.run();
+    assert!(harness.state().selection.is_none());
+    release(&mut harness, next, egui::PointerButton::Primary);
 }
 
 #[test]
@@ -126,6 +133,7 @@ fn plus_and_minus_type_in_find_and_filter_in_the_view() {
     key(&mut harness, Key::Minus);
     assert_eq!(harness.state().work.operators.len(), 1);
     assert_eq!(rows(&harness), SAMPLE.lines().filter(|row| !row.contains("START")).collect::<Vec<_>>());
+    assert!(harness.state().selection.is_none());
 
     let pos = text_at(&harness, 0, "GET");
     click(&mut harness, pos);
@@ -134,6 +142,7 @@ fn plus_and_minus_type_in_find_and_filter_in_the_view() {
     key_with(&mut harness, egui::Modifiers::SHIFT, Key::Plus);
     assert_eq!(harness.state().work.operators.len(), 1);
     assert_eq!(rows(&harness), [SAMPLE.lines().nth(1).unwrap()]);
+    assert!(harness.state().selection.is_none());
 }
 
 #[test]
@@ -176,24 +185,44 @@ fn typing_into_a_filter_narrows_the_view_and_its_card_can_be_switched_off_and_de
     let (mut harness, _files) = with_sample();
     key(&mut harness, Key::F);
     assert_eq!(rows(&harness).len(), 5);
+    let pos = text_at(&harness, 0, "START");
+    click(&mut harness, pos);
+    assert_eq!(selected(&harness), "START");
     let field = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     field.focus();
     field.type_text("payments");
     harness.run();
     assert_eq!(rows(&harness).len(), 2);
+    assert!(harness.state().selection.is_none());
 
     // While the field has the keyboard, letters are text and not shortcuts
     assert_eq!(harness.state().work.operators.len(), 1);
 
+    let pos = text_at(&harness, 0, "POST");
+    click(&mut harness, pos);
+    assert_eq!(selected(&harness), "POST");
     harness.get_by_label("Filter").click();
     harness.run();
     assert!(!harness.state().work.operators[0].enabled);
     assert_eq!(rows(&harness).len(), 5);
+    assert!(harness.state().selection.is_none());
+
+    let pos = text_at(&harness, 0, "START");
+    click(&mut harness, pos);
+    let field = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    field.focus();
+    field.type_text(" extra");
+    harness.run();
+    let logexplorer_core::OpKind::Filter(filter) = &harness.state().work.operators[0].kind else { panic!("expected filter") };
+    assert!(filter.include[0].text.contains(" extra"));
+    assert_eq!(rows(&harness).len(), 5);
+    assert_eq!(selected(&harness), "START");
 
     harness.get_by_label("Delete").click();
     harness.run();
     assert!(harness.state().work.operators.is_empty());
     harness.get_by_label("Showing: original");
+    assert_eq!(selected(&harness), "START");
 }
 
 #[test]
@@ -203,10 +232,14 @@ fn the_header_of_the_operations_switches_between_the_source_and_the_result() {
     click(&mut harness, pos);
     key(&mut harness, Key::Enter);
     assert_eq!(rows(&harness).len(), 2);
+    let pos = text_at(&harness, 0, "GET");
+    click(&mut harness, pos);
+    assert_eq!(selected(&harness), "GET");
     harness.get_by_label("Operations").click();
     harness.run();
     assert_eq!(rows(&harness).len(), 5);
     harness.get_by_label("Showing: original");
+    assert!(harness.state().selection.is_none());
     harness.get_by_label("Operations").click();
     harness.run();
     assert_eq!(rows(&harness).len(), 2);
@@ -247,10 +280,44 @@ fn dragging_selects_a_block_and_ctrl_c_copies_it() {
     assert_eq!(copied(&mut harness), Some(selected(&harness)));
     assert_eq!(harness.state().status, "Copied selection.");
 
-    // The line numbers clear the selection
-    let gutter = egui::pos2(harness.state().viewer.rect.unwrap().left() + 10.0, from.y);
+    key(&mut harness, Key::Escape);
+    harness.get_by_label("Selection: none");
+}
+
+#[test]
+fn line_numbers_are_hidden_by_default_and_can_be_enabled_between_sessions() {
+    let files = Files::new();
+    let path = files.write("sample.log", SAMPLE);
+    let open = || start_with(Options { data_dir: Some(files.dir.path().join("config")), files: vec![path.clone()], ..options("en") });
+    let toggle = |harness: &mut Ui| {
+        harness.get_by_label("App menu").click();
+        harness.run();
+        harness.get_by_label("Show line numbers").click();
+        harness.run();
+    };
+
+    let mut harness = open();
+    assert!(!harness.state().view.show_line_numbers);
+    let hidden_left = harness.state().viewer.text_left;
+    let hidden_cols = harness.state().view.viewport_cols;
+    let pos = cell(&harness, 0, 1);
+    click(&mut harness, pos);
+    assert_eq!(selected(&harness), "4711");
+
+    toggle(&mut harness);
+    assert!(harness.state().viewer.text_left > hidden_left);
+    assert!(harness.state().view.viewport_cols < hidden_cols);
+    let gutter = egui::pos2(hidden_left, pos.y);
     click(&mut harness, gutter);
     harness.get_by_label("Selection: none");
+    drop(harness);
+
+    let mut harness = open();
+    assert!(harness.state().view.show_line_numbers);
+    toggle(&mut harness);
+    assert_eq!(harness.state().viewer.text_left, hidden_left);
+    assert_eq!(harness.state().view.viewport_cols, hidden_cols);
+    assert!(!open().state().view.show_line_numbers);
 }
 
 #[test]

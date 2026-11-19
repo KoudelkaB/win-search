@@ -1,6 +1,5 @@
-//! Where the profiles and the last pipeline are kept between sessions: two JSON files with
-//! the content the HTML app keeps in localStorage. Several windows share them: a change of
-//! the profiles is made to what the file holds at that moment, under a lock.
+//! Where the profiles, the last pipeline and view settings are kept between sessions.
+//! Several windows share the files. Profile changes apply to the latest contents under a lock.
 
 use logexplorer_core::profiles::{ProfileStore, WorkingSet};
 use std::path::{Path, PathBuf};
@@ -79,6 +78,16 @@ impl Storage {
 
     pub fn load_working_set(&self) -> Option<WorkingSet> {
         self.read("working-set.json").map(|value| WorkingSet::from_json(&value))
+    }
+
+    pub fn load_show_line_numbers(&self) -> bool {
+        self.read("view-settings.json").and_then(|value| value["showLineNumbers"].as_bool()).unwrap_or_default()
+    }
+
+    pub fn save_show_line_numbers(&self, show: bool) {
+        if let Some(dir) = &self.dir {
+            Self::write(dir, "view-settings.json", &serde_json::json!({ "showLineNumbers": show }));
+        }
     }
 
     pub fn save_working_set(&mut self, set: &WorkingSet) {

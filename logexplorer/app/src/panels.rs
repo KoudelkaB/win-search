@@ -455,6 +455,11 @@ fn app_menu(ui: &mut egui::Ui, app: &mut App) {
     let several = app.source.as_ref().is_some_and(|source| source.raw.sources.len() > 1);
     let (response, _) = egui::containers::menu::MenuButton::from_button(ActionIcon::Menu.button()).ui(ui, |ui| {
         ui.label(RichText::new(app.t("View")).small().color(theme::MUTED));
+        let mut show_line_numbers = app.view.show_line_numbers;
+        if ui.checkbox(&mut show_line_numbers, app.t("Show line numbers")).changed() {
+            app.set_show_line_numbers(show_line_numbers);
+            ui.close();
+        }
         let item = |ui: &mut egui::Ui, app: &mut App, enabled: bool, label: &str, tip: &str| {
             let clicked = ui.add_enabled(enabled, egui::Button::new(app.t(label))).on_hover_text(app.t(tip)).clicked();
             if clicked {

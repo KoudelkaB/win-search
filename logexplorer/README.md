@@ -21,6 +21,7 @@ in a file manager. The viewer opens JSON as text. Import profile bundles through
 provides the UI texts and their ten translations (`tools/extract-translations.cjs`).
 The close button beside Open file (`Ctrl+W`) unloads all files in the view and keeps the
 current pipeline.
+Line numbers are hidden by default. Use **App menu → Show line numbers** to turn them on.
 
 ## Layout
 

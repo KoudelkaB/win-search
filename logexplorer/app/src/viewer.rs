@@ -312,7 +312,7 @@ fn pointer_input(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage,
         app.focus_viewer = true;
         let point = point_at(ui, app, metrics, stage, pos);
         begin_selection(app, stage, point, pos.x < rect.left() + metrics.gutter, modifiers, time);
-    } else if app.viewer.selecting && down {
+    } else if app.viewer.selecting && down && app.selection.is_some() {
         // Dragging past the top or bottom scrolls on
         if pos.y < rect.top() {
             app.scroll_by(stage, -(metrics.row_height as f64) * 2.0);
@@ -327,7 +327,7 @@ fn pointer_input(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage,
             app.selection = Some(Selection::new(app.viewer.anchor, point));
             app.set_cursor(stage, point);
         }
-    } else if !down {
+    } else {
         app.viewer.selecting = false;
     }
 }
@@ -338,8 +338,10 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
     if !app.windows_software_renderer {
         painter.rect_filled(rect, 0.0, theme::PANEL);
     }
-    let gutter = Rect::from_min_max(rect.min, Pos2::new(rect.left() + metrics.gutter, rect.bottom()));
-    painter.rect_filled(gutter, 0.0, theme::SURFACE);
+    let gutter = (metrics.gutter > 0.0).then(|| Rect::from_min_max(rect.min, Pos2::new(rect.left() + metrics.gutter, rect.bottom())));
+    if let Some(gutter) = gutter {
+        painter.rect_filled(gutter, 0.0, theme::SURFACE);
+    }
 
     let row_height = metrics.row_height as f64;
     let scroll_top = app.view.scroll_top;
@@ -364,13 +366,9 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
         } else if hovered {
             painter.rect_filled(row_rect, 0.0, theme::HOVER_ROW);
         }
-        painter.text(
-            Pos2::new(rect.left() + metrics.gutter - 8.0, top + metrics.row_height / 2.0),
-            egui::Align2::RIGHT_CENTER,
-            grouped(row as u64 + 1),
-            metrics.font.clone(),
-            theme::MUTED,
-        );
+        if let Some(gutter) = gutter {
+            painter.text(Pos2::new(gutter.right() - 8.0, top + metrics.row_height / 2.0), egui::Align2::RIGHT_CENTER, grouped(row as u64 + 1), metrics.font.clone(), theme::MUTED);
+        }
 
         let visible = app.viewer.visible(stage, row, scroll_left, cols);
         let keeps = app.viewer.preview_matches(stage, row);
@@ -403,7 +401,9 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
             text_painter.galley(Pos2::new(metrics.text_left, text_top), galley, theme::TEXT);
         }
     }
-    painter.line_segment([Pos2::new(gutter.right(), rect.top()), Pos2::new(gutter.right(), rect.bottom())], Stroke::new(1.0, theme::BORDER));
+    if let Some(gutter) = gutter {
+        painter.line_segment([Pos2::new(gutter.right(), rect.top()), Pos2::new(gutter.right(), rect.bottom())], Stroke::new(1.0, theme::BORDER));
+    }
 }
 
 /// The file view with its scrollbars, filling the rest of `ui`.
@@ -414,8 +414,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
     let font = theme::mono_font();
     let (char_width, font_height) = ui.fonts_mut(|fonts| (fonts.glyph_width(&font, '0'), fonts.row_height(&font)));
     let row_height = (font_height + 3.0).ceil();
-    let digits = grouped(stage.map_or(1, |stage| stage.len().max(1)) as u64).chars().count();
-    let gutter = digits as f32 * char_width + 16.0;
+    let gutter = if app.view.show_line_numbers {
+        let digits = grouped(stage.map_or(1, |stage| stage.len().max(1)) as u64).chars().count();
+        digits as f32 * char_width + 16.0
+    } else {
+        0.0
+    };
     let metrics = Metrics { rect, font, row_height, char_width: char_width.max(1.0), text_left: rect.left() + gutter + TEXT_PADDING, gutter };
 
     app.view.row_height = row_height;

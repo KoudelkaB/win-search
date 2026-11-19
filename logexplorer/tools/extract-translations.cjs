@@ -69,6 +69,18 @@ const excludeSelection = {
     'pt-BR': 'Adicionar a seleção como cláusula de exclusão da mesma forma',
     'zh-Hans': '以相同方式将所选内容添加为排除子句',
 };
+const showLineNumbers = {
+    cs: 'Zobrazit čísla řádků',
+    de: 'Zeilennummern anzeigen',
+    es: 'Mostrar números de línea',
+    fr: 'Afficher les numéros de ligne',
+    it: 'Mostra numeri di riga',
+    ja: '行番号を表示',
+    ko: '줄 번호 표시',
+    pl: 'Pokaż numery wierszy',
+    'pt-BR': 'Mostrar números de linha',
+    'zh-Hans': '显示行号',
+};
 const htmlFilterTooltip = 'Keep or hide lines with the selected text (F; Enter keeps, Esc hides)';
 const nativeFilterTooltip = (text) => text.replace('Enter', 'Enter/+').replace('Esc', '-');
 for (const [language, entries] of Object.entries(ordered)) {
@@ -78,6 +90,7 @@ for (const [language, entries] of Object.entries(ordered)) {
     entries['help.profiles.2'] = profileHelp[language];
     delete entries['A JSON profile bundle is imported instead.'];
     if (closeView[language]) entries['Close file view'] = closeView[language];
+    if (showLineNumbers[language]) entries['Show line numbers'] = showLineNumbers[language];
     delete entries['help.keys.esc'];
     entries['help.keys.exclude'] = excludeSelection[language];
     if (entries[htmlFilterTooltip]) entries[nativeFilterTooltip(htmlFilterTooltip)] = nativeFilterTooltip(entries[htmlFilterTooltip]);
