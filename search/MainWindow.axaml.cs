@@ -542,6 +542,7 @@ namespace search
             // Preserve selection on Items update
             INode[] selected = null;
             INode focused = null;
+            INode anchor = null;
             INode picked = null;
             var selectedStart = -1;
             var restoreKeyboardFocus = false;
@@ -553,10 +554,15 @@ namespace search
                 pickedSelection = null;
                 selected = filesView.SelectedItems.OfType<INode>().ToArray();
                 selectedStart = FirstSelectedItemIndex(selected);
-                focused = filesView.IsKeyboardFocusWithin
-                    ? activeSelectedNode ?? filesView.SelectedItem as INode
-                    : null;
-                restoreKeyboardFocus = focused != null || filesView.IsKeyboardFocusWithin;
+                var items = Model.Items;
+                INode RowAt(int index) => index >= 0 && index < items.Count ? items[index] : null;
+                anchor = RowAt(GridSelection.AnchorRowIndex(filesView));
+                restoreKeyboardFocus = filesView.IsKeyboardFocusWithin;
+                //When extending a range, the current row can differ from the last added item.
+                var keyboardRow = restoreKeyboardFocus && anchor != null
+                    ? RowAt(GridSelection.CurrentRowIndex(filesView)) : null;
+                focused = restoreKeyboardFocus
+                    ? keyboardRow ?? activeSelectedNode ?? filesView.SelectedItem as INode : null;
             };
             Model.AfterItemsExchange = () =>
             {
@@ -598,11 +604,20 @@ namespace search
                             }
                         }
                     }
+
+                    //Restoring the selected rows clears the grid's anchor. Find the original
+                    //item at its new row index so Shift can keep extending from it.
+                    if (anchor != null)
+                    {
+                        var index = Model.Items.IndexOf(anchor);
+                        GridSelection.SetAnchorRow(filesView, index >= 0 ? index : GridSelection.CurrentRowIndex(filesView));
+                    }
                 }
                 finally
                 {
                     selected = null;
                     focused = null;
+                    anchor = null;
                     picked = null;
                     selectedStart = -1;
                     restoreKeyboardFocus = false;
@@ -816,8 +831,8 @@ namespace search
         }
 
         /// <summary>
-        /// Move the keyboard row to the node (the anchor of the next Shift+arrow) without
-        /// changing the selection; scroll it into view unless told not to
+        /// Move the current keyboard row without changing the selection or its anchor.
+        /// Scroll the node into view when requested.
         /// </summary>
         void FocusFileRow(INode node, bool scroll = true)
         {

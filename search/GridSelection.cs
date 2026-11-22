@@ -96,9 +96,9 @@ namespace search
         /// </summary>
         public static void ReplaceKeyboardRange(DataGrid grid)
         {
-            if (!FastPath || anchorSlot == null || currentSlot == null) return;
-            var anchor = (int)anchorSlot.GetValue(grid);
-            var current = (int)currentSlot.GetValue(grid);
+            if (!FastPath) return;
+            var anchor = AnchorRowIndex(grid);
+            var current = CurrentRowIndex(grid);
             if (anchor < 0 || current < 0) return;
             var start = Math.Min(anchor, current);
             var end = Math.Max(anchor, current);
@@ -114,17 +114,22 @@ namespace search
         }
 
         /// <summary>
-        /// The keyboard row of the grid, -1 for none or where the grid does not tell. The
-        /// result list has no groups, so a slot is the row index.
+        /// The keyboard row of the result grid, or -1 when unavailable.
         /// </summary>
-        public static int CurrentRowIndex(DataGrid grid)
+        public static int CurrentRowIndex(DataGrid grid) => RowIndex(grid, currentSlot);
+
+        /// <summary>The row Shift+arrows extend from, or -1 when unavailable.</summary>
+        public static int AnchorRowIndex(DataGrid grid) => RowIndex(grid, anchorSlot);
+
+        static int RowIndex(DataGrid grid, PropertyInfo slot)
         {
-            try { return currentSlot == null ? -1 : (int)currentSlot.GetValue(grid); }
+            //The result list has no groups, so a slot is the row index.
+            try { return slot == null ? -1 : (int)slot.GetValue(grid); }
             catch { return -1; }
         }
 
         /// <summary>
-        /// Move the keyboard row (the anchor of Shift+arrows) without touching the selection.
+        /// Move the current keyboard row without touching the selection or its anchor.
         /// False when the grid does not support it - the caller then only scrolls.
         /// </summary>
         public static bool SetCurrentRow(DataGrid grid, int rowIndex)
@@ -148,9 +153,15 @@ namespace search
         public static bool MoveKeyboardRow(DataGrid grid, int rowIndex)
         {
             if (!SetCurrentRow(grid, rowIndex)) return false;
-            try { anchorSlot?.SetValue(grid, Slot(grid, rowIndex)); }
-            catch (Exception e) { $"grid anchor not moved: {e.Message}".Debug(); }
+            SetAnchorRow(grid, rowIndex);
             return true;
+        }
+
+        public static void SetAnchorRow(DataGrid grid, int rowIndex)
+        {
+            if (rowIndex < 0 || anchorSlot == null || slotFromRowIndex == null) return;
+            try { anchorSlot.SetValue(grid, Slot(grid, rowIndex)); }
+            catch (Exception e) { $"grid anchor not moved: {e.Message}".Debug(); }
         }
 
         public static void ToggleSelectAll(DataGrid grid, int itemCount)
