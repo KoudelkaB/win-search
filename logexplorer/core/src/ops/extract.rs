@@ -121,7 +121,7 @@ fn next_char(text: &str, at: usize) -> usize {
 }
 
 impl Pattern {
-    /// `pattern` with the flags of the HTML app: global, multi-line, case as chosen
+    /// Compiles a multi-line pattern with the requested case sensitivity
     pub fn compile(pattern: &str, case_sensitive: bool, group: usize) -> OpResult<Pattern> {
         let invalid = |error: String| OpError::Fmt("Invalid Extract regular expression: {0}", vec![error]);
         let (engine, groups, crosses_rows) = match regex::RegexBuilder::new(pattern).multi_line(true).case_insensitive(!case_sensitive).build() {

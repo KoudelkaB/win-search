@@ -1,7 +1,7 @@
 {
  "cases": [
   {
-   "name": "the REST duration recipe of the guide",
+   "name": "REST request durations",
    "files": [
     [
      "[4711] 2026-03-13T09:14:02.105Z START GET /api/orders",
@@ -2691,203 +2691,174 @@
   {
    "text": "95.6",
    "type": "number",
-   "legacyDate": false,
    "number": 95.6,
    "span": 95.6
   },
   {
    "text": "12",
    "type": "number",
-   "legacyDate": false,
    "number": 12,
    "span": 12
   },
   {
    "text": "-1,5",
    "type": "number",
-   "legacyDate": false,
    "number": -1.5,
    "span": null
   },
   {
    "text": "1e3",
    "type": "number",
-   "legacyDate": false,
    "number": 1000,
    "span": 1000
   },
   {
    "text": "0x1F",
    "type": "number",
-   "legacyDate": false,
    "number": 31,
    "span": 31
   },
   {
    "text": " 7 ",
    "type": "number",
-   "legacyDate": false,
    "number": 7,
    "span": 7
   },
   {
    "text": "",
    "type": "string",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "abc",
    "type": "string",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "2026-03-13T09:14:02.105Z",
    "type": "date-time",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "2026-03-13",
    "type": "date-time",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "1.2.2026",
    "type": "date-time",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "31.2.2026",
    "type": "string",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "00:00:10.000",
    "type": "time-span",
-   "legacyDate": false,
    "number": null,
    "span": 10000
   },
   {
    "text": "1.02:03:04.005",
-   "type": "date-time",
-   "legacyDate": true,
+   "type": "time-span",
    "number": null,
    "span": 93784005
   },
   {
    "text": "12:30",
    "type": "time-span",
-   "legacyDate": false,
    "number": null,
    "span": 45000000
   },
   {
    "text": "25:00",
    "type": "time-span",
-   "legacyDate": false,
    "number": null,
    "span": 90000000
   },
   {
    "text": "01:60",
-   "type": "date-time",
-   "legacyDate": true,
+   "type": "string",
    "number": null,
    "span": null
   },
   {
    "text": "30:00:00",
    "type": "time-span",
-   "legacyDate": false,
    "number": null,
    "span": 108000000
   },
   {
    "text": "1.24:00:00",
-   "type": "date-time",
-   "legacyDate": true,
+   "type": "string",
    "number": null,
    "span": null
   },
   {
    "text": "Infinity",
    "type": "string",
-   "legacyDate": false,
    "number": null,
    "span": null
   },
   {
    "text": "1 2",
-   "type": "date-time",
-   "legacyDate": true,
+   "type": "string",
    "number": null,
    "span": null
   },
   {
    "text": "5.",
    "type": "number",
-   "legacyDate": false,
    "number": 5,
    "span": 5
   },
   {
    "text": ".5",
    "type": "number",
-   "legacyDate": false,
    "number": 0.5,
    "span": 0.5
   },
   {
    "text": "+7",
    "type": "number",
-   "legacyDate": false,
    "number": 7,
    "span": 7
   },
   {
    "text": "--1",
-   "type": "date-time",
-   "legacyDate": true,
+   "type": "string",
    "number": null,
    "span": null
   },
   {
    "text": "1,2,3",
-   "type": "date-time",
-   "legacyDate": true,
+   "type": "string",
    "number": null,
    "span": null
   },
   {
    "text": "0b101",
    "type": "number",
-   "legacyDate": false,
    "number": 5,
    "span": 5
   },
   {
    "text": "0o17",
    "type": "number",
-   "legacyDate": false,
    "number": 15,
    "span": 15
   },
   {
    "text": "12abc",
    "type": "string",
-   "legacyDate": false,
    "number": null,
    "span": null
   }

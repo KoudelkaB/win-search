@@ -47,14 +47,15 @@
        build of its Cargo package (logexplorer/README.md), with the notices of its crates
        (logexplorer/tools/third-party-notices.cjs). A build without it has no Log explorer
        (see NativeLogExplorer); the packages of a release must have it - RequireLogExplorer
-       makes its absence an error. LogExplorerNative can name the program built elsewhere,
+       makes its absence an error. VS Code sets BuildLogExplorer to build it before launch.
+       LogExplorerNative can name the program built elsewhere,
        as for a runtime other than the one of the build machine. -->
   <PropertyGroup>
     <_LogExplorerProgram Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">logexplorer.exe</_LogExplorerProgram>
     <_LogExplorerProgram Condition="'$(_LogExplorerProgram)' == ''">logexplorer</_LogExplorerProgram>
     <LogExplorerNative Condition="'$(LogExplorerNative)' == ''">..\logexplorer\target\release\$(_LogExplorerProgram)</LogExplorerNative>
   </PropertyGroup>
-  <ItemGroup Condition="Exists('$(LogExplorerNative)')">
+  <ItemGroup Condition="'$(BuildLogExplorer)' == 'true' Or Exists('$(LogExplorerNative)')">
     <None Include="$(LogExplorerNative)" Link="LogExplorer\$(_LogExplorerProgram)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <PropertyGroup>
@@ -63,7 +64,10 @@
   <ItemGroup Condition="Exists('$(LogExplorerNotices)')">
     <None Include="$(LogExplorerNotices)" Link="licenses\logexplorer-THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
-  <Target Name="RequireLogExplorer" BeforeTargets="BeforeBuild" Condition="'$(RequireLogExplorer)' == 'true'">
+  <Target Name="BuildNativeLogExplorer" BeforeTargets="BeforeBuild" Condition="'$(BuildLogExplorer)' == 'true'">
+    <Exec Command="cargo build --release --locked -p logexplorer --target-dir target" WorkingDirectory="$(MSBuildProjectDirectory)/../logexplorer" />
+  </Target>
+  <Target Name="RequireLogExplorer" BeforeTargets="BeforeBuild" DependsOnTargets="BuildNativeLogExplorer" Condition="'$(RequireLogExplorer)' == 'true'">
     <Error Condition="!Exists('$(LogExplorerNative)')" Text="Log explorer was not built: $(LogExplorerNative) (cargo build --release -p logexplorer in logexplorer/)" />
     <Error Condition="!Exists('$(LogExplorerNotices)')" Text="The notices of Log explorer's crates were not written: $(LogExplorerNotices) (node logexplorer/tools/third-party-notices.cjs)" />
   </Target>

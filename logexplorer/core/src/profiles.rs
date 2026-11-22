@@ -1,4 +1,4 @@
-//! Saved pipelines. The stored JSON and the exported bundle are those of the HTML app.
+//! Saved pipelines, JSON storage, and profile bundle import and export.
 
 use crate::operator::{operators_from_json, Operator};
 use serde_json::{json, Map, Value};
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bundle_written_by_the_html_app_is_understood() {
+    fn a_version_one_bundle_keeps_pipeline_metadata() {
         let bundle: Value = serde_json::from_str(
             r#"{"kind":"LogExplorerProfiles","version":1,
                 "profiles":{"REST duration":{"operators":[

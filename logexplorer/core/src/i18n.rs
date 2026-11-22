@@ -1,5 +1,4 @@
-//! UI texts. The English text is the key; the translations are those of the HTML app
-//! (`tools/extract-translations.cjs` regenerates them).
+//! UI translations and help text bundled from `assets/translations.json`.
 
 use std::collections::HashMap;
 
@@ -31,7 +30,7 @@ pub fn fill(text: &str, args: &[String]) -> String {
     out
 }
 
-/// A number with a space between its thousands, like the HTML app shows them
+/// A number with spaces separating thousands
 pub fn grouped(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);

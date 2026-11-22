@@ -1,5 +1,4 @@
-//! The operations of a pipeline. Their JSON is the one the HTML app stores, so profile
-//! bundles move between the two apps unchanged.
+//! Pipeline operations and their JSON representation in saved profiles.
 
 use crate::typed::{infer_value_type, ValueType};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -23,7 +22,7 @@ macro_rules! text_enum {
                 match self { $($name::$variant => $label),+ }
             }
 
-            /// Unknown values are the first variant, like the HTML app's defaults
+            /// Unknown values use the first variant as the default
             pub fn parse(text: &str) -> Self {
                 match text { $($text => $name::$variant,)+ _ => $name::ALL[0] }
             }
@@ -67,7 +66,7 @@ impl<'de> Deserialize<'de> for ValueType {
     }
 }
 
-/// A number the HTML app may have stored as a float, a string or not at all
+/// Reads a number from a JSON number or numeric string and defaults to zero
 fn lenient_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     Ok(match Value::deserialize(deserializer)? {
         Value::Number(number) => number.as_f64().filter(|value| value.is_finite() && *value > 0.0).map_or(0, |value| value as u64),
@@ -334,7 +333,7 @@ impl Operator {
         serde_json::to_string(&self.kind).unwrap_or_default()
     }
 
-    /// The values the HTML app clamps when it loads an operation
+    /// Clamps lengths and row ranges when loading an operation
     fn normalized(mut self) -> Self {
         match &mut self.kind {
             OpKind::Extract(extract) => {
@@ -421,7 +420,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn an_operation_of_the_html_app_is_read_and_written_back_the_same() {
+    fn a_stored_filter_round_trips_as_json() {
         let stored = json!({
             "id": 3, "type": "filter", "enabled": true, "name": "filter",
             "include": [{"text": "ERROR\nWARN", "caseSensitive": false}],
@@ -436,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_and_odd_fields_get_the_defaults_of_the_html_app() {
+    fn missing_and_odd_fields_use_the_operation_defaults() {
         let list = json!([
             {"id": 1, "type": "extract"},
             {"id": "2", "type": "sort", "mode": "column", "pos": "4", "len": 0, "valueType": "number"},

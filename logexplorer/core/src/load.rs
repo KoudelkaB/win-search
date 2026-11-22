@@ -1,7 +1,7 @@
 //! Loading sources: reading, decoding to UTF-8, the line index, and combining several files.
 //!
 //! A UTF-8 file without tabs is used exactly as it was read - one allocation of the file's
-//! size plus 4 bytes a line. Only tabs (shown as four spaces, like the HTML app), UTF-16 and
+//! size plus 4 bytes a line. Only tabs (expanded to four spaces), UTF-16 and
 //! invalid UTF-8 need a converted copy, and then the bytes read are released.
 
 use crate::cancel::{Cancel, OpError, OpResult};

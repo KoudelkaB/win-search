@@ -1,4 +1,4 @@
-//! Colors and fonts: the light look of the HTML app.
+//! Colors and fonts for the light theme.
 
 use egui::{Color32, FontId};
 

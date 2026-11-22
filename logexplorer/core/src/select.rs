@@ -132,7 +132,7 @@ const TIME: &str = r"(?i)\b[0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,9})?)?(?:
 const GUID: &str = r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b";
 const GUID_LIKE: &str = r"(?i)(^|[^A-Za-z0-9-])([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){2,})(?![A-Za-z0-9-])";
 
-/// The values a click can select, as the HTML app lists them
+/// The values a click can select
 fn tokens() -> &'static [Token] {
     static TOKENS: OnceLock<Vec<Token>> = OnceLock::new();
     TOKENS.get_or_init(|| {
@@ -223,7 +223,7 @@ impl Piece {
     }
 }
 
-/// The rows around a click as one text, like the HTML app's `stage.text`
+/// The rows around a click as contiguous text
 struct Window {
     text: Vec<char>,
     /// Offset of the first and past the last character of each row of the window

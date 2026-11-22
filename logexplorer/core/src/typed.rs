@@ -1,7 +1,4 @@
 //! Values read from rows: numbers, dates and durations, and how Diff writes them back.
-//!
-//! The rules follow the HTML app (JavaScript `Number`, `Date.parse`, `toFixed`), so a
-//! pipeline gives the same result in both.
 
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
 

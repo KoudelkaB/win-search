@@ -1,24 +1,22 @@
 # Log Explorer (Rust)
 
-The Log explorer of File Search Manager, a native rewrite of
-`external/singleHtmlApps/LogExplorer.html` that replaced that page: a viewer for big logs with a
-staged Filter / Replace / Sort / Diff / Extract / Unique / Join pipeline, smart click
-selection, find, multi-file sources with per-file tints, and profiles. It runs on Windows
-and Linux (egui/eframe) and is meant for files of gigabytes, as long as they fit in memory.
+Log Explorer is a standalone native viewer for large logs on Windows and Linux (egui/eframe).
+It supports staged Filter / Replace / Sort / Diff / Extract / Unique / Join operations,
+smart click selection, find, per-file tints, and profiles. It handles files of gigabytes as
+long as they fit in memory.
 
 ```sh
 cargo run --release -p logexplorer -- [--combine append|zip] [--filter TEXT] [--case-sensitive]
                                       [--lang LANG] [--data-dir DIR] [--files0-from LIST] [FILE...]
 ```
 
-The options are what the embedding API of the HTML app took (`window.logExplorer.open`):
-several files without asking how to combine them, and a first include filter.
+`--combine` selects how to load multiple files without prompting, and `--filter` supplies
+the first include filter.
 `--files0-from` reads more files from LIST (`-` is standard input), each name ended by a NUL
 byte: File Search Manager hands over a list longer than a Windows command line (32 767
 characters) this way. Files can also be dropped into the window or pasted after copying them
 in a file manager. The viewer opens JSON as text. Import profile bundles through
-`≡` → Upload profiles. The bundles are interchangeable with the HTML app, which also
-provides the UI texts and their ten translations (`tools/extract-translations.cjs`).
+`≡` → Upload profiles.
 The close button beside Open file (`Ctrl+W`) unloads all files in the view and keeps the
 current pipeline.
 Line numbers are hidden by default. Use **App menu → Show line numbers** to turn them on.
@@ -29,7 +27,8 @@ Line numbers are hidden by default. Use **App menu → Show line numbers** to tu
 | --- | --- |
 | `core/` | `logexplorer-core`: the engine, no UI. Loading, stages, the operations, the pipeline cache, selection, find, profiles, texts. |
 | `app/` | `logexplorer`: the egui application. `app.rs` is state and behaviour, `viewer.rs` the virtual file view, `panels.rs` everything around it. |
-| `tools/` | Node scripts that regenerate the translations and the parity fixtures from the HTML app, and write the notices of the crates. |
+| `core/assets/translations.json` | UI translations and help text. Edit them here. |
+| `tools/` | Scripts for generating license notices and application icons. |
 
 ## How memory is kept low
 
@@ -88,16 +87,16 @@ cargo run --release -p logexplorer-core --example bench -- big.log --generate 10
 ## Tests
 
 ```sh
-cargo test --workspace                                                      # unit, parity and headless UI tests
+cargo test --workspace                                                      # unit, regression and headless UI tests
 cargo test -p logexplorer --test smoke -- --ignored                         # smoke tests, Linux
 cargo test -p logexplorer --test smoke -- --ignored --test-threads=1        # smoke tests, Windows
 ```
 
 - **Unit tests** (`core/src/**`, `app/src/clipboard.rs`): every operation, loading and
   encodings, typed values, collation, selection, find, profiles.
-- **Parity** (`core/tests/parity.rs`): pipelines run through the *JavaScript* operations of
-  the HTML app (`tools/parity-fixtures.cjs` writes `fixtures/parity.json`); the Rust engine
-  must give the same rows, from the same sources and original rows.
+- **Engine regressions** (`core/tests/regression.rs`): each pipeline stage is checked against
+  the expected text, source IDs and original row IDs in `core/tests/fixtures/regression.json`.
+  The same fixture records expected types, numbers and durations for representative input.
 - **Headless UI** (`app/tests/headless.rs`, egui_kittest): the whole window without a
   display or GPU, driven through its accessibility tree, the keyboard and the pointer -
   the counterpart of the Avalonia headless tests.
@@ -108,22 +107,20 @@ cargo test -p logexplorer --test smoke -- --ignored --test-threads=1        # sm
   On Windows they take the foreground and type real keys - leave the machine alone while
   they run; a key is sent only while the window of the app is in front.
 
-`.github/workflows/logexplorer.yml` runs all of it, and fails when the translations or the
-parity fixtures no longer match the pinned HTML app. After the HTML app changes:
-`node tools/extract-translations.cjs` and `node tools/parity-fixtures.cjs`, then the tests.
-The workflow runs for a pull request that touches this folder, by hand, and in every
-release beside the build of the packages - not on a push to main.
+`.github/workflows/logexplorer.yml` runs these checks on pull requests that touch this
+folder, on manual dispatch, and during each release.
 
 ## File Search Manager
 
-This program is the Log explorer of File Search Manager (L, T/F3, Show in files): the HTML
-page is no longer shipped or opened. A release build of this package is copied by
-`search/search.csproj` to `LogExplorer/` next to the app, and `search/NativeLogExplorer.cs`
-starts it with the files. A build made without Rust has no Log explorer - L is not offered
-and text opens in the editor - and `-p:RequireLogExplorer=true` makes that an error, as the
-packages are built. The app asks before loading only when the files would not fit in half
-of the memory. `LOpensTheFileInTheNativeLogExplorer` of `LinuxSmokeTests` and
-`WindowsSmokeTests` in `search.smoke` covers the hand-over.
+File Search Manager opens Log Explorer with L, T/F3 and Show in files.
+`search/search.csproj` copies the Cargo release binary to `LogExplorer/` next to the
+app, and `search/NativeLogExplorer.cs` starts it with the selected files. Pressing F5
+in VS Code passes `-p:BuildLogExplorer=true`, so Cargo builds the binary before .NET
+copies it. A build without a Log Explorer binary opens text in the editor. Release
+packaging enables `-p:RequireLogExplorer=true` to require the binary and license
+notices. File Search Manager asks before loading files whose total size exceeds half
+the available memory. `LOpensTheFileInTheNativeLogExplorer` in the Windows and Linux
+smoke tests covers the hand-off.
 
 Started by an elevated File Search Manager the program is elevated too, and can read what
 the app shows an administrator. Windows lets no program of lower rights - Explorer - use
@@ -151,23 +148,19 @@ package is made without it:
 - **Tests:** the workflow of this folder runs beside the build of the packages, and
   nothing is published unless it passes.
 
-## Deliberate differences from the HTML app
+## Text processing
 
-- A column is a Unicode character, not a UTF-16 unit (they differ only beyond the BMP).
-- Text is ordered by a root collation implemented here (punctuation, digits, letters
-  regardless of case and accents) rather than by the locale of the browser.
-- Only what a sane parser takes for a date is a date: `Date.parse` of a browser also
-  accepts texts like `1 2` or `01:60`.
-- A capture group that the pattern does not have is reported at once, not at the first match.
-- Identifiers of any alphabet are selected by a click, not only ASCII ones.
-- A stage that follows several edits keeps its earlier stages (the HTML app recomputes
-  the whole pipeline after every change).
+- Columns count Unicode characters.
+- Text sorts by punctuation, digits and letters with case and accents folded.
+- Date parsing accepts supported date formats with valid calendar dates and times.
+- Extract reports a missing capture group as soon as it compiles the pattern.
+- Click selection recognizes identifiers from any alphabet.
 - File view navigation shows one movement per frame. Separate presses keep their order
   and excess repeats from holding a key are discarded.
 
 ## Windows
 
-Built, run and tested on Windows 10 (stable MSVC toolchain): the unit, parity and headless
+Built, run and tested on Windows 10 (stable MSVC toolchain): the unit, regression and headless
 tests, the smoke tests of this package and of File Search Manager with the program beside
 it. Checked by eye: no console window, the title, the toolbar symbols, Japanese through
 the system fonts, the UI in the display language of Windows, profiles under

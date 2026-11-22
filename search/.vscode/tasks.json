@@ -4,10 +4,12 @@
         {
             "label": "build",
             "command": "dotnet",
-            "type": "shell",
+            "type": "process",
             "args": [
                 "build",
                 "${workspaceFolder}/search.csproj",
+                "-c", "Debug",
+                "-p:BuildLogExplorer=true",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary"
             ],
