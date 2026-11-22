@@ -24,6 +24,17 @@ fn main() -> eframe::Result {
             .with_drag_and_drop(!elevated),
         // Where Explorer's file list must be read on Ctrl+V, the app handles the clipboard keys itself
         clipboard_shortcuts: !logexplorer::clipboard::OWN_SHORTCUTS,
+        #[cfg(target_os = "linux")]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11 as _;
+
+            // Winit 0.30 receives file drops through X11. On a Wayland desktop use
+            // XWayland when it is reachable and leave native Wayland as the fallback.
+            let wayland = ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"].iter().any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+            if wayland && x11rb::connect(None).is_ok() {
+                builder.with_x11();
+            }
+        })),
         ..Default::default()
     };
     eframe::run_native(

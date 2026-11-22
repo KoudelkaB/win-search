@@ -17,6 +17,8 @@ byte: File Search Manager hands over a list longer than a Windows command line (
 characters) this way. Files can also be dropped into the window or pasted after copying them
 in a file manager. The viewer opens JSON as text. Import profile bundles through
 `≡` → Upload profiles.
+On Wayland desktops Log Explorer uses XWayland for file drops when it is available.
+In sessions without XWayland, open files with **Open file** or paste them from the file manager.
 The close button beside Open file (`Ctrl+W`) unloads all files in the view and keeps the
 current pipeline.
 Line numbers are hidden by default. Use **App menu → Show line numbers** to turn them on.

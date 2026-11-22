@@ -25,10 +25,10 @@ tempfile = "3"
 [build-dependencies]
 embed-resource = "3"
 
-# GNOME/Wayland does not draw server-side decorations. Winit's fallback is a blank
-# bar; Adwaita draws the title and window controls, including the loaded file name.
+# Adwaita draws the title and window controls on native Wayland.
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+x11rb = { version = "0.13", default-features = false }
 
 # Files dropped into the program while it is elevated (elevated_drop.rs)
 [target.'cfg(windows)'.dependencies]
