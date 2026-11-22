@@ -1130,11 +1130,66 @@ mod tests {
 
     #[test]
     fn an_equals_sign_selects_the_expression_around_it() {
-        let stage = stage_of(&["set(a = b + 1, c == d); user.name = getName(x, y);", "let total = items", "    .map(f)", "    .sum();", "next"]);
+        let stage = stage_of(&["set(a = b + 1, c == d); user.name = getName(x, y);", "let total=items", "    .map(f)", "    .sum();", "ready ? rows=4668: fallback;"]);
         assert_eq!(click(&stage, 0, "= b"), "a = b + 1");
         assert_eq!(click(&stage, 0, "== d"), "c == d");
         assert_eq!(click(&stage, 0, "= getName"), "user.name = getName(x, y)");
-        assert_eq!(click(&stage, 1, "= items"), "let total = items\n    .map(f)\n    .sum()");
+        assert_eq!(click(&stage, 1, "=items"), "let total=items\n    .map(f)\n    .sum()");
+        assert_eq!(click(&stage, 4, "=4668"), "ready ? rows=4668: fallback");
+    }
+
+    #[test]
+    fn an_expression_in_a_log_can_continue_past_its_first_term() {
+        let arithmetic = "2026-11-11 23:24:28 [debug] evaluation a=b + 1";
+        let call_chain = "2026-11-11 23:24:28 [debug] total=items";
+        let stage = stage_of(&[arithmetic, call_chain, "    .sum();"]);
+        assert_eq!(click(&stage, 0, "=b"), arithmetic);
+        assert_eq!(click(&stage, 1, "=items"), format!("{call_chain}\n    .sum()"));
+    }
+
+    #[test]
+    fn an_equals_sign_selects_the_log_field_before_the_message() {
+        let stage = stage_of(&[
+            "2026-11-03 23:26:52.234 UI    update user sort=+LastChangeTime rows=4668: wait 0 ms, reason=filter, cache=miss, query 84 ms, publish 13 ms",
+            "Přepočet phase=load tasks=-12: hotovo",
+        ]);
+        assert_eq!(click(&stage, 0, "=filter"), "reason=filter");
+        assert_eq!(click(&stage, 0, "=miss"), "cache=miss");
+        assert_eq!(click(&stage, 0, "=4668"), "rows=4668");
+        assert_eq!(click(&stage, 1, "=-12"), "tasks=-12");
+    }
+
+    #[test]
+    fn an_equals_sign_selects_individual_log_fields() {
+        let sub_gates = r#"{"pixelValidation":false,"clipboardPasteMultiline":true,"other":[{"text":"a \"quote\", then }"}]}"#;
+        let config = format!("2026-11-11 23:24:28 [info] [chicago] GrowthBook chicago_config: raw=undefined → enabled=false allowedByDeviceManagement=true subGates={sub_gates}");
+        let stage = stage_of(&[
+            &config,
+            "2026-11-11 23:24:28 [info] [remoteMarketplaceMigration] marketplace_migration.gate_check gate=claudeai_cowork_backend_marketplaces value=true",
+            r#"2026-11-11 23:24:28 [info] before="with spaces" status=ready payload=["a, b", {"ok":true}] after='escaped\' quote'"#,
+            r#"raw=undefined→enabled=false payload={"text":"a=b"} value=true"#,
+            "2026-11-11 23:24:28 [info] feature gate value=true",
+        ]);
+        assert_eq!(click(&stage, 0, "=undefined"), "raw=undefined");
+        assert_eq!(click(&stage, 0, "=false"), "enabled=false");
+        assert_eq!(click(&stage, 0, "=true"), "allowedByDeviceManagement=true");
+        assert_eq!(click(&stage, 0, "={"), format!("subGates={sub_gates}"));
+        assert_eq!(click(&stage, 1, "=claudeai"), "gate=claudeai_cowork_backend_marketplaces");
+        assert_eq!(click(&stage, 1, "=true"), "value=true");
+        assert_eq!(click(&stage, 2, "=ready"), "status=ready");
+        assert_eq!(click(&stage, 2, "=["), r#"payload=["a, b", {"ok":true}]"#);
+        assert_eq!(click(&stage, 2, "='"), r#"after='escaped\' quote'"#);
+        assert_eq!(click(&stage, 3, "=undefined"), "raw=undefined");
+        assert_eq!(click(&stage, 3, "=false"), "enabled=false");
+        assert_eq!(click(&stage, 3, "=true"), "value=true");
+        assert_eq!(click(&stage, 4, "=true"), "value=true");
+    }
+
+    #[test]
+    fn a_log_field_heuristic_does_not_apply_inside_a_json_string() {
+        let json = r#"{"message":"sort=fast rows=4668: wait 0 ms"}"#;
+        let stage = stage_of(&[json]);
+        assert_eq!(click(&stage, 0, "=4668"), json);
     }
 
     #[test]
@@ -1183,13 +1238,20 @@ mod tests {
 
     #[test]
     fn an_equals_sign_in_a_tag_selects_its_attribute() {
-        let stage = stage_of(&[r#"  <member name="T:Android.Manifest" other='x > y'>"#, "  <option selected value=android>", "  </option>", "  </member>"]);
+        let stage = stage_of(&[
+            r#"  <member name="T:Android.Manifest" other='x > y'>"#,
+            "  <option selected value=android>",
+            "  </option>",
+            "  </member>",
+            "<option sort=fast rows=4668: selected>",
+        ]);
         let (attribute, text) = click_with(&stage, 0, "=\"", None, false);
         assert_eq!(text, r#"name="T:Android.Manifest""#);
         assert_eq!(click(&stage, 0, "='"), "other='x > y'");
         assert_eq!(click(&stage, 0, "\"T:"), "T:Android.Manifest");
         assert_eq!(click_with(&stage, 0, "=\"", attribute.as_ref(), false).1, r#"member name="T:Android.Manifest" other='x > y'"#);
         assert_eq!(click(&stage, 1, "=android"), "value=android");
+        assert_eq!(click(&stage, 4, "=4668"), "rows=4668:");
     }
 
     #[test]
