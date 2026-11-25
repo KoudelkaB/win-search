@@ -3,10 +3,14 @@
              x:Class="search.AutoCompleteTextBox">
     <Panel>
         <TextBox x:Name="TextBox" />
+        <!-- A click outside closes the list and still does what it was for: kept back, the
+             click on a row of the results only closed the list - the keyboard stayed in the
+             filter and nothing was selected -->
         <Popup x:Name="autoListPopup"
                PlacementTarget="{Binding #TextBox}"
                Placement="BottomEdgeAlignedLeft"
                IsLightDismissEnabled="True"
+               OverlayDismissEventPassThrough="True"
                MinWidth="200">
             <Border Background="{DynamicResource SystemControlBackgroundChromeWhiteBrush}"
                     BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"

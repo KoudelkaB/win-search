@@ -178,6 +178,28 @@ namespace search.Tests
             finally { next.Close(); }
         }
 
+        /// <summary>
+        /// The filters used before drop under the box while typing. A click on a row closes the
+        /// list and selects the row at once: it used to only close the list, the keyboard stayed
+        /// in the filter and the row was merely under the pointer.
+        /// </summary>
+        [AvaloniaFact]
+        public async Task AClickOnARowWithTheHistoryOpenSelectsItAndTakesTheKeyboard()
+        {
+            using var scene = await UiScene.Open();
+            var filter = Filter(scene);
+            filter.SuggestionList = () => new[] { "logs", "reports" };
+            scene.Click(filter);
+            scene.Keys(Key.Down);
+            Assert.True(filter.IsListOpen);
+
+            scene.ClickRow(scene.FileNode);
+
+            Assert.False(filter.IsListOpen);
+            Assert.True(scene.Grid.IsKeyboardFocusWithin);
+            Assert.Same(scene.FileNode, Assert.Single(scene.Selected));
+        }
+
         static AutoCompleteTextBox Filter(UiScene scene) => scene.Find<AutoCompleteTextBox>("filterTextBox");
 
         static async Task<PinnedFilter> Pin(UiScene scene, string filter, string name)
@@ -202,8 +224,8 @@ namespace search.Tests
 
         static Button PinButton(UiScene scene, PinnedFilter pinned)
         {
-            //Filters used before are suggested in a list that drops over the pins - the
-            //first click would only close it, as it does for a user
+            //Filters used before are suggested in a list that drops over the pins - a click
+            //there would land in the list, as it does for a user
             if (Filter(scene).IsListOpen) scene.Keys(Key.Escape);
             Assert.False(Filter(scene).IsListOpen);
             scene.Settle();
