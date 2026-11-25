@@ -25,17 +25,51 @@ fn field_key_char(ch: char) -> bool {
     ch.is_alphanumeric() || matches!(ch, '_' | '-' | '.')
 }
 
+/// What separates log fields: blanks, control characters such as the group separator
+/// in audit logs, and arrows
+fn field_gap(ch: char) -> bool {
+    ch.is_whitespace() || ch.is_control() || ch == '→'
+}
+
 fn field_key_start(line: &str, equals: usize) -> Option<usize> {
     let prefix = line[..equals].trim_end_matches(field_key_char);
     let key = &line[prefix.len()..equals];
     let first = key.chars().next()?;
     let last = key.chars().next_back()?;
-    let delimited = prefix.chars().next_back().is_none_or(|ch| ch.is_whitespace() || matches!(ch, ',' | '→'));
+    // A quote before the key closes the previous value when the caller sees it at the top level.
+    let delimited = prefix.chars().next_back().is_none_or(|ch| field_gap(ch) || matches!(ch, ',' | '"' | '\'' | '`'));
     (delimited && (first.is_alphabetic() || first == '_') && (last.is_alphanumeric() || last == '_')).then_some(prefix.len())
+}
+
+/// A key and its equals sign start `text`
+fn starts_with_field(text: &str) -> bool {
+    text.find(|ch| !field_key_char(ch)).is_some_and(|at| text[at..].starts_with('=') && field_key_start(text, at) == Some(0))
+}
+
+/// An unquoted value runs to a gap, a separator or a quote, including balanced brackets
+/// such as in `audit(1790879654.546:187)`.
+fn unquoted_value_end(value: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in value.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return at,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth > 0 => {}
+            ',' | ';' | '"' | '\'' | '`' => return at,
+            _ if field_gap(ch) => return at,
+            _ => {}
+        }
+    }
+    if depth > 0 {
+        return value.find(['(', '[', '{']).unwrap_or(value.len());
+    }
+    value.len()
 }
 
 fn field_value_end(value: &str) -> Option<usize> {
     let bytes = value.as_bytes();
+    let quoted = matches!(bytes.first()?, b'"' | b'\'' | b'`');
     let end = match *bytes.first()? {
         quote @ (b'"' | b'\'' | b'`') => {
             let close = memchr_iter(quote, &bytes[1..]).map(|at| at + 1).find(|&at| !delimiters::is_escaped(bytes, at))?;
@@ -46,22 +80,39 @@ fn field_value_end(value: &str) -> Option<usize> {
             json.next()?.ok()?;
             json.byte_offset()
         }
-        _ => value.find(|ch| !(field_key_char(ch) || ch == '+')).unwrap_or(value.len()),
+        _ => {
+            let end = unquoted_value_end(value);
+            // A colon after the value starts the message, as in `rows=4668: wait`.
+            let rest = &value[end..];
+            if value[..end].ends_with(':') && rest.chars().next().is_none_or(char::is_whitespace) {
+                end - 1
+            } else {
+                end
+            }
+        }
     };
     let tail = &value[end..];
     let message = tail.strip_prefix(':').is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace));
-    let next = tail.trim_start();
+    let next = tail.trim_start_matches(field_gap);
     let word_separator = next.len() < tail.len() && !next.starts_with(['+', '-', '*', '/', '%', '&', '|', '^', '?', '.', '<', '>', '=']);
-    let delimited = tail.is_empty() || tail.starts_with([',', ';', '→']) || word_separator || message;
+    let delimited = tail.is_empty() || tail.starts_with([',', ';']) || word_separator || message || (quoted && starts_with_field(tail));
     (end > 0 && delimited).then_some(end)
 }
 
-fn at_top_level(line: &str) -> bool {
+/// Where `text` ends: at the top level, inside a quote opened at the top level (its
+/// byte), or nested in brackets
+enum Context {
+    TopLevel,
+    Quote(usize),
+    Nested,
+}
+
+fn context(line: &str) -> Context {
     let bytes = line.as_bytes();
     let mut quote = None;
     let mut depth = 0usize;
     for (at, &ch) in bytes.iter().enumerate() {
-        if let Some(open) = quote {
+        if let Some((open, _)) = quote {
             if ch == open && !delimiters::is_escaped(bytes, at) {
                 quote = None;
             }
@@ -69,18 +120,21 @@ fn at_top_level(line: &str) -> bool {
         }
         match ch {
             b'\'' if line[..at].chars().next_back().is_some_and(char::is_alphanumeric) => {}
-            b'"' | b'\'' | b'`' if !delimiters::is_escaped(bytes, at) => quote = Some(ch),
+            b'"' | b'\'' | b'`' if !delimiters::is_escaped(bytes, at) => quote = Some((ch, at)),
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
             _ => {}
         }
     }
-    quote.is_none() && depth == 0
+    match (quote, depth) {
+        (None, 0) => Context::TopLevel,
+        (Some((_, at)), 0) => Context::Quote(at),
+        _ => Context::Nested,
+    }
 }
 
 fn has_adjacent_field(prefix: &str, tail: &str) -> bool {
-    let gap = |ch: char| ch.is_whitespace() || ch == '→';
-    let next = tail.trim_start_matches(gap);
+    let next = tail.trim_start_matches(field_gap);
     if let Some(equals) = next.find(|ch| !field_key_char(ch)).filter(|&at| next.as_bytes()[at] == b'=') {
         if field_key_start(next, equals).is_some() && field_value_end(&next[equals + 1..]).is_some() {
             return true;
@@ -88,7 +142,7 @@ fn has_adjacent_field(prefix: &str, tail: &str) -> bool {
     }
 
     // The preceding value can contain equals signs inside quotes or JSON.
-    let previous = prefix.trim_end_matches(gap);
+    let previous = prefix.trim_end_matches(field_gap);
     previous.rmatch_indices('=').any(|(equals, _)| {
         let value = &previous[equals + 1..];
         field_key_start(previous, equals).is_some() && field_value_end(value) == Some(value.len())
@@ -96,15 +150,38 @@ fn has_adjacent_field(prefix: &str, tail: &str) -> bool {
 }
 
 /// An unspaced assignment belongs to a log field on a timestamped row or beside another
-/// field. Leave assignments in quoted text, nested structures and ordinary code to the
-/// expression selector.
+/// field. Fields can also be listed in the quoted value of a field, as in audit messages
+/// `msg='op=PAM:setcred grantors=pam_permit'`. Leave assignments in other quoted text,
+/// nested structures and ordinary code to the expression selector.
 fn log_field(line: &str, equals: usize) -> Option<(usize, usize)> {
     static TIMESTAMP: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(&format!(r"^{DATE_TIME_ISO}\s")).expect("log timestamp"));
     let start = field_key_start(line, equals)?;
+    match context(&line[..start]) {
+        Context::TopLevel => {
+            let value_start = equals + 1;
+            let end = value_start + field_value_end(&line[value_start..])?;
+            (TIMESTAMP.is_match(line.trim_start()) || has_adjacent_field(&line[..start], &line[end..])).then_some((start, end))
+        }
+        Context::Quote(open) => {
+            let outer_equals = open.checked_sub(1).filter(|&at| line.as_bytes()[at] == b'=')?;
+            let (_, outer_end) = log_field(line, outer_equals)?;
+            let content = &line[open + 1..outer_end - 1];
+            let (start, end) = quoted_field(content, equals - open - 1)?;
+            Some((open + 1 + start, open + 1 + end))
+        }
+        Context::Nested => None,
+    }
+}
+
+/// A field in the content of a quoted field value
+fn quoted_field(content: &str, equals: usize) -> Option<(usize, usize)> {
+    let start = field_key_start(content, equals)?;
     let value_start = equals + 1;
-    let end = value_start + field_value_end(&line[value_start..])?;
-    let prefix = &line[..start];
-    (at_top_level(prefix) && (TIMESTAMP.is_match(line.trim_start()) || has_adjacent_field(prefix, &line[end..]))).then_some((start, end))
+    let end = value_start + field_value_end(&content[value_start..])?;
+    match context(&content[..start]) {
+        Context::TopLevel => Some((start, end)),
+        Context::Quote(_) | Context::Nested => None,
+    }
 }
 
 fn left_boundary(line: &[u8]) -> (usize, bool) {

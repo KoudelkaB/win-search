@@ -1186,6 +1186,43 @@ mod tests {
     }
 
     #[test]
+    fn an_equals_sign_selects_audit_fields_and_the_fields_of_their_messages() {
+        for separator in ["\u{1d}", ""] {
+            let rows = [
+                format!(r#"type=CRED_DISP msg=audit(1790879654.546:187): pid=1554 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:xdm_t:s0-s0:c0.c1023 msg='op=PAM:setcred grantors=pam_permit acct="gdm-greeter" exe="/usr/libexec/gdm-session-worker" hostname=fedora addr=? terminal=/dev/tty1 res=success'{separator}UID="root" AUID="unset""#),
+                format!(r#"type=SERVICE_STOP msg=audit(1790879664.820:189): pid=1 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:init_t:s0 msg='unit=user@60578 comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'{separator}UID="root" AUID="unset""#),
+                "type=BPF msg=audit(1790879667.925:192): prog-id=81 op=UNLOAD".to_string(),
+            ];
+            let stage = stage_of(&rows.iter().map(String::as_str).collect::<Vec<_>>());
+            assert_eq!(click(&stage, 0, "=CRED"), "type=CRED_DISP");
+            assert_eq!(click(&stage, 0, "=audit"), "msg=audit(1790879654.546:187)");
+            assert_eq!(click(&stage, 0, "=1554"), "pid=1554");
+            assert_eq!(click(&stage, 0, "=0 "), "uid=0");
+            assert_eq!(click(&stage, 0, "=42"), "auid=4294967295");
+            assert_eq!(click(&stage, 0, "=system_u"), "subj=system_u:system_r:xdm_t:s0-s0:c0.c1023");
+            assert_eq!(click(&stage, 0, "='"), r#"msg='op=PAM:setcred grantors=pam_permit acct="gdm-greeter" exe="/usr/libexec/gdm-session-worker" hostname=fedora addr=? terminal=/dev/tty1 res=success'"#);
+            assert_eq!(click(&stage, 0, "=PAM"), "op=PAM:setcred");
+            assert_eq!(click(&stage, 0, "=pam_"), "grantors=pam_permit");
+            assert_eq!(click(&stage, 0, "=\"gdm"), r#"acct="gdm-greeter""#);
+            assert_eq!(click(&stage, 0, "=\"/usr"), r#"exe="/usr/libexec/gdm-session-worker""#);
+            assert_eq!(click(&stage, 0, "=fedora"), "hostname=fedora");
+            assert_eq!(click(&stage, 0, "=?"), "addr=?");
+            assert_eq!(click(&stage, 0, "=/dev"), "terminal=/dev/tty1");
+            assert_eq!(click(&stage, 0, "=success"), "res=success");
+            assert_eq!(click(&stage, 0, "=\"root"), r#"UID="root""#);
+            assert_eq!(click(&stage, 0, "=\"unset"), r#"AUID="unset""#);
+            assert_eq!(click(&stage, 1, "=user@"), "unit=user@60578");
+            assert_eq!(click(&stage, 1, "=\"systemd"), r#"comm="systemd""#);
+            assert_eq!(click(&stage, 1, "=? addr"), "hostname=?");
+            assert_eq!(click(&stage, 1, "=? res"), "terminal=?");
+            assert_eq!(click(&stage, 1, "=success"), "res=success");
+            assert_eq!(click(&stage, 1, "=\"unset"), r#"AUID="unset""#);
+            assert_eq!(click(&stage, 2, "=81"), "prog-id=81");
+            assert_eq!(click(&stage, 2, "=UNLOAD"), "op=UNLOAD");
+        }
+    }
+
+    #[test]
     fn a_log_field_heuristic_does_not_apply_inside_a_json_string() {
         let json = r#"{"message":"sort=fast rows=4668: wait 0 ms"}"#;
         let stage = stage_of(&[json]);
