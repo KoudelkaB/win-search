@@ -11,7 +11,7 @@ The result list is designed for keyboard use. When the list has focus, the **Hin
 
 On startup, File Search Manager loads ready drives and watches for file-system changes. Each drive loads independently, so a slow network drive never delays the others.
 
-On Linux, File Search Manager can use an optional file system service. The .rpm and .deb packages install it turned on, and **⚙ Settings** next to **🌐** turns it off and on; with the portable tar.gz, Settings installs, updates and removes it (`sudo ./install-service.sh` in the app's folder does the same). Each change asks for an administrator password. With it, changes are tracked live, and administrators (members of the wheel or sudo group) also see the files they cannot open themselves - Settings switches that off, and `A` opens such a file as an administrator. Without the service, changes are not tracked live: the status bar shows when the index was made, the drives are scanned again in the background when you come back to the window and the index is more than two minutes old, and `F12` rescans them right away. Changes made through File Search Manager itself always show at once.
+On Linux, File Search Manager can use an optional file system service. The .rpm and .deb packages install it turned on, and **⚙ Settings** next to **🌐** turns it off and on; with the portable tar.gz, Settings installs, updates and removes it (`sudo ./install-service.sh` in the app's folder does the same). Each change asks for an administrator password. With it, changes are tracked live, and administrators (members of the wheel or sudo group) also see the files they cannot open themselves - Settings switches that off, and `A` opens such a file in Log explorer running as root. Without the service, changes are not tracked live: the status bar shows when the index was made, the drives are scanned again in the background when you come back to the window and the index is more than two minutes old, and `F12` rescans them right away. Changes made through File Search Manager itself always show at once.
 
 By default only NTFS drives are indexed - other file systems (network mounts, FAT sticks) cannot use the fast MFT read, and walking them file by file can dominate the whole load. Use the **💽 Drives…** button in the status bar to choose exactly which drives are indexed; unchecked drives are neither scanned nor watched.
 
@@ -181,7 +181,7 @@ Common commands:
 - `G`: show in files — open the files containing the searched text (green rows) in one Log explorer window, appended and filtered to the lines with the text. Also the **Show in files** button next to **Case insensitive** and the context menu.
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
-- `A`: open selected items as administrator.
+- `A`: open selected items as administrator. `A`, `L` opens them in Log explorer running as administrator, so it reads the files only administrators may (for example `C:\Windows\Panther\setupact.log`); `L` alone runs it with the rights of File Search Manager itself. On Linux, where polkit runs only programs, `A` alone opens a file in Log explorer running as root, runs a program as root and opens a terminal with a root shell (`sudo -s`) in a folder.
 - `F2`: rename one physical file or folder directly in its Name cell. With multiple items, use one of the transformation commands below.
 - `F3`: view selected items.
 - `F4`: edit selected items.
@@ -209,7 +209,7 @@ Open targets after `O` or `A`. **Hints** shows only installed applications compa
 
 With no compatible installed application, a category is hidden. With exactly one, its key opens that application directly (for example, `O`, `N` opens Notepad++). A submenu is shown only when two or more applications are available. This also applies after `A`.
 
-- `B`: File Explorer.
+- `B`: File Explorer. After `A` too it has your rights: the system hands the items to the file manager already running.
 - `W`: default detected web browser.
 - `C`: Chrome.
 - `F`: Firefox.
@@ -218,6 +218,7 @@ With no compatible installed application, a category is hidden. With exactly one
 - `I`: Internet Explorer.
 - `A`: Adobe Reader.
 - `T`: Log explorer.
+- `L`: Log explorer (as `L` in the result list).
 - `D`: Visual Studio Code.
 - `V`: Visual Studio.
 - `Y`: Antigravity.
@@ -232,7 +233,7 @@ With no compatible installed application, a category is hidden. With exactly one
 - `X`: GhostXPS.
 - `R`: viewer detected for PRN content.
 - `S`, then `P`: PowerShell.
-- `S` alone: Command Prompt.
+- `S` alone: Command Prompt. On Linux: a terminal in the folder of each item, after `A` with a root shell (`sudo -s`, which asks for your password in the terminal).
 
 `G`, `P`, `X`, and `R` ask for a DPI value before they run.
 

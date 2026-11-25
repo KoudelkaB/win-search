@@ -60,6 +60,94 @@ namespace search.Tests
         }
 
         [Fact]
+        public void AsAnAdministratorItGetsOneCommandLineAndALongListThroughAPipe()
+        {
+            //What starts it elevated (the elevated helper, UAC, pkexec) takes one string
+            var commandLine = NativeLogExplorer.ElevatedCommandLine(new[] { @"C:\Windows\Panther\setupact.log", @"C:\my logs\a.log" }, null,
+                Czech, @"C:\Users\me\AppData\Local\win-search\LogExplorer", @"C:\Temp\files.lst");
+            Assert.Equal(@"--lang cs-CZ --data-dir C:\Users\me\AppData\Local\win-search\LogExplorer -- C:\Windows\Panther\setupact.log ""C:\my logs\a.log""",
+                commandLine);
+            if (OperatingSystem.IsWindows())
+                Assert.Equal(new[] { "--lang", "cs-CZ", "--data-dir", @"C:\Users\me\AppData\Local\win-search\LogExplorer", "--",
+                    @"C:\Windows\Panther\setupact.log", @"C:\my logs\a.log" }, WindowsArguments(commandLine));
+
+            //Too many for a command line: the list of the standard input comes through a pipe
+            var files = Enumerable.Range(0, 400).Select(i => $"/logs/{new string('x', 80)}/{i:D3}.log").ToArray();
+            Assert.EndsWith(@" --files0-from \\.\pipe\WinSearch-1",
+                NativeLogExplorer.ElevatedCommandLine(files, null, Czech, null, @"\\.\pipe\WinSearch-1"));
+
+            //Root on Linux keeps its own profiles
+            Assert.Equal(new[] { "--lang", "cs-CZ", "--", "/var/log/secure" },
+                NativeLogExplorer.Arguments(new[] { "/var/log/secure" }, null, Czech, null));
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task AnElevatedProgramReadsTheListFromThePipeAsAFile()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "The pipe is how Windows hands the list over");
+            //Beyond the buffer of a pipe: written while the program reads
+            var files = Enumerable.Range(0, 4000).Select(i => $@"C:\logs\{new string('x', 80)}\{i:D4}.log").ToArray();
+            var list = NativeLogExplorer.StandardInputList(files);
+            string listFrom = null;
+            NativeLogExplorer.ServeList(list, name => listFrom = name, TimeSpan.FromSeconds(30));
+            Assert.StartsWith(@"\\.\pipe\WinSearch-", listFrom);
+
+            //Opened by its name and read to the end, as Log explorer reads --files0-from
+            using var read = new MemoryStream();
+            using (var pipe = new FileStream(listFrom, FileMode.Open, FileAccess.Read))
+                await pipe.CopyToAsync(read, TestContext.Current.CancellationToken);
+            Assert.Equal(list, read.ToArray());
+
+            //Nobody else gets it: the pipe is gone once read
+            Assert.ThrowsAny<IOException>(() => new FileStream(listFrom, FileMode.Open, FileAccess.Read).Dispose());
+
+            //Nobody came (the UAC question declined): the pipe goes after the wait
+            NativeLogExplorer.ServeList(list, name => listFrom = name, TimeSpan.FromMilliseconds(100));
+            await System.Threading.Tasks.Task.Delay(1000, TestContext.Current.CancellationToken);
+            Assert.ThrowsAny<IOException>(() => new FileStream(listFrom, FileMode.Open, FileAccess.Read).Dispose());
+        }
+
+        [Fact]
+        public void QuotedArgumentsComeBackAsTheyWere()
+        {
+            Assert.Equal("plain", Shell.Quote("plain"));
+            Assert.Equal(@"""a b""", Shell.Quote("a b"));
+            Assert.Equal(@"""""", Shell.Quote(""));
+            Assert.Equal(@"""a\""b""", Shell.Quote("a\"b"));
+            //A trailing backslash would escape the closing quote; inside a name it is itself
+            Assert.Equal(@"""C:\my dir\\""", Shell.Quote(@"C:\my dir\"));
+            Assert.Equal(@"""a\\\""b c""", Shell.Quote(@"a\""b c"));
+            Assert.Equal(@"""C:\a b\c""", Shell.Quote(@"C:\a b\c"));
+            if (!OperatingSystem.IsWindows()) return;
+            var values = new[] { "plain", "a b", "", "a\"b", @"C:\my dir\", @"a\""b c", @"C:\a b\c", @"\\server\share\x y\\", "\t" };
+            Assert.Equal(values, WindowsArguments(string.Join(" ", values.Select(Shell.Quote))));
+        }
+
+        /// <summary>The arguments a Windows program reads from the command line</summary>
+        static string[] WindowsArguments(string commandLine)
+        {
+            //The program name is parsed by other rules: one without quotes leads
+            var list = CommandLineToArgvW("program " + commandLine, out var count);
+            try
+            {
+                return Enumerable.Range(1, count - 1)
+                    .Select(i => System.Runtime.InteropServices.Marshal.PtrToStringUni(
+                        System.Runtime.InteropServices.Marshal.ReadIntPtr(list, i * IntPtr.Size)))
+                    .ToArray();
+            }
+            finally
+            {
+                LocalFree(list);
+            }
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        static extern IntPtr LocalFree(IntPtr memory);
+
+        [Fact]
         public void ItAsksOnlyWhenTheFilesWouldNotFitInMemory()
         {
             const ulong memory = 16UL << 30;

@@ -136,7 +136,9 @@ namespace search
         /// <summary>Restart with the same arguments (language change)</summary>
         internal static void Restart()
         {
-            var start = new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = false };
+            var (program, leading) = Program.Self();
+            var start = new ProcessStartInfo(program) { UseShellExecute = false };
+            foreach (var argument in leading) start.ArgumentList.Add(argument);
             // Carry the original arguments over, but drop --help so a language change made from
             // a help-launched instance does not reopen the help window after the restart.
             var args = Environment.GetCommandLineArgs();

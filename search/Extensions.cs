@@ -60,20 +60,18 @@ namespace search
                     // second time for the same action the user just refused.
                     if (Broker.Declined) return null;
                 }
+                // Per-open UAC prompt when the broker was declined or failed
                 try
                 {
-                    return ProcessLauncher.Start(new ProcessStartInfo
-                    {
-                        FileName = name,
-                        Arguments = args,
-                        WorkingDirectory = workDir,
-                        UseShellExecute = true,
-                        Verb = "runas" // Per-open UAC prompt when the broker was declined
-                    });
+                    return RunAs(name, args, workDir);
                 }
-                catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223) // ERROR_CANCELLED
+                catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == NoAssociation && string.IsNullOrWhiteSpace(args))
                 {
-                    return null; // User declined this one
+                    // A document: the shell runs only programs as an administrator, a .log or .txt
+                    // has no "runas". An elevated copy of this app opens it in its application,
+                    // as the helper would (Program.Main, --open).
+                    var (program, leading) = Program.Self();
+                    return RunAs(program, string.Join(" ", leading.Concat(new[] { "--open", name, workDir ?? "" }).Select(Shell.Quote)), workDir);
                 }
             }
 
@@ -93,12 +91,37 @@ namespace search
             });
         }
 
+        /// <summary>ERROR_NO_ASSOCIATION: the shell has no such verb (runas) for the file</summary>
+        const int NoAssociation = 1155;
+
+        /// <summary>Start elevated after the UAC prompt; null when the user declined it</summary>
+        static Process RunAs(string name, string args, string workDir)
+        {
+            try
+            {
+                return ProcessLauncher.Start(new ProcessStartInfo
+                {
+                    FileName = name,
+                    Arguments = args,
+                    WorkingDirectory = workDir,
+                    UseShellExecute = true,
+                    Verb = "runas"
+                });
+            }
+            catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223) // ERROR_CANCELLED
+            {
+                return null; // User declined this one
+            }
+        }
+
         static Process OpenUnix(string name, string args, string workDir, bool elevated)
         {
             if (string.IsNullOrEmpty(workDir)) workDir = null;
             var isDocument = string.IsNullOrWhiteSpace(args)
                 && (Directory.Exists(name) || File.Exists(name) && !IsUnixExecutable(name));
-            if (isDocument && !elevated) return Shell.OpenDefault(name);
+            //pkexec runs programs only: a document as an administrator is the business of the
+            //caller (MainWindow.OpenAsRoot), unless this process is root already
+            if (isDocument && (!elevated || Program.IsProcessElevated)) return Shell.OpenDefault(name);
             var program = Shell.Which(name) ?? name;
             if (elevated && !Program.IsProcessElevated)
                 return Shell.StartElevated(program, args, workDir ?? (isDocument ? Path.GetDirectoryName(name) : null));

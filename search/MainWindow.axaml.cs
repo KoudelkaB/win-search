@@ -297,8 +297,11 @@ namespace search
         {
             // Add commander
             CommandTree Enter(string hint) => (Key.None, L.Format("EnterValueKeepingKey", L.Text(hint)));
+            //L as in the result list itself: A, L opens Log explorer as an administrator, so it
+            //reads the files only administrators may
             var openIn = new CommandTree[] {
                 (Key.T, "Log explorer", n => n.AtLeast(1) && Apps.TextViever != null),
+                (Key.L, "Log explorer", n => n.AtLeast(1) && Apps.LogExplorerAvailable),
                 (Key.B, "File browser", n => n.AtLeast(1) && Apps.Explorer != null),
                 (Key.W, "Web browser", n => n.AtLeast(1) && Apps.WebBrowser != null),
                 OperatingSystem.IsWindows()

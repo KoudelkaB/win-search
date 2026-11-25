@@ -74,7 +74,7 @@ namespace search
         public static string FirstInstalled(params string[] names) => names.Select(Which).FirstOrDefault(p => p != null);
 
         /// <summary>Start a program on the host (arguments in the usual quoted command-line form)</summary>
-        public static Process Start(string program, string arguments = "", string workDir = null)
+        public static Process Start(string program, string arguments = "", string workDir = null, bool redirectInput = false)
         {
             var start = IsFlatpak
                 ? new ProcessStartInfo("flatpak-spawn")
@@ -84,6 +84,8 @@ namespace search
                 }
                 : new ProcessStartInfo(program, arguments ?? "");
             start.UseShellExecute = false;
+            //flatpak-spawn passes its standard input on, as pkexec does
+            start.RedirectStandardInput = redirectInput;
             if (!IsFlatpak && !string.IsNullOrEmpty(workDir) && Directory.Exists(workDir)) start.WorkingDirectory = workDir;
             return ProcessLauncher.Start(start);
         }
@@ -109,15 +111,16 @@ namespace search
 
         /// <summary>
         /// Run a program as root through polkit. GUI programs need the display variables,
-        /// which pkexec deliberately drops.
+        /// which pkexec deliberately drops. Its standard input it keeps: with
+        /// <paramref name="redirectInput"/> the program reads what is written to it.
         /// </summary>
-        public static Process StartElevated(string program, string arguments, string workDir)
+        public static Process StartElevated(string program, string arguments, string workDir, bool redirectInput = false)
         {
             var env = new StringBuilder("env");
             foreach (var name in new[] { "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS" })
                 if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
                     env.Append(' ').Append(Quote($"{name}={value}"));
-            return Start("pkexec", $"{env} {Quote(program)} {arguments}", workDir);
+            return Start("pkexec", $"{env} {Quote(program)} {arguments}", workDir, redirectInput);
         }
 
         /// <summary>
@@ -152,44 +155,97 @@ namespace search
             return OpenDefault(isFolder ? path : Path.GetDirectoryName(path) ?? path);
         }
 
-        /// <summary>A terminal window in the folder: $TERMINAL, then the common emulators</summary>
-        public static Process OpenTerminal(string folder)
+        static readonly string[] Terminals = { "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole",
+            "xfce4-terminal", "mate-terminal", "tilix", "kitty", "alacritty", "wezterm", "foot", "xterm" };
+
+        /// <summary>
+        /// A terminal window in the folder: $TERMINAL, then the common emulators.
+        /// <paramref name="asRoot"/>: with a root shell in that folder (<see cref="RootShell"/>).
+        /// </summary>
+        public static Process OpenTerminal(string folder, bool asRoot = false)
         {
+            var command = asRoot ? RootShell(L.Text("RootShellFailed")) : null;
             var preferred = Environment.GetEnvironmentVariable("TERMINAL");
-            var candidates = new List<(string Program, string[] Args)>();
-            if (!string.IsNullOrWhiteSpace(preferred)) candidates.Add((preferred, Array.Empty<string>()));
-            candidates.AddRange(new (string, string[])[]
+            foreach (var terminal in string.IsNullOrWhiteSpace(preferred) ? Terminals : Terminals.Prepend(preferred))
             {
-                ("x-terminal-emulator", Array.Empty<string>()),
-                ("gnome-terminal", new[] { "--working-directory=" + folder }),
-                ("kgx", new[] { "--working-directory=" + folder }),
-                ("ptyxis", new[] { "--working-directory=" + folder }),
-                ("konsole", new[] { "--workdir", folder }),
-                ("xfce4-terminal", new[] { "--working-directory=" + folder }),
-                ("mate-terminal", new[] { "--working-directory=" + folder }),
-                ("tilix", new[] { "--working-directory=" + folder }),
-                ("kitty", new[] { "--directory", folder }),
-                ("alacritty", new[] { "--working-directory", folder }),
-                ("wezterm", new[] { "start", "--cwd", folder }),
-                ("foot", new[] { "--working-directory=" + folder }),
-                ("xterm", Array.Empty<string>())
-            });
-            foreach (var (program, args) in candidates)
-            {
-                var path = Which(program);
+                var path = Which(terminal);
                 if (path == null) continue;
-                return Start(path, args, folder);
+                return Start(path, TerminalArguments(terminal, folder, command), folder);
             }
             throw new FileNotFoundException(L.Text("NoTerminal"));
         }
 
         /// <summary>
+        /// The arguments of a terminal: the folder, where it takes one (the others start in
+        /// their working directory), and the command it runs - each terminal its own way.
+        /// Without a command it runs the user's shell.
+        /// </summary>
+        internal static string[] TerminalArguments(string terminal, string folder, string[] command)
+        {
+            var run = command ?? Array.Empty<string>();
+            string[] After(string option) => command == null ? run : run.Prepend(option).ToArray();
+            //One string split by the rules of the shell: tilix joins the rest of its line so, and
+            //kgx takes no more before version 43
+            string[] AsOne() => command == null ? run : new[] { "-e", string.Join(" ", run.Select(PosixQuote)) };
+            static string[] With(string[] options, string[] rest) => options.Concat(rest).ToArray();
+            return Path.GetFileName(terminal) switch
+            {
+                "gnome-terminal" or "ptyxis" => With(new[] { "--working-directory=" + folder }, After("--")),
+                "kgx" or "tilix" => With(new[] { "--working-directory=" + folder }, AsOne()),
+                "konsole" => With(new[] { "--workdir", folder }, After("-e")),
+                "xfce4-terminal" or "mate-terminal" => With(new[] { "--working-directory=" + folder }, After("-x")),
+                "terminator" => After("-x"),
+                "kitty" => With(new[] { "--directory", folder }, run),
+                "alacritty" => With(new[] { "--working-directory", folder }, After("-e")),
+                "wezterm" => With(new[] { "start", "--cwd", folder }, After("--")),
+                "foot" => With(new[] { "--working-directory=" + folder }, run),
+                //x-terminal-emulator (as Debian requires of it), xterm and the like
+                _ => After("-e")
+            };
+        }
+
+        /// <summary>
+        /// A root shell in the working directory: sudo -s (sudo -i would start in root's home),
+        /// su where there is no sudo. The password is asked first: a terminal closes with its
+        /// command, so a refusal (a wrong password, a user without the right to sudo) would
+        /// only flash a window. The window then stays with the reason and
+        /// <paramref name="failed"/> until Enter.
+        /// </summary>
+        internal static string[] RootShell(string failed) => new[]
+        {
+            "sh", "-c",
+            @"if command -v sudo >/dev/null; then sudo -v && exec sudo -s; else exec su; fi; printf '\n%s ' ""$1""; read -r _",
+            "sh", failed
+        };
+
+        /// <summary>One word for a POSIX shell: as it is when nothing in it is special, else in single quotes</summary>
+        internal static string PosixQuote(string value)
+            => value.Length > 0 && value.All(c => char.IsAsciiLetterOrDigit(c) || "_-./=:,+@%".Contains(c))
+                ? value
+                : "'" + value.Replace("'", @"'\''") + "'";
+
+        /// <summary>
         /// Quote one argument for ProcessStartInfo.Arguments (.NET splits that string by the
-        /// same rules on every platform: double quotes group, \" is a literal quote)
+        /// same rules on every platform, and so do Windows programs: double quotes group,
+        /// \" is a literal quote, and backslashes count only right before a quote - so a
+        /// trailing one, "C:\", is doubled or it would escape the closing quote)
         /// </summary>
         internal static string Quote(string value)
-            => value.Length > 0 && value.IndexOfAny(new[] { ' ', '"', '\t' }) < 0
-                ? value
-                : "\"" + value.Replace("\"", "\\\"") + "\"";
+        {
+            if (value.Length > 0 && value.IndexOfAny(new[] { ' ', '"', '\t' }) < 0) return value;
+            var quoted = new StringBuilder("\"");
+            var backslashes = 0;
+            foreach (var c in value)
+            {
+                if (c == '\\')
+                {
+                    backslashes++;
+                    continue;
+                }
+                quoted.Append('\\', c == '"' ? backslashes * 2 + 1 : backslashes).Append(c);
+                backslashes = 0;
+            }
+            return quoted.Append('\\', backslashes * 2).Append('"').ToString();
+        }
     }
 }

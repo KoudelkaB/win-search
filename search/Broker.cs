@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -101,11 +102,12 @@ namespace search
                 try
                 {
                     server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1);
+                    var (program, leading) = Program.Self();
                     //Through ProcessLauncher: the UI tests record the offer instead of a UAC prompt
-                    _ = ProcessLauncher.Start(new ProcessStartInfo
+                    var helper = ProcessLauncher.Start(new ProcessStartInfo
                     {
-                        FileName = Environment.ProcessPath,
-                        Arguments = $"--broker {pipeName}",
+                        FileName = program,
+                        Arguments = string.Join(" ", leading.Select(Shell.Quote).Append($"--broker {pipeName}")),
                         Verb = "runas", // Blocks this background task until the UAC prompt is answered
                         UseShellExecute = true,
                         CreateNoWindow = true
@@ -114,9 +116,16 @@ namespace search
                     try { StartupElevationAccepted?.Invoke(); }
                     catch (Exception e) { $"broker elevation notification failed: {e.Message}".Debug(); }
 
+                    //A helper that ended before connecting is not waited for: the action that raised
+                    //the offer waits on this, with the UI, and falls back to a UAC question of its own
                     var connect = server.WaitForConnectionAsync();
-                    if (!connect.Wait(TimeSpan.FromSeconds(30)))
-                        throw new TimeoutException("The elevated broker did not connect.");
+                    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+                    while (!connect.Wait(TimeSpan.FromMilliseconds(200)))
+                    {
+                        if (HasEnded(helper)) throw new InvalidOperationException(
+                            $"The elevated broker ended without connecting (exit code {helper.ExitCode}).");
+                        if (DateTime.UtcNow > deadline) throw new TimeoutException("The elevated broker did not connect.");
+                    }
 
                     pipe = server;
                     Run(Command.READY);
@@ -138,6 +147,13 @@ namespace search
                     server?.Dispose();
                 }
             });
+        }
+
+        /// <summary>The process has ended; false when that cannot be told</summary>
+        static bool HasEnded(Process process)
+        {
+            try { return process.HasExited; }
+            catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException) { return false; }
         }
 
         /// <summary>

@@ -276,6 +276,84 @@ namespace search.Tests
             Assert.Equal(Apps.LogExplorer, app.Page);
             Assert.Equal(new[] { scene.File }, app.Files);
             Assert.Null(app.Load);
+            Assert.False(app.Elevated);
+        }
+
+        //A file only administrators may read (C:\Windows\Panther\setupact.log) opens after A.
+        //R: the PRN viewer of plain text is Log explorer too, without the DPI of Ghostscript.
+        [AvaloniaTheory]
+        [InlineData(Key.A, Key.L, true)]
+        [InlineData(Key.A, Key.T, true)]
+        [InlineData(Key.A, Key.R, true)]
+        [InlineData(Key.O, Key.L, false)]
+        [InlineData(Key.O, Key.T, false)]
+        [InlineData(Key.O, Key.R, false)]
+        public async Task OpenInLogExplorerRunsItAsAnAdministratorAfterA(Key openIn, Key logExplorer, bool elevated)
+        {
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FileNode);
+
+            scene.Keys(openIn, logExplorer);
+
+            var app = await WebApp(scene);
+            Assert.Equal(Apps.LogExplorer, app.Page);
+            Assert.Equal(new[] { scene.File }, app.Files);
+            Assert.Null(app.Load);
+            Assert.Equal(elevated, app.Elevated);
+        }
+
+        /// <summary>
+        /// A alone on Linux: polkit runs programs only - a document handed to pkexec as one
+        /// failed. Such a file opens in Log explorer as root, a program runs through pkexec.
+        /// </summary>
+        [AvaloniaFact]
+        public async Task AAloneOnLinuxOpensADocumentInLogExplorerAsRootAndRunsAProgram()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows opens any file elevated by the shell");
+            Assert.SkipWhen(global::search.Program.IsProcessElevated, "Root opens it as it is");
+            using var scene = await UiScene.Open();
+            var tool = Program(scene);
+            var row = scene.AddRow(tool);
+            scene.ClickRow(scene.FileNode);
+            scene.ClickRow(row, held: RawInputModifiers.Control);
+
+            scene.Keys(Key.A);
+
+            await scene.Until(() => scene.WebApps.Count > 0);
+            var app = Assert.Single(scene.WebApps);
+            Assert.Equal(Apps.LogExplorer, app.Page);
+            Assert.Equal(new[] { scene.File }, app.Files);
+            Assert.True(app.Elevated);
+            var start = Assert.Single(scene.Launched);
+            Assert.EndsWith("pkexec", start.FileName);
+            Assert.True(UiScene.Mentions(start, tool));
+        }
+
+        /// <summary>A, S and A alone on a folder (Linux): a terminal in the folder with a root shell</summary>
+        [AvaloniaTheory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task AOnLinuxOpensARootShellInTheFolder(bool shell)
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has a shell of its own after A, S");
+            Assert.SkipWhen(global::search.Program.IsProcessElevated, "Root has a root shell anyway");
+            using var scene = await UiScene.Open();
+            scene.ClickRow(scene.FolderNode);
+
+            scene.Keys(shell ? new[] { Key.A, Key.S } : new[] { Key.A });
+
+            await scene.Until(() => scene.Launched.Count > 0
+                || scene.Window.OwnedWindows.OfType<MessageDialog>().Any(d => d.IsVisible));
+            if (scene.Launched.Count == 0)
+            {
+                //No terminal emulator here: it says so
+                scene.Window.OwnedWindows.OfType<MessageDialog>().Single().Close();
+                return;
+            }
+            var start = Assert.Single(scene.Launched);
+            Assert.True(UiScene.Mentions(start, scene.Folder));
+            Assert.Contains("exec sudo -s", string.Join(" ", start.ArgumentList));
+            Assert.Empty(scene.WebApps);
         }
 
         [AvaloniaFact]
@@ -326,7 +404,7 @@ namespace search.Tests
             Assert.True(string.IsNullOrEmpty(scene.Find<AutoCompleteTextBox>("filterTextBox").Text));
         }
 
-        static async Task<(string Page, string[] Files, LogExplorerLoad Load)> WebApp(UiScene scene)
+        static async Task<(string Page, string[] Files, LogExplorerLoad Load, bool Elevated)> WebApp(UiScene scene)
         {
             await scene.Until(() => scene.WebApps.Count > 0);
             Assert.Empty(scene.Launched);

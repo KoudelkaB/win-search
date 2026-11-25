@@ -40,9 +40,9 @@ namespace search.Tests
 
         /// <summary>
         /// The web apps and the Log explorer the window asked to open: the page (Apps.LogExplorer
-        /// for the program), its files, what Log explorer starts with
+        /// for the program), its files, what Log explorer starts with, whether as an administrator
         /// </summary>
-        public System.Collections.Generic.List<(string Page, string[] Files, LogExplorerLoad Load)> WebApps { get; } = new();
+        public System.Collections.Generic.List<(string Page, string[] Files, LogExplorerLoad Load, bool Elevated)> WebApps { get; } = new();
 
         readonly TimeSpan progressDelay = MainWindow.ProgressDialogDelay;
 
@@ -62,8 +62,8 @@ namespace search.Tests
             System.IO.File.WriteAllText(scene.Other, "other");
             //Nothing a test does starts a real program or a web view
             ProcessLauncher.Override = start => { scene.Launched.Add(start); return null; };
-            WebAppWindow.OpenOverride = (page, files) => scene.WebApps.Add((page, files, null));
-            NativeLogExplorer.OpenOverride = (files, load) => scene.WebApps.Add((Apps.LogExplorer, files, load));
+            WebAppWindow.OpenOverride = (page, files) => scene.WebApps.Add((page, files, null, false));
+            NativeLogExplorer.OpenOverride = (files, load, elevated) => scene.WebApps.Add((Apps.LogExplorer, files, load, elevated));
 
             var window = new MainWindow(startFileSystem: false);
             scene.Window = window;

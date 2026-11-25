@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Security.Principal;
 using Avalonia;
 using Avalonia.Logging;
@@ -33,6 +35,24 @@ namespace search
         /// <summary>The environment variable naming another folder for all user data</summary>
         public const string DataFolderVariable = "WIN_SEARCH_DATA";
 
+        /// <summary>
+        /// This app as a program to start again - the elevated helper, a restart - with the
+        /// arguments that come before its own. Run as "dotnet FileSearchManager.dll" (F5 in VS
+        /// Code) the process is dotnet.exe: started with --broker alone it showed its error in
+        /// a console window and the helper never came. The program built next to the dll is
+        /// the app itself, a window program without a console; without one dotnet runs the dll.
+        /// </summary>
+        internal static (string Program, string[] Leading) Self(string processPath = null, string assembly = null)
+        {
+            processPath ??= Environment.ProcessPath;
+            assembly ??= typeof(Program).Assembly.Location;
+            if (string.IsNullOrEmpty(assembly)
+                || !Path.GetFileNameWithoutExtension(processPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                return (processPath, Array.Empty<string>());
+            var host = Path.ChangeExtension(assembly, OperatingSystem.IsWindows() ? ".exe" : null);
+            return File.Exists(host) ? (host, Array.Empty<string>()) : (processPath, new[] { assembly });
+        }
+
         [STAThread]
         public static int Main(string[] args)
         {
@@ -52,6 +72,28 @@ namespace search
                     Role = "Broker";
                     Broker.RunServer(args[1]);
                     return 0;
+                }
+                if (args.Length == 3 && args[0] == "--open")
+                {
+                    // One document opened as an administrator without the helper (declined, or
+                    // it failed): the shell has no "runas" for documents (Extensions.Open). This
+                    // elevated copy opens it in its application and ends. With no window of its
+                    // own it lets the shell show what goes wrong (no application for the file).
+                    Role = "Open";
+                    try
+                    {
+                        using var opened = Process.Start(new ProcessStartInfo(args[1])
+                        {
+                            UseShellExecute = true,
+                            WorkingDirectory = args[2],
+                            ErrorDialog = true
+                        });
+                        return 0;
+                    }
+                    catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+                    {
+                        return 1;
+                    }
                 }
             }
             else

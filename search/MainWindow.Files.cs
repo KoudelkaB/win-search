@@ -240,11 +240,17 @@ namespace search
                 Model.Status = L.Text("NothingSelected");
                 return;
             }
-            if (path == null) nodes.ForEach(n => n.GetFileOrTempPath().Open("", elevated: asAdmin)); //Open the files directly
+            if (path == null)
+            {
+                if (asAdmin && !OperatingSystem.IsWindows() && !Program.IsProcessElevated) await OpenAsRoot(nodes);
+                //Open the files directly. What fails (no application for the file) is said in a
+                //message - unhandled it ended in the command of the key
+                else await WaitFor(() => nodes.ForEach(n => n.GetFileOrTempPath().Open("", elevated: asAdmin)));
+            }
             else if (path == Apps.LogExplorer || WebAppWindow.IsWebApp(path.Split('\0')[0]))
             {
-                //Log explorer (a program of this build) or a built-in HTML app in a window of
-                //this process - never elevated beyond the app itself
+                //Log explorer (a program of this build, started as an administrator on request)
+                //or a built-in HTML app in a window of this process - never elevated beyond the app
                 if (path == Apps.LogExplorer && !await ConfirmLogExplorerLoad(nodes)) return;
                 string[] files = null;
                 await WaitFor(() => files = nodes.Where(n => !n.IsDirectory).Select(n => n.GetFileOrTempPath()).ToArray());
@@ -253,7 +259,8 @@ namespace search
                 {
                     //The profiles of the HTML page of v0.9.6, once, before the program has its own
                     await LogExplorerProfileImport.EnsureAsync(this);
-                    NativeLogExplorer.Open(files, load);
+                    //Elevated it may wait for the UAC question of the elevated helper
+                    await WaitFor(() => NativeLogExplorer.Open(files, load, asAdmin));
                 }
                 else WebAppWindow.Open(path.Split('\0')[0], files);
             }
@@ -273,6 +280,28 @@ namespace search
                 await WaitFor(() => args[0].Open(
                     string.Join(" ", args.Skip(1).Concat(nodes.Select(n => Quote(n.GetFileOrTempPath())))), workingDir, asAdmin));
             }
+        }
+
+        /// <summary>
+        /// A alone on Linux. Polkit runs programs only - a document handed to pkexec as one
+        /// failed - and a desktop application as root is not to be had on every desktop. A
+        /// program runs as root, a folder gets a terminal with a root shell in it, any other
+        /// file opens in Log explorer running as root: what only an administrator may open are
+        /// mostly logs and settings.
+        /// </summary>
+        async Task OpenAsRoot(INode[] nodes)
+        {
+            var folders = nodes.Where(n => n.IsDirectory).Select(n => n.FullName).ToArray();
+            var files = nodes.Where(n => !n.IsDirectory).ToArray();
+            //An item of an archive would be extracted to tell - and its copy is the user's anyway
+            var programs = files.Where(n => n is not ZipNode && IsExecutable(n.FullName)).ToArray();
+            await WaitFor(() =>
+            {
+                programs.ForEach(n => n.FullName.Open("", elevated: true));
+                folders.ForEach(f => Shell.OpenTerminal(f, asRoot: true));
+            });
+            var documents = files.Except(programs).ToArray();
+            if (documents.Length > 0) await Open(Apps.TextViever, Model.ToTextNodes(documents).ToArray(), asAdmin: true);
         }
 
         /// <summary>
@@ -617,22 +646,26 @@ namespace search
             }
             if (a == Key.S && !OperatingSystem.IsWindows())
             {
-                //A terminal in the folder of each selected item
+                //A terminal in the folder of each selected item, after A with a root shell
                 var folders = nodes.Select(n => n.IsDirectory ? n.FullName : IOPath.GetDirectoryName(n.FullName))
                     .Where(f => !string.IsNullOrEmpty(f)).Distinct(PathText.Comparer).ToArray();
-                await WaitFor(() => folders.ForEach(f => Shell.OpenTerminal(f)));
+                await WaitFor(() => folders.ForEach(f => Shell.OpenTerminal(f, asRoot: asAdmin && !Program.IsProcessElevated)));
                 return;
             }
-            if (a == Key.T) nodes = Model.ToTextNodes(nodes.ToArray());
+            //PRN content: Ghostscript and GhostPCL take the DPI, any other viewer (Log explorer
+            //for plain text, a browser for PDF) is given just the files
+            var prnViewer = a == Key.R ? Apps.ViewerFor(nodes.First().FullName) : null;
+            if (a is Key.T or Key.L || prnViewer == Apps.LogExplorer) nodes = Model.ToTextNodes(nodes.ToArray());
             await Open(a switch
             {
                 Key.T => Apps.TextViever,
+                Key.L => Apps.LogExplorer,
                 Key.W => Apps.WebBrowser ?? Apps.TextViever,
                 Key.S => arg.Last() == Key.P ? Apps.Powershell + "\0-NoExit -Command &" : Apps.Cmd + "\0/k",
                 Key.G => Apps.GhostScript + Resolution(),
                 Key.P => Apps.GhostPcl + Resolution(),
                 Key.X => Apps.GhostXps + Resolution(),
-                Key.R => Apps.ViewerFor(nodes.First().FullName).Split("-r")[0] + Resolution(),
+                Key.R => prnViewer.Contains('\0') ? prnViewer.Split("-r")[0] + Resolution() : prnViewer,
                 _ => null // Open in default system app
             }, nodes.ToArray(), asAdmin);
             string Resolution()
