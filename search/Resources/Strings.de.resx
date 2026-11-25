@@ -176,4 +176,5 @@ Trotzdem öffnen?</value></data>
   <data name="TurnOffService" xml:space="preserve"><value>Ausschalten</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>Der Dateisystemdienst ist ausgeschaltet: Änderungen werden nicht live überwacht und nur Dateien angezeigt, auf die Sie Zugriff haben.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>Die Installation kopiert diese App nach /opt/file-search-manager, mit root als Eigentümer: Der Dienst führt nie Dateien aus, die seine Benutzer ändern können.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>{0} darf nur ein Administrator lesen – mit A als Administrator öffnen.</value></data>
 </root>

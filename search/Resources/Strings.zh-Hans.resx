@@ -176,4 +176,5 @@
   <data name="TurnOffService" xml:space="preserve"><value>关闭</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>文件系统服务已关闭：不会实时跟踪更改，只显示您有权访问的文件。</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>安装会将此应用复制到 /opt/file-search-manager，所有者为 root：服务绝不会运行其用户可以更改的文件。</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>只有管理员可以读取 {0}，按 A 以管理员身份打开。</value></data>
 </root>

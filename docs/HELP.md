@@ -181,6 +181,9 @@ Common commands:
 - `G`: show in files — open the files containing the searched text (green rows) in one Log explorer window, appended and filtered to the lines with the text. Also the **Show in files** button next to **Case insensitive** and the context menu.
 - `V`: paste clipboard files into the selected folders or parent folders.
 - `O`: open selected items in another app.
+
+When File Search Manager may not read a file it opens in an app (`Enter`, `O`), the app will most likely fail on it as well: the file still opens, and the status bar points to `A`, which opens it as an administrator.
+
 - `A`: open selected items as administrator. `A`, `L` opens them in Log explorer running as administrator, so it reads the files only administrators may (for example `C:\Windows\Panther\setupact.log`); `L` alone runs it with the rights of File Search Manager itself - unless File Search Manager may not read one of the files: then it starts as an administrator too (the UAC question, the administrator password on Linux) instead of failing with "access denied". On Linux, where polkit runs only programs, `A` alone opens a file in Log explorer running as root, runs a program as root and opens a terminal with a root shell (`sudo -s`) in a folder.
 - `F2`: rename one physical file or folder directly in its Name cell. With multiple items, use one of the transformation commands below.
 - `F3`: view selected items.

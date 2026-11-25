@@ -176,4 +176,5 @@ Les ouvrir quand même ?</value></data>
   <data name="TurnOffService" xml:space="preserve"><value>Désactiver</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>Le service du système de fichiers est désactivé : les modifications ne sont pas suivies en direct et seuls les fichiers auxquels vous avez accès sont affichés.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>L'installation copie cette application dans /opt/file-search-manager, avec root pour propriétaire : le service n'exécute jamais de fichiers que ses utilisateurs peuvent modifier.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>Seul un administrateur peut lire {0} – appuyez sur A pour l’ouvrir en tant qu’administrateur.</value></data>
 </root>

@@ -43,6 +43,40 @@ namespace search.Tests
             Assert.Contains(scene.Launched, s => UiScene.Mentions(s, scene.Other));
         }
 
+        /// <summary>
+        /// Enter on a file the app may not read: it opens as usual (what reads it may be an
+        /// application running as an administrator), and the status bar points to A - the
+        /// error of the application would not
+        /// </summary>
+        [AvaloniaFact]
+        public async Task EnterOnAFileTheAppMayNotReadPointsToA()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "A file denied to its owner is made by its mode on Linux");
+            Assert.SkipWhen(global::search.Program.IsProcessElevated, "An administrator reads it anyway");
+            using var scene = await UiScene.Open();
+            var denied = Path.Combine(scene.Root, "secure.log");
+            File.WriteAllText(denied, "only root\n");
+            File.SetUnixFileMode(denied, UnixFileMode.None);
+            try
+            {
+                var row = scene.AddRow(denied);
+                scene.ClickRow(scene.FileNode);
+                scene.ClickRow(row, held: RawInputModifiers.Control);
+
+                scene.Keys(Key.Enter);
+
+                await scene.Until(() => scene.Status == L.Format("OpenDenied", "secure.log"));
+                Assert.Equal(2, scene.Launched.Count);
+                Assert.Contains(scene.Launched, s => UiScene.Mentions(s, scene.File));
+                Assert.Contains(scene.Launched, s => UiScene.Mentions(s, denied));
+                Assert.DoesNotContain(scene.Window.OwnedWindows, w => w.IsVisible);
+            }
+            finally
+            {
+                File.SetUnixFileMode(denied, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+        }
+
         [AvaloniaFact]
         public async Task TheMenuOpensTheSelection()
         {

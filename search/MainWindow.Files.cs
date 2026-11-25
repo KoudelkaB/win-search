@@ -213,17 +213,63 @@ namespace search
         /// <summary>
         /// Change the filter to all folders given
         /// </summary>
-        async Task FilterFolders(params INode[] nodes) => await WaitFor(() =>
+        async Task FilterFolders(params INode[] nodes)
         {
-            var folders = Model.FilterFolders(nodes).ToString();
-            if (string.IsNullOrEmpty(folders)) nodes.ForEach(n => n.GetFileOrTempPath().Open());
-            else filterTextBox.Text = folders;
-        });
+            string folders = null;
+            await WaitFor(() => folders = Model.FilterFolders(nodes).ToString());
+            if (!string.IsNullOrEmpty(folders))
+            {
+                filterTextBox.Text = folders;
+                return;
+            }
+            HintDenied(nodes, runsPrograms: true);
+            await WaitFor(() => nodes.ForEach(n => n.GetFileOrTempPath().Open()));
+        }
+
+        /// <summary>
+        /// Windows opens these in a program that asks to be an administrator itself: the
+        /// registry editor merging a .reg file, installers, Control Panel items
+        /// </summary>
+        static readonly HashSet<string> SelfElevatingExtensions = new(
+            new[] { ".reg", ".msi", ".msp", ".msu", ".msc", ".cpl", ".appx", ".appxbundle", ".msix", ".msixbundle" },
+            StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The files open as usual; when the app may not read one of them (<see
+        /// cref="ReadAccess"/>), the status bar says so and points to A, which opens it as an
+        /// administrator - the error of the application would not. Tried in the background,
+        /// so the files do not wait. Not for what may still open: <paramref
+        /// name="runsPrograms"/> - the system opens them by their type, a program is run, not
+        /// read (its user may be allowed to run it only), and some types open in a program
+        /// that asks to be an administrator itself. In a Flatpak sandbox the applications run
+        /// on the host, which may read what the sandbox may not.
+        /// </summary>
+        async void HintDenied(INode[] nodes, bool runsPrograms)
+        {
+            if (Shell.IsFlatpak) return;
+            try
+            {
+                var files = nodes.Where(n => !n.IsDirectory).Select(n => n.FullName)
+                    .Where(f => !runsPrograms || !SelfElevatingExtensions.Contains(IOPath.GetExtension(f))).ToArray();
+                var denied = await Task.Run(() => ReadAccess.Denied(runsPrograms ? files.Where(f => !IsExecutable(f)) : files));
+                if (denied.Length == 0) return;
+                var names = IOPath.GetFileName(denied[0]) + (denied.Length > 1 ? $" (+{denied.Length - 1})" : "");
+                Model.Status = L.Format("OpenDenied", names);
+            }
+            catch (Exception e)
+            {
+                $"The access to the files was not tried: {e.Message}".Debug();
+            }
+        }
 
         /// <summary>
         /// Open node by Shell
         /// </summary>
-        async Task Open(INode n, bool asAdmin = false) => await WaitFor(() => n.GetFileOrTempPath().Open(elevated: asAdmin));
+        async Task Open(INode n, bool asAdmin = false)
+        {
+            if (!asAdmin) HintDenied(new[] { n }, runsPrograms: true);
+            await WaitFor(() => n.GetFileOrTempPath().Open(elevated: asAdmin));
+        }
 
         void OpenCalculator()
         {
@@ -240,6 +286,9 @@ namespace search
                 Model.Status = L.Text("NothingSelected");
                 return;
             }
+            //Log explorer starts as an administrator itself, a shell in the folder reads nothing
+            var shell = path?.Split('\0')[0] is { } program && (program == Apps.Cmd || program == Apps.Powershell);
+            if (!asAdmin && path != Apps.LogExplorer && !shell) HintDenied(nodes, runsPrograms: path == null);
             if (path == null)
             {
                 if (asAdmin && !OperatingSystem.IsWindows() && !Program.IsProcessElevated) await OpenAsRoot(nodes);

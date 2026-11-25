@@ -189,4 +189,5 @@ Přesto je otevřít?</value></data>
   <data name="TurnOffService" xml:space="preserve"><value>Vypnout</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>Služba souborového systému je vypnutá: změny se živě nesledují a zobrazují se jen soubory, ke kterým máte přístup.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>Instalace zkopíruje tuto aplikaci do /opt/file-search-manager s vlastníkem root: služba nikdy nespouští soubory, které mohou její uživatelé změnit.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>{0} smí číst jen správce – jako správce otevřete klávesou A.</value></data>
 </root>

@@ -176,4 +176,5 @@ Tamaño total: {1}
   <data name="TurnOffService" xml:space="preserve"><value>Desactivar</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>El servicio del sistema de archivos está desactivado: los cambios no se supervisan en tiempo real y solo se muestran los archivos a los que tiene acceso.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>La instalación copia esta aplicación a /opt/file-search-manager, con root como propietario: el servicio nunca ejecuta archivos que sus usuarios puedan cambiar.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>Solo un administrador puede leer {0}: pulse A para abrirlo como administrador.</value></data>
 </root>

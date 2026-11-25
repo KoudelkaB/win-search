@@ -176,4 +176,5 @@
   <data name="TurnOffService" xml:space="preserve"><value>끄기</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>파일 시스템 서비스가 꺼져 있습니다. 변경 내용이 실시간으로 감시되지 않으며 접근할 수 있는 파일만 표시됩니다.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>설치하면 이 앱이 root 소유로 /opt/file-search-manager에 복사됩니다. 서비스는 사용자가 변경할 수 있는 파일을 절대 실행하지 않습니다.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>{0}은(는) 관리자만 읽을 수 있습니다. A를 눌러 관리자로 여세요.</value></data>
 </root>

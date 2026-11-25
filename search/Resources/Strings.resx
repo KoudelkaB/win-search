@@ -330,4 +330,5 @@ Open them anyway?</value></data>
   <data name="TurnOffService" xml:space="preserve"><value>Turn off</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>The file system service is turned off: changes are not tracked live and only the files you can access are shown.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>Installing copies this app to /opt/file-search-manager, owned by root: the service never runs files its users can change.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>Only an administrator may read {0} - press A to open it as one.</value></data>
 </root>

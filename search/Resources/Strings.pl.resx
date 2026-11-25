@@ -176,4 +176,5 @@ Otworzyć je mimo to?</value></data>
   <data name="TurnOffService" xml:space="preserve"><value>Wyłącz</value></data>
   <data name="ServiceTurnedOff" xml:space="preserve"><value>Usługa systemu plików jest wyłączona: zmiany nie są śledzone na bieżąco i widoczne są tylko pliki, do których masz dostęp.</value></data>
   <data name="ServiceCopy" xml:space="preserve"><value>Instalacja kopiuje tę aplikację do /opt/file-search-manager z właścicielem root: usługa nigdy nie uruchamia plików, które mogą zmienić jej użytkownicy.</value></data>
+  <data name="OpenDenied" xml:space="preserve"><value>Tylko administrator może czytać {0} – naciśnij A, aby otworzyć jako administrator.</value></data>
 </root>

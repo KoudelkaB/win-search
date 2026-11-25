@@ -104,53 +104,10 @@ namespace search
             => string.Join(" ", Arguments(files, load, culture, dataFolder, listFrom).Select(Shell.Quote));
 
         /// <summary>
-        /// The app may not read one of the files (C:\Windows\Panther\setupact.log,
-        /// /var/log/secure): Log explorer is started as an administrator right away instead of
-        /// failing on "access denied". A file in use by another program is not a reason, nor is
-        /// a file on a network drive - an administrator is the same user to the server, so it
-        /// is not opened at all: a long list of found files on a share costs nothing. The local
-        /// ones are tried in parallel, up to the first denied one.
+        /// The app may not read one of the files (<see cref="ReadAccess"/>): Log explorer is
+        /// started as an administrator right away instead of failing on "access denied".
         /// </summary>
-        internal static bool NeedsAdministrator(string[] files)
-        {
-            if (Program.IsProcessElevated) return false;
-            var types = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-            bool OnNetwork(string file)
-            {
-                if (OperatingSystem.IsWindows() && file.StartsWith(@"\\", StringComparison.Ordinal)) return true;
-                var root = Models.FsRoots.RootOf(file);
-                if (root == null) return false;
-                if (!types.TryGetValue(root, out var network))
-                    types[root] = network = Models.FsRoots.TypeOfRoot(root) == DriveType.Network;
-                return network;
-            }
-            var local = files.Where(file => !OnNetwork(file)).ToArray();
-            var denied = 0;
-            Parallel.ForEach(local, new ParallelOptions { MaxDegreeOfParallelism = 8 }, (file, loop) =>
-            {
-                if (!Denied(file)) return;
-                Interlocked.Exchange(ref denied, 1);
-                loop.Stop();
-            });
-            return denied == 1;
-        }
-
-        static bool Denied(string file)
-        {
-            try
-            {
-                using var _ = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return true;
-            }
-            catch (Exception e) when (e is IOException or NotSupportedException or ArgumentException)
-            {
-                return false;
-            }
-        }
+        internal static bool NeedsAdministrator(string[] files) => ReadAccess.Denied(files, first: true).Length > 0;
 
         /// <summary>
         /// The files as an elevated program sees them (Windows): a mapped network drive (net
