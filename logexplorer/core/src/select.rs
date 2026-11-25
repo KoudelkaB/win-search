@@ -1,5 +1,6 @@
 //! What a click selects: the value under the pointer (an identifier, a number, a date, a
-//! path...), the content of quotes and brackets, an expression around `=`, and how
+//! path...), the content of quotes and brackets, an expression around `=`, a `"key": value`
+//! member of an object, and how
 //! repeated clicks grow or shrink the selection through the enclosing structures.
 //!
 //! Most selections only need a window around the click. Delimited structures can also
@@ -7,13 +8,14 @@
 
 mod delimiters;
 mod expression;
+mod json;
 mod xml;
 
 use crate::selection::{Point, Selection};
 use crate::stage::Stage;
 use crate::text::{byte_to_col, char_len, col_to_byte};
 use std::cmp::Reverse;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Rows taken around the clicked one, and the text they may add up to
 const WINDOW_ROWS: usize = 400;
@@ -224,7 +226,7 @@ impl Piece {
 }
 
 /// The rows around a click as contiguous text
-struct Window {
+struct Window<'a> {
     text: Vec<char>,
     /// Offset of the first and past the last character of each row of the window
     starts: Vec<usize>,
@@ -235,13 +237,16 @@ struct Window {
     col0: usize,
     stage_rows: usize,
     complete: bool,
+    /// Where a cut row starts, to know the quote open there
+    cut: Option<(&'a Stage, &'a Mutex<delimiters::QuoteCheckpoints>, usize, usize)>,
+    leading_quote: OnceLock<Option<char>>,
     brackets: OnceLock<Vec<(Pair, bool)>>,
     angles: OnceLock<Vec<Pair>>,
     elements: OnceLock<Vec<Delimited>>,
 }
 
-impl Window {
-    fn new(stage: &Stage, point: Point) -> Window {
+impl<'a> Window<'a> {
+    fn new(stage: &'a Stage, point: Point, quotes: &'a Mutex<delimiters::QuoteCheckpoints>) -> Self {
         let row = point.row.min(stage.len().saturating_sub(1));
         let line = stage.line(row);
         let mut window = Window {
@@ -252,6 +257,8 @@ impl Window {
             col0: 0,
             stage_rows: stage.len(),
             complete: false,
+            cut: None,
+            leading_quote: OnceLock::new(),
             brackets: OnceLock::new(),
             angles: OnceLock::new(),
             elements: OnceLock::new(),
@@ -263,11 +270,16 @@ impl Window {
             while !line.is_char_boundary(from) {
                 from -= 1;
             }
+            // A backslash and what it escapes stay together. Pairs of backslashes before it do not matter.
+            if line.as_bytes()[..from].iter().rev().take_while(|&&byte| byte == b'\\').count() % 2 == 1 {
+                from -= 1;
+            }
             let mut to = (at + ROW_BYTES / 2).min(line.len());
             while !line.is_char_boundary(to) {
                 to += 1;
             }
             window.col0 = byte_to_col(line, from);
+            window.cut = Some((stage, quotes, row, from));
             window.text = line[from..to].chars().collect();
             window.starts.push(0);
             window.ends.push(window.text.len());
@@ -314,6 +326,15 @@ impl Window {
             window.ends.push(window.text.len());
         }
         window
+    }
+
+    /// The quote open where the window starts, read from the start of a cut row when needed
+    fn leading_quote(&self) -> Option<char> {
+        *self.leading_quote.get_or_init(|| {
+            let (stage, quotes, row, from) = self.cut?;
+            let mut quotes = quotes.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            quotes.open_at(stage, row, from).map(char::from)
+        })
     }
 
     fn rows(&self) -> usize {
@@ -551,7 +572,7 @@ impl Window {
             let text = &self.text;
             let mut stack: Vec<(char, usize)> = Vec::new();
             let mut pairs = Vec::new();
-            let mut quote = None;
+            let mut quote = self.leading_quote();
             let mut skip_until = 0;
             for (index, &ch) in text.iter().enumerate() {
                 if index < skip_until {
@@ -731,11 +752,22 @@ impl Window {
         ranges
     }
 
+    /// The `"key": value` members of the objects around an offset
+    fn objects_at(&self, offset: usize) -> json::Objects<usize> {
+        json::objects_in(&self.text, offset, self.leading_quote())
+    }
+
     /// Every structure around the pointer
     fn structures_at(&self, index: usize, col: usize) -> Vec<Range> {
         let offset = self.starts[index] + col.min(self.line(index).len());
         let mut ranges = Vec::new();
-        if let Some(quoted) = self.quote_content(index, col, false) {
+        let objects = self.objects_at(offset);
+        // Between two strings, such as at `7` in `"id": 7, "name"`, is not in quotes. A quote that
+        // closes a string shows it also when the object starts or ends outside the window.
+        let quoted = self
+            .quote_content(index, col, false)
+            .filter(|quoted| !quoted.delimiters.is_some_and(|(start, end)| objects.closes_string(start) || objects.split_by_member(start, end)));
+        if let Some(quoted) = quoted {
             ranges.push(quoted);
             if let Some((start, end)) = quoted.delimiters {
                 ranges.push(Range::new(start, end));
@@ -748,6 +780,7 @@ impl Window {
         for element in self.xml_elements() {
             ranges.extend([element.content(), element.full()].into_iter().filter(|range| range.contains_offset(offset)));
         }
+        ranges.extend(objects.members.into_iter().map(|member| Range::new(member.start, member.end)));
         ranges.extend(self.line_token(index, col, true).filter(|range| range.contains_offset(offset)));
         ranges
     }
@@ -831,6 +864,7 @@ fn is_angle_tag_content(content: &[char]) -> bool {
 
 struct DocumentScopes {
     elements: Vec<Delimited<Point>>,
+    members: Vec<json::Member<Point>>,
 }
 
 impl DocumentScopes {
@@ -863,6 +897,7 @@ impl DocumentScopes {
         tags.extend(matches);
         let markup = |pair: &&Delimited<BytePosition>| (pair.end, Reverse(pair.start));
         let mut pairs = Vec::new();
+        let mut objects = None;
         if let Some(inner) = tags.iter().min_by_key(markup) {
             // Brackets in one element's text must not pair with prose in another element.
             if inner.content_start <= clicked && clicked < inner.content_end && !stage.line_bytes(inner.start.0)[inner.start.1..].starts_with(xml::CDATA) {
@@ -881,11 +916,18 @@ impl DocumentScopes {
         } else {
             delimiters::brackets(stage, clicked, None, |pair| pairs.push(pair));
         }
-        pairs.extend(quoted);
+        // Members of the objects around the click, read from the outermost one
+        let object = |pair: &&Delimited<BytePosition>| stage.line_bytes(pair.start.0)[pair.start.1] == b'{';
+        if let Some(outer) = pairs.iter().filter(object).min_by_key(|pair| pair.start) {
+            objects = Some(json::objects_on_stage(stage, outer.start, outer.end, clicked));
+        }
+        pairs.extend(quoted.filter(|quote| !objects.as_ref().is_some_and(|objects| objects.split_by_member(quote.start, quote.end))));
+        let members = objects.map_or_else(Vec::new, |objects| objects.members);
         tags.extend(pairs);
 
         // Multiple boundaries on a long Unicode row share the scan to their columns.
         let mut positions: Vec<_> = tags.iter().flat_map(|pair| [pair.start, pair.content_start, pair.content_end, pair.end]).collect();
+        positions.extend(members.iter().flat_map(|member| [member.start, member.colon, member.end]));
         positions.sort_unstable();
         positions.dedup();
         let (mut row, mut previous, mut col) = (0, 0, 0);
@@ -900,8 +942,10 @@ impl DocumentScopes {
                 col
             })
             .collect();
-        let elements = tags.into_iter().map(|pair| pair.map(|position| Point::new(position.0, columns[positions.binary_search(&position).unwrap()]))).collect();
-        Self { elements }
+        let point = |position: BytePosition| Point::new(position.0, columns[positions.binary_search(&position).unwrap()]);
+        let elements = tags.into_iter().map(|pair| pair.map(point)).collect();
+        let members = members.into_iter().map(|member| member.map(point)).collect();
+        Self { elements, members }
     }
 
     fn direct(&self, point: Point) -> Option<&Delimited<Point>> {
@@ -920,7 +964,11 @@ impl DocumentScopes {
         if current.is_empty() || point < current.start || point > current.end {
             return None;
         }
-        let ranges = self.elements.iter().flat_map(|pair| [Selection::new(pair.content_start, pair.content_end), Selection::new(pair.start, pair.end)]);
+        let ranges = self
+            .elements
+            .iter()
+            .flat_map(|pair| [Selection::new(pair.content_start, pair.content_end), Selection::new(pair.start, pair.end)])
+            .chain(self.members.iter().map(|member| Selection::new(member.start, member.end)));
         let contains = |outer: Selection, inner: Selection| outer.start <= inner.start && outer.end >= inner.end;
         let candidates = ranges.filter(|range| *range != current && range.start <= point && point < range.end);
         if shrink {
@@ -937,26 +985,28 @@ fn selection_size(range: Selection) -> (usize, usize, Reverse<Point>, Point) {
     (rows, cols, Reverse(range.start), range.end)
 }
 
-/// Remembers the distant scopes of the last click that needed a document scan.
+/// Remembers the distant scopes of the last click that needed a document scan, and where
+/// a long row is in quotes.
 #[derive(Default)]
 pub struct ClickSelector {
     document_scopes: Option<(u64, Point, DocumentScopes)>,
+    quotes: Mutex<delimiters::QuoteCheckpoints>,
+}
+
+fn scopes<'s>(cache: &'s mut Option<(u64, Point, DocumentScopes)>, stage: &Stage, point: Point) -> &'s DocumentScopes {
+    if !cache.as_ref().is_some_and(|(id, at, _)| *id == stage.id && *at == point) {
+        *cache = Some((stage.id, point, DocumentScopes::read(stage, point)));
+    }
+    &cache.as_ref().unwrap().2
 }
 
 impl ClickSelector {
-    fn scopes(&mut self, stage: &Stage, point: Point) -> &DocumentScopes {
-        if !self.document_scopes.as_ref().is_some_and(|(id, at, _)| *id == stage.id && *at == point) {
-            self.document_scopes = Some((stage.id, point, DocumentScopes::read(stage, point)));
-        }
-        &self.document_scopes.as_ref().unwrap().2
-    }
-
     /// What a click selects. Ctrl+click shrinks and Shift+click chooses a fresh range.
     pub fn click_range(&mut self, stage: &Stage, point: Point, current: Option<&Selection>, shrink: bool, extend: bool) -> Option<(Point, Point)> {
         if stage.is_empty() {
             return None;
         }
-        let window = Window::new(stage, point);
+        let window = Window::new(stage, point, &self.quotes);
         let (index, col) = window.local(point)?;
         let clicked = window.offset_of(point)?;
         let current = current.filter(|_| !extend).map(Selection::normalized);
@@ -978,8 +1028,20 @@ impl ClickSelector {
         if let Some(current) = current.filter(|selection| {
             !window.complete && (!shrink || local.is_none()) && ((!selection.is_empty() && selection.start <= point && point <= selection.end) || (delimiter && local.is_none()))
         }) {
-            if let Some(selection) = self.scopes(stage, point).growth(point, current, shrink) {
+            if let Some(selection) = scopes(&mut self.document_scopes, stage, point).growth(point, current, shrink) {
                 return Some((selection.start, selection.end));
+            }
+        }
+        // A key colon follows the key's closing quote. Other colons, such as in times, need no scan.
+        let after_key = || window.text[..clicked].iter().rev().find(|ch| !ch.is_whitespace()).is_some_and(|ch| is_quote(*ch));
+        if ch == Some(':') && after_key() {
+            if let Some(member) = window.objects_at(clicked).members.into_iter().find(|member| member.colon == clicked) {
+                return Some((window.point_of(member.start), window.point_of(member.end)));
+            }
+            if !window.complete {
+                if let Some(member) = scopes(&mut self.document_scopes, stage, point).members.iter().find(|member| member.colon == point) {
+                    return Some((member.start, member.end));
+                }
             }
         }
         if ch == Some('=') {
@@ -1005,7 +1067,7 @@ impl ClickSelector {
                         return Some((Point::new(point.row, byte_to_col(line, pair.content_start.1)), Point::new(point.row, byte_to_col(line, pair.content_end.1))));
                     }
                 }
-            } else if let Some(pair) = self.scopes(stage, point).direct(point) {
+            } else if let Some(pair) = scopes(&mut self.document_scopes, stage, point).direct(point) {
                 return Some((pair.content_start, pair.content_end));
             }
         }
@@ -1117,15 +1179,167 @@ mod tests {
         assert_eq!(text, "Ann Lee");
         let (quoted, text) = click_with(&stage, 0, "Ann", content.as_ref(), false);
         assert_eq!(text, "\"Ann Lee\"");
-        let (inner, text) = click_with(&stage, 0, "Ann", quoted.as_ref(), false);
+        let (member, text) = click_with(&stage, 0, "Ann", quoted.as_ref(), false);
+        assert_eq!(text, r#""name": "Ann Lee""#);
+        let (inner, text) = click_with(&stage, 0, "Ann", member.as_ref(), false);
         assert_eq!(text, r#""name": "Ann Lee", "id": 7"#);
         let (braces, text) = click_with(&stage, 0, "Ann", inner.as_ref(), false);
         assert_eq!(text, r#"{"name": "Ann Lee", "id": 7}"#);
         assert_eq!(click_with(&stage, 0, "Ann", braces.as_ref(), false).1, r#""user": {"name": "Ann Lee", "id": 7}"#);
         // Ctrl+click goes back down
         assert_eq!(click_with(&stage, 0, "Ann", braces.as_ref(), true).1, r#""name": "Ann Lee", "id": 7"#);
+        assert_eq!(click_with(&stage, 0, "Ann", inner.as_ref(), true).1, r#""name": "Ann Lee""#);
+        assert_eq!(click_with(&stage, 0, "Ann", member.as_ref(), true).1, "\"Ann Lee\"");
         assert_eq!(click_with(&stage, 0, "Ann", quoted.as_ref(), true).1, "Ann Lee");
         assert_eq!(click_with(&stage, 0, "Ann", content.as_ref(), true).1, "Ann");
+    }
+
+    /// The texts of repeated plain clicks at the first `needle` of row `row`
+    fn growth(stage: &Stage, row: usize, needle: &str, clicks: usize) -> Vec<String> {
+        let mut current = None;
+        (0..clicks)
+            .map(|_| {
+                let (selection, text) = click_with(stage, row, needle, current.as_ref(), false);
+                current = selection;
+                text
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_json_value_or_key_grows_to_its_member_before_the_object() {
+        let stage = stage_of(&[r#"{"id": 7, "name": "Ann", "tags": ["a", "b"], "user": {"x": null}}"#]);
+        assert_eq!(growth(&stage, 0, "7", 3), ["7", r#""id": 7"#, r#""id": 7, "name": "Ann", "tags": ["a", "b"], "user": {"x": null}"#]);
+        assert_eq!(growth(&stage, 0, "name", 3), ["name", r#""name""#, r#""name": "Ann""#]);
+        assert_eq!(growth(&stage, 0, "Ann", 3), ["Ann", r#""Ann""#, r#""name": "Ann""#]);
+        assert_eq!(growth(&stage, 0, "\"a\"", 4), ["a", r#""a""#, r#""a", "b""#, r#"["a", "b"]"#]);
+        let mut current = None;
+        for _ in 0..4 {
+            current = click_with(&stage, 0, "\"a\"", current.as_ref(), false).0;
+        }
+        assert_eq!(click_with(&stage, 0, "\"a\"", current.as_ref(), false).1, r#""tags": ["a", "b"]"#);
+        assert_eq!(growth(&stage, 0, "null", 4)[1..], [r#""x": null"#.to_string(), r#"{"x": null}"#.into(), r#""user": {"x": null}"#.into()]);
+    }
+
+    #[test]
+    fn a_colon_selects_the_json_member() {
+        let stage = stage_of(&[r#"log {'id': 7, "url": "http://a:80", "at": 12:30} f(a: 1)"#, "{", r#"  "list": ["#, "    1", "  ],", r#"  "k" : "v""#, "}"]);
+        assert_eq!(click(&stage, 0, ": 7"), "'id': 7");
+        assert_eq!(click(&stage, 0, r#": "http"#), r#""url": "http://a:80""#);
+        assert_eq!(click(&stage, 0, ": 12"), r#""at": 12:30"#);
+        assert_ne!(click(&stage, 0, ":30"), r#""at": 12:30"#);
+        assert_ne!(click(&stage, 0, ":80"), r#""url": "http://a:80""#);
+        assert_ne!(click(&stage, 0, ": 1)"), "a: 1");
+        assert_eq!(click(&stage, 2, ": ["), "\"list\": [\n    1\n  ]");
+        assert_eq!(click(&stage, 5, ": "), r#""k" : "v""#);
+        let stage = stage_of(&[r#"{x: 1, "y" 2: 3}"#]);
+        assert_ne!(click(&stage, 0, ": 1"), "x: 1");
+        assert_ne!(click(&stage, 0, ": 3"), r#""y" 2: 3"#);
+    }
+
+    #[test]
+    fn ctrl_click_at_a_colon_does_not_pair_the_quotes_of_the_key_and_value() {
+        let stage = stage_of(&[r#"{"name": "Ann", "id": 7}"#]);
+        let (member, text) = click_with(&stage, 0, ": \"", None, false);
+        assert_eq!(text, r#""name": "Ann""#);
+        assert_eq!(click_with(&stage, 0, ": \"", member.as_ref(), true).1, r#""name": "Ann""#);
+    }
+
+    #[test]
+    fn a_string_starting_with_a_colon_is_still_a_string() {
+        let stage = stage_of(&[r#"warn ": retry," after"#, r#"{"key""#, r#"  : 1, "b": 2}"#]);
+        assert_eq!(growth(&stage, 0, "retry", 2), ["retry", ": retry,"]);
+        assert_eq!(click(&stage, 2, ": 1"), "\"key\"\n  : 1");
+        let stage = stage_of(&[r#"["hello,", ": retry"]"#, r#"["hello,",": retry"]"#, r#"["hello,", 1, ": retry"]"#]);
+        for row in 0..3 {
+            assert_eq!(growth(&stage, row, "retry", 2), ["retry", ": retry"]);
+        }
+    }
+
+    #[test]
+    fn a_value_of_an_empty_key_grows_to_its_member_when_the_object_starts_beyond_the_window() {
+        let padding = vec![r#"  "pad": 0,"#; WINDOW_ROWS + 10];
+        let mut rows = vec!["{"];
+        rows.extend(&padding);
+        rows.push(r#"  "": 7, "x": 1,"#);
+        rows.extend(&padding);
+        rows.push(r#"  "end": 0"#);
+        rows.push("}");
+        let stage = stage_of(&rows);
+        assert_eq!(growth(&stage, WINDOW_ROWS + 11, "7", 2), ["7", r#""": 7"#]);
+    }
+
+    #[test]
+    fn a_row_cut_inside_a_string_still_finds_the_members() {
+        let line = format!(r#"{{"pad": "{}", "obj": {{"id": 7, "name": "x"}}}}"#, "a, b: 'c' ".repeat(ROW_BYTES / 10));
+        let stage = stage_of(&[&line]);
+        assert_eq!(growth(&stage, 0, "7", 3), ["7", r#""id": 7"#, r#""id": 7, "name": "x""#]);
+        assert_eq!(click(&stage, 0, r#": "x"#), r#""name": "x""#);
+    }
+
+    #[test]
+    fn a_cut_keeps_a_backslash_with_the_quote_it_escapes() {
+        // The window would start at the escaped quote, half a row before the colon.
+        let text = format!(r#"\" {} {{'a': 1}} "#, "c".repeat(ROW_BYTES / 2 - 7));
+        assert_eq!(text.find(':').unwrap() - 1, ROW_BYTES / 2);
+        let line = format!(r#"{{"pad": "{text}{}", "obj": {{"id": 7}}}}"#, "d".repeat(ROW_BYTES));
+        let stage = stage_of(&[&line]);
+        assert_ne!(click(&stage, 0, ": 1"), "'a': 1");
+        assert_eq!(growth(&stage, 0, "7", 2), ["7", r#""id": 7"#]);
+    }
+
+    #[test]
+    fn a_long_run_of_backslashes_does_not_grow_the_window() {
+        let line = format!("x {} word", "\\".repeat(ROW_BYTES));
+        let stage = stage_of(&[&line]);
+        let point = Point::new(0, line.len() - 2);
+        let quotes = Mutex::default();
+        assert!(Window::new(&stage, point, &quotes).text.len() <= ROW_BYTES + 1);
+        assert_eq!(click(&stage, 0, "word"), "word");
+    }
+
+    #[test]
+    fn a_time_colon_in_a_long_log_does_not_scan_the_document() {
+        let rows: Vec<String> = (0..WINDOW_ROWS * 3).map(|row| format!("2026-11-25 12:{:02}:00 INFO row {row}", row % 60)).collect();
+        let stage = stage_of(&rows.iter().map(String::as_str).collect::<Vec<_>>());
+        let row = rows.len() - 2;
+        let col = rows[row].find(":00 ").unwrap();
+        let mut selector = ClickSelector::default();
+        selector.click_range(&stage, Point::new(row, col), None, false, false);
+        assert!(selector.document_scopes.is_none());
+    }
+
+    #[test]
+    fn a_value_grows_to_its_member_when_the_object_ends_beyond_the_window() {
+        let line = format!(r#"{{"id": 7, "name": "x", "pad": "{}"}}"#, "a".repeat(ROW_BYTES));
+        let stage = stage_of(&[&line]);
+        let (value, text) = click_with(&stage, 0, "7", None, false);
+        assert_eq!(text, "7");
+        assert_eq!(click_with(&stage, 0, "7", value.as_ref(), false).1, r#""id": 7"#);
+    }
+
+    #[test]
+    fn a_json_member_is_found_beyond_the_local_window() {
+        let sibling = r#"{"name":"příliš žluťoučký kůň \"[{}]\""}"#;
+        let siblings = format!("{sibling},").repeat(ROW_BYTES / sibling.len());
+        let prefix = r#"{"id":1,"plugins":["#;
+        let before = format!("{prefix}{siblings}");
+        let selected = r#"{"name":"clicked"}"#;
+        let line = format!("{before}{selected},{siblings}{sibling}],\"tail\":2}}");
+        let stage = stage_of(&[&line]);
+        let col = |byte| Point::new(0, byte_to_col(&line, byte));
+        let point = col(before.len() + selected.find("clicked").unwrap());
+        let array_end = line.len() - r#","tail":2}"#.len();
+        let array = (col(prefix.len() - 1), col(array_end));
+        let member = (col(r#"{"id":1,"#.len()), col(array_end));
+        let root_contents = (col(1), col(line.len() - 1));
+        let mut selector = ClickSelector::default();
+        assert_eq!(selector.click_range(&stage, point, Some(&Selection::new(array.0, array.1)), false, false), Some(member));
+        assert_eq!(selector.click_range(&stage, point, Some(&Selection::new(member.0, member.1)), false, false), Some(root_contents));
+        assert_eq!(selector.click_range(&stage, point, Some(&Selection::new(root_contents.0, root_contents.1)), true, false), Some(member));
+        assert_eq!(selector.click_range(&stage, point, Some(&Selection::new(member.0, member.1)), true, false), Some(array));
+        let colon = col(r#"{"id":1,"plugins""#.len());
+        assert_eq!(selector.click_range(&stage, colon, None, false, false), Some(member));
     }
 
     #[test]
@@ -1409,6 +1623,7 @@ mod tests {
         let expected = [
             Selection::new(Point::new(1, 14), Point::new(array_end, 4)),
             Selection::new(Point::new(1, 13), Point::new(array_end, 5)),
+            Selection::new(Point::new(1, 4), Point::new(array_end, 5)),
             Selection::new(Point::new(0, 13), Point::new(array_end + 1, 0)),
             Selection::new(Point::new(0, 12), Point::new(array_end + 1, 1)),
             Selection::new(Point::new(0, 11), Point::new(array_end + 1, 2)),

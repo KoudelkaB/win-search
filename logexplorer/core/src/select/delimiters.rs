@@ -3,7 +3,7 @@
 use super::{xml, BytePosition, Delimited};
 use crate::stage::Stage;
 use crate::text::char_len;
-use memchr::{memchr2, memchr_iter, memmem};
+use memchr::{memchr2, memchr3, memchr_iter, memmem};
 
 pub(super) fn is_escaped(line: &[u8], byte: usize) -> bool {
     line[..byte].iter().rev().take_while(|&&ch| ch == b'\\').count() % 2 == 1
@@ -11,6 +11,72 @@ pub(super) fn is_escaped(line: &[u8], byte: usize) -> bool {
 
 pub(super) fn single_delimiters(start: BytePosition, end: BytePosition) -> Delimited<BytePosition> {
     Delimited { start, end, content_start: (start.0, start.1 + 1), content_end: (end.0, end.1 - 1) }
+}
+
+/// Whether a row is in quotes at some byte, read from its start like the local window does
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct QuoteState {
+    open: Option<u8>,
+    /// The byte here is escaped, by a backslash that ends the previous part
+    escaped: bool,
+}
+
+impl QuoteState {
+    /// The state after `line[from..to]`
+    fn after(mut self, line: &[u8], from: usize, to: usize) -> QuoteState {
+        let mut at = from + usize::from(std::mem::take(&mut self.escaped) && from < to);
+        while at < to {
+            match self.open {
+                None => {
+                    let Some(next) = memchr3(b'"', b'\'', b'`', &line[at..to]) else { break };
+                    self.open = Some(line[at + next]);
+                    at += next + 1;
+                }
+                Some(quote) => {
+                    let Some(next) = memchr2(quote, b'\\', &line[at..to]) else { break };
+                    at += next;
+                    if line[at] == quote {
+                        self.open = None;
+                        at += 1;
+                    } else if at + 1 == to {
+                        self.escaped = true;
+                        break;
+                    } else {
+                        at += 2;
+                    }
+                }
+            }
+        }
+        self
+    }
+}
+
+/// How often the quote state of a long row is remembered
+const CHECKPOINT_BYTES: usize = 1 << 20;
+
+/// The quote states of the last long row at every [`CHECKPOINT_BYTES`], so that clicks on it
+/// do not read it from its start again
+#[derive(Default)]
+pub(super) struct QuoteCheckpoints {
+    row: Option<(u64, usize)>,
+    states: Vec<QuoteState>,
+}
+
+impl QuoteCheckpoints {
+    /// The quote open at `byte` of the row, which must not follow an escaping backslash
+    pub fn open_at(&mut self, stage: &Stage, row: usize, byte: usize) -> Option<u8> {
+        if self.row != Some((stage.id, row)) {
+            *self = QuoteCheckpoints { row: Some((stage.id, row)), states: vec![QuoteState::default()] };
+        }
+        let line = stage.line_bytes(row);
+        let index = byte / CHECKPOINT_BYTES;
+        while self.states.len() <= index {
+            let last = self.states.len() - 1;
+            let state = self.states[last].after(line, last * CHECKPOINT_BYTES, (last + 1) * CHECKPOINT_BYTES);
+            self.states.push(state);
+        }
+        self.states[index].after(line, index * CHECKPOINT_BYTES, byte).open
+    }
 }
 
 /// Like the local quote rule, use the closest unescaped quotes of the same kind on this row.
