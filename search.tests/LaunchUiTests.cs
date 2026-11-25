@@ -279,6 +279,38 @@ namespace search.Tests
             Assert.False(app.Elevated);
         }
 
+        /// <summary>
+        /// L on a file the app may not read: Log explorer failed on "access denied" though that
+        /// was known before - it starts as an administrator as after A, L
+        /// </summary>
+        [AvaloniaFact]
+        public async Task LOnAFileTheAppMayNotReadRunsTheLogExplorerAsAnAdministrator()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "A file denied to its owner is made by its mode on Linux");
+            Assert.SkipWhen(global::search.Program.IsProcessElevated, "An administrator reads it anyway");
+            using var scene = await UiScene.Open();
+            var denied = Path.Combine(scene.Root, "secure.log");
+            File.WriteAllText(denied, "only root\n");
+            File.SetUnixFileMode(denied, UnixFileMode.None);
+            try
+            {
+                var row = scene.AddRow(denied);
+                scene.ClickRow(scene.FileNode);
+                scene.ClickRow(row, held: RawInputModifiers.Control);
+
+                scene.Keys(Key.L);
+
+                var app = await WebApp(scene);
+                Assert.Equal(Apps.LogExplorer, app.Page);
+                Assert.Equal(new[] { scene.File, denied }.OrderBy(f => f), app.Files.OrderBy(f => f));
+                Assert.True(app.Elevated);
+            }
+            finally
+            {
+                File.SetUnixFileMode(denied, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+        }
+
         //A file only administrators may read (C:\Windows\Panther\setupact.log) opens after A.
         //R: the PRN viewer of plain text is Log explorer too, without the DPI of Ghostscript.
         [AvaloniaTheory]

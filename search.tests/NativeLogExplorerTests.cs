@@ -107,6 +107,62 @@ namespace search.Tests
             Assert.ThrowsAny<IOException>(() => new FileStream(listFrom, FileMode.Open, FileAccess.Read).Dispose());
         }
 
+        /// <summary>
+        /// A mapped drive (net use Z:) or a subst drive is not there for an elevated program:
+        /// started as an administrator it gets the share or the folder behind the letter
+        /// </summary>
+        [Fact]
+        public void AnElevatedProgramGetsTheShareBehindAMappedDrive()
+        {
+            var asked = new List<string>();
+            string Target(string drive)
+            {
+                asked.Add(drive);
+                return drive.ToUpperInvariant() switch
+                {
+                    "Z:" => @"\\server\logs",
+                    "S:" => @"D:\work\",
+                    _ => null
+                };
+            }
+
+            var files = NativeLogExplorer.VisibleWhenElevated(new[]
+            {
+                @"Z:\app\a.log", @"z:\app\b.log", @"S:\c.log", @"C:\Windows\Panther\setupact.log", @"\\other\share\d.log", "/var/log/secure"
+            }, Target);
+
+            Assert.Equal(new[]
+            {
+                @"\\server\logs\app\a.log", @"\\server\logs\app\b.log", @"D:\work\c.log", @"C:\Windows\Panther\setupact.log", @"\\other\share\d.log", "/var/log/secure"
+            }, files);
+            //Each drive is asked once
+            Assert.Equal(new[] { "Z:", "S:", "C:" }, asked);
+        }
+
+        [Fact]
+        public void AFileTheAppMayNotReadNeedsAnAdministrator()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "A file denied to its owner is made by its mode on Linux");
+            Assert.SkipWhen(Program.IsProcessElevated, "An administrator reads it anyway");
+            var folder = Path.Combine(Path.GetTempPath(), "fsm-denied-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                var readable = Enumerable.Range(0, 50).Select(i => Path.Combine(folder, $"{i}.log")).ToArray();
+                foreach (var file in readable) File.WriteAllText(file, "x");
+                var denied = Path.Combine(folder, "secure.log");
+                File.WriteAllText(denied, "x");
+                File.SetUnixFileMode(denied, UnixFileMode.None);
+
+                Assert.False(NativeLogExplorer.NeedsAdministrator(readable));
+                //Missing is not denied: Log explorer says so itself
+                Assert.False(NativeLogExplorer.NeedsAdministrator(new[] { Path.Combine(folder, "missing.log") }));
+                Assert.True(NativeLogExplorer.NeedsAdministrator(readable.Append(denied).ToArray()));
+                File.SetUnixFileMode(denied, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+            finally { Directory.Delete(folder, true); }
+        }
+
         [Fact]
         public void QuotedArgumentsComeBackAsTheyWere()
         {

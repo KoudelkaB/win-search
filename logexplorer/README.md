@@ -128,7 +128,11 @@ Started by an elevated File Search Manager the program is elevated too, and can 
 the app shows an administrator. `A`, `L` (or `A`, `T`) starts it elevated from an
 unelevated app as well: through the elevated helper or the UAC question on Windows, with
 the user's profiles, and through pkexec on Linux, where root keeps profiles of its own.
-The command line is then one string. A long list of files still comes through
+`L` alone does the same when File Search Manager may not read one of the files (tried
+off the UI thread, local files only: on a network share an administrator is the same
+user). An elevated program on Windows has no mapped (`net use`) or `subst` drives of
+the user's logon session, so their files go by the share or the folder behind the
+letter. The command line is then one string. A long list of files still comes through
 `--files0-from`: from the standard input, which pkexec passes on, and on Windows - where
 neither the helper nor the UAC question gives the program one - from a named pipe of File
 Search Manager (`\\.\pipe\WinSearch-…`), read like a file. Windows lets no program of lower rights - Explorer - use

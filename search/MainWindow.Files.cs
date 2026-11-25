@@ -259,8 +259,21 @@ namespace search
                 {
                     //The profiles of the HTML page of v0.9.6, once, before the program has its own
                     await LogExplorerProfileImport.EnsureAsync(this);
-                    //Elevated it may wait for the UAC question of the elevated helper
-                    await WaitFor(() => NativeLogExplorer.Open(files, load, asAdmin));
+                    //Elevated it may wait for the UAC question of the elevated helper - also
+                    //without A when the app itself may not read one of the files. That is
+                    //tried off the UI thread: a slow disk does not stop the window.
+                    var elevated = asAdmin;
+                    var cursor = Cursor;
+                    Cursor = new Cursor(StandardCursorType.Wait);
+                    try
+                    {
+                        elevated = elevated || await Task.Run(() => NativeLogExplorer.NeedsAdministrator(files));
+                    }
+                    finally
+                    {
+                        Cursor = cursor;
+                    }
+                    await WaitFor(() => NativeLogExplorer.Open(files, load, elevated));
                 }
                 else WebAppWindow.Open(path.Split('\0')[0], files);
             }

@@ -103,6 +103,97 @@ namespace search
         internal static string ElevatedCommandLine(string[] files, LogExplorerLoad load, CultureInfo culture, string dataFolder, string listFrom)
             => string.Join(" ", Arguments(files, load, culture, dataFolder, listFrom).Select(Shell.Quote));
 
+        /// <summary>
+        /// The app may not read one of the files (C:\Windows\Panther\setupact.log,
+        /// /var/log/secure): Log explorer is started as an administrator right away instead of
+        /// failing on "access denied". A file in use by another program is not a reason, nor is
+        /// a file on a network drive - an administrator is the same user to the server, so it
+        /// is not opened at all: a long list of found files on a share costs nothing. The local
+        /// ones are tried in parallel, up to the first denied one.
+        /// </summary>
+        internal static bool NeedsAdministrator(string[] files)
+        {
+            if (Program.IsProcessElevated) return false;
+            var types = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            bool OnNetwork(string file)
+            {
+                if (OperatingSystem.IsWindows() && file.StartsWith(@"\\", StringComparison.Ordinal)) return true;
+                var root = Models.FsRoots.RootOf(file);
+                if (root == null) return false;
+                if (!types.TryGetValue(root, out var network))
+                    types[root] = network = Models.FsRoots.TypeOfRoot(root) == DriveType.Network;
+                return network;
+            }
+            var local = files.Where(file => !OnNetwork(file)).ToArray();
+            var denied = 0;
+            Parallel.ForEach(local, new ParallelOptions { MaxDegreeOfParallelism = 8 }, (file, loop) =>
+            {
+                if (!Denied(file)) return;
+                Interlocked.Exchange(ref denied, 1);
+                loop.Stop();
+            });
+            return denied == 1;
+        }
+
+        static bool Denied(string file)
+        {
+            try
+            {
+                using var _ = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return true;
+            }
+            catch (Exception e) when (e is IOException or NotSupportedException or ArgumentException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The files as an elevated program sees them (Windows): a mapped network drive (net
+        /// use Z:) and a subst drive belong to the logon session of the user, the elevated one
+        /// has none of them. Their files go by the share (\\server\share\...) or the folder
+        /// behind the letter. <paramref name="target"/> tells what is behind a drive ("Z:"),
+        /// null for a drive of its own.
+        /// </summary>
+        internal static string[] VisibleWhenElevated(string[] files, Func<string, string> target)
+        {
+            var targets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            return files.Select(file =>
+            {
+                if (file.Length < 2 || file[1] != ':' || !char.IsAsciiLetter(file[0])) return file;
+                var drive = file[..2];
+                if (!targets.TryGetValue(drive, out var behind)) targets[drive] = behind = target(drive);
+                return string.IsNullOrEmpty(behind) ? file : behind.TrimEnd('\\') + file[2..];
+            }).ToArray();
+        }
+
+        /// <summary>What is behind a drive letter of this logon session: a share or a subst folder</summary>
+        internal static string DriveTarget(string drive)
+        {
+            if (!OperatingSystem.IsWindows()) return null;
+            var remote = new StringBuilder(1024);
+            var length = remote.Capacity;
+            //A persistent mapping not connected now still tells its share (ERROR_CONNECTION_UNAVAIL)
+            if (WNetGetConnection(drive, remote, ref length) is 0 or 1201 && remote.Length > 0) return remote.ToString();
+            var device = new StringBuilder(1024);
+            if (QueryDosDevice(drive, device, device.Capacity) == 0) return null;
+            var path = device.ToString();
+            //A subst drive points to "\??\C:\folder" (or "\??\UNC\server\share"), a disk to "\Device\..."
+            if (!path.StartsWith(@"\??\", StringComparison.Ordinal)) return null;
+            path = path[4..];
+            return path.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase) ? @"\" + path[3..] : path;
+        }
+
+        [System.Runtime.InteropServices.DllImport("mpr.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        static extern int WNetGetConnection(string localName, StringBuilder remoteName, ref int length);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        static extern int QueryDosDevice(string deviceName, StringBuilder targetPath, int max);
+
         /// <summary>How long a pipe with the list of files waits for the program once it was started</summary>
         static readonly TimeSpan ListWait = TimeSpan.FromSeconds(30);
 
@@ -161,6 +252,7 @@ namespace search
         /// </summary>
         static void OpenElevated(string[] files, LogExplorerLoad load)
         {
+            if (OperatingSystem.IsWindows()) files = VisibleWhenElevated(files, DriveTarget);
             var culture = CultureInfo.CurrentUICulture;
             var folder = Path.GetDirectoryName(ProgramPath);
             var list = ListOnStandardInput(files) ? StandardInputList(files) : null;
