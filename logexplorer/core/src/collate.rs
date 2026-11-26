@@ -170,10 +170,81 @@ pub fn compare(left: &str, right: &str) -> Ordering {
     }
 }
 
+/// Zero-allocation ASCII fast path for [`compare_natural`], matching `full_compare(left, right, true, case_sensitive)`.
+fn compare_natural_ascii(left: &[u8], right: &[u8], case_sensitive: bool) -> Ordering {
+    let (mut i, mut j) = (0usize, 0usize);
+    let mut ctrl_tie = Ordering::Equal;
+    let mut case_tie = Ordering::Equal;
+    while i < left.len() && j < right.len() {
+        let (x, y) = (left[i], right[j]);
+        if x.is_ascii_digit() && y.is_ascii_digit() {
+            let mut end_i = i + 1;
+            while end_i < left.len() && left[end_i].is_ascii_digit() {
+                end_i += 1;
+            }
+            let mut end_j = j + 1;
+            while end_j < right.len() && right[end_j].is_ascii_digit() {
+                end_j += 1;
+            }
+            let mut nz_i = i;
+            while nz_i < end_i && left[nz_i] == b'0' {
+                nz_i += 1;
+            }
+            let mut nz_j = j;
+            while nz_j < end_j && right[nz_j] == b'0' {
+                nz_j += 1;
+            }
+            let val_i = &left[nz_i..end_i];
+            let val_j = &right[nz_j..end_j];
+            let order = val_i.len().cmp(&val_j.len()).then_with(|| val_i.cmp(val_j));
+            if order != Ordering::Equal {
+                return order;
+            }
+            i = end_i;
+            j = end_j;
+            continue;
+        }
+        if x != y {
+            let (rx, ry) = (RANKS[x as usize], RANKS[y as usize]);
+            if rx != ry {
+                return rx.cmp(&ry);
+            }
+            if case_sensitive {
+                let (lx, ly) = (x.to_ascii_lowercase(), y.to_ascii_lowercase());
+                if lx != ly {
+                    if ctrl_tie == Ordering::Equal {
+                        ctrl_tie = lx.cmp(&ly);
+                    }
+                } else if case_tie == Ordering::Equal {
+                    case_tie = if x.is_ascii_lowercase() { Ordering::Less } else { Ordering::Greater };
+                }
+            }
+        }
+        i += 1;
+        j += 1;
+    }
+    if i < left.len() {
+        return Ordering::Greater;
+    }
+    if j < right.len() {
+        return Ordering::Less;
+    }
+    if case_sensitive {
+        ctrl_tie.then(case_tie)
+    } else {
+        Ordering::Equal
+    }
+}
+
 /// `left.localeCompare(right, undefined, { numeric: true, sensitivity })`: numbers inside the
 /// text by value; with `case_sensitive` off, case and accents do not count
+#[inline]
 pub fn compare_natural(left: &str, right: &str, case_sensitive: bool) -> Ordering {
-    full_compare(left, right, true, case_sensitive)
+    if left.is_ascii() && right.is_ascii() {
+        compare_natural_ascii(left.as_bytes(), right.as_bytes(), case_sensitive)
+    } else {
+        full_compare(left, right, true, case_sensitive)
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +296,28 @@ mod tests {
                 let key_order = ascii_prefix_key(left.as_bytes()).cmp(&ascii_prefix_key(right.as_bytes()));
                 if key_order != Ordering::Equal {
                     assert_eq!(key_order, compare(left, right), "left={left:?} right={right:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_natural_fast_path_matches_full_compare_on_all_edge_cases() {
+        let samples = [
+            "", "0", "00", "000", "1", "01", "001", "2", "9", "09", "10", "010", "100",
+            "18446744073709551615000", "18446744073709551615001",
+            "a", "A", "a0", "A0", "a00", "a01", "A1", "a1", "a01b", "a1B", "A01b",
+            "id9", "id09", "ID9", "ID09", "id10", "id100", "id0000", "id0",
+            "a-1", "a_1", "a 1", "a1a", "a1A", "0a", "00A", "\x01a", "\x02a", "\x01A", "\x02A",
+        ];
+        for case_sensitive in [false, true] {
+            for &left in &samples {
+                for &right in &samples {
+                    assert_eq!(
+                        compare_natural_ascii(left.as_bytes(), right.as_bytes(), case_sensitive),
+                        full_compare(left, right, true, case_sensitive),
+                        "left={left:?} right={right:?} cs={case_sensitive}"
+                    );
                 }
             }
         }
