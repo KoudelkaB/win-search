@@ -1,6 +1,8 @@
 //! Values read from rows: numbers, dates and durations, and how Diff writes them back.
 
-use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone};
+use std::cell::Cell;
+use std::fmt::Write as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ValueType {
@@ -113,52 +115,156 @@ pub fn js_round(value: f64) -> f64 {
     }
 }
 
-/// `String(number)`
-pub fn js_string(value: f64) -> String {
+/// `String(number)` written directly into `out`
+fn write_js_string(out: &mut String, value: f64) {
     if value == 0.0 {
-        "0".to_string()
+        out.push('0');
     } else if value.fract() == 0.0 && value.abs() < 1e21 {
-        format!("{value:.0}")
+        let _ = write!(out, "{value:.0}");
     } else {
-        format!("{value}")
+        let _ = write!(out, "{value}");
     }
 }
 
-/// `number.toFixed(digits)`: an exact half rounds away from zero
-pub fn to_fixed(value: f64, digits: usize) -> String {
-    if !value.is_finite() {
-        return js_string(value);
+/// `String(number)`
+pub fn js_string(value: f64) -> String {
+    let mut out = String::with_capacity(24);
+    write_js_string(&mut out, value);
+    out
+}
+
+struct StackBuf<const N: usize> {
+    buf: [u8; N],
+    len: usize,
+    overflow: bool,
+}
+
+impl<const N: usize> StackBuf<N> {
+    #[inline]
+    fn new() -> Self {
+        StackBuf { buf: [0; N], len: 0, overflow: false }
     }
-    let absolute = value.abs();
-    let mut text = format!("{absolute:.digits$}");
-    // Rust rounds an exact half to even. A half is exact only when one more digit ends the
-    // number, so that is the one case to correct.
-    let longer = format!("{:.*}", digits + 1, absolute);
-    if longer.ends_with('5') && format!("{:.*}", digits + 30, absolute).trim_end_matches('0') == longer.trim_end_matches('0') {
-        let mut kept: Vec<u8> = longer[..longer.len() - 1].trim_end_matches('.').bytes().collect();
-        let mut position = kept.len();
-        loop {
-            if position == 0 {
-                kept.insert(0, b'1');
-                break;
-            }
+
+    #[inline]
+    fn as_str(&self) -> &str {
+        // SAFETY: only valid UTF-8 from `fmt::Write::write_str` is pushed
+        unsafe { std::str::from_utf8_unchecked(&self.buf[..self.len]) }
+    }
+}
+
+impl<const N: usize> std::fmt::Write for StackBuf<N> {
+    #[inline]
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let bytes = text.as_bytes();
+        if self.len + bytes.len() > N {
+            self.overflow = true;
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+        self.len += bytes.len();
+        Ok(())
+    }
+}
+
+fn round_up_decimal(out: &mut String, longer: &str) {
+    let mut kept = [0u8; 128];
+    let prefix = longer[..longer.len() - 1].trim_end_matches('.');
+    if prefix.len() + 1 <= kept.len() {
+        let len = prefix.len();
+        kept[1..1 + len].copy_from_slice(prefix.as_bytes());
+        let mut position = 1 + len;
+        let mut carry = true;
+        while position > 1 {
             position -= 1;
             match kept[position] {
                 b'.' => continue,
                 b'9' => kept[position] = b'0',
                 digit => {
                     kept[position] = digit + 1;
+                    carry = false;
                     break;
                 }
             }
         }
-        text = String::from_utf8(kept).unwrap();
+        let slice = if carry {
+            kept[0] = b'1';
+            &kept[..1 + len]
+        } else {
+            &kept[1..1 + len]
+        };
+        // SAFETY: ASCII digits and '.'
+        out.push_str(unsafe { std::str::from_utf8_unchecked(slice) });
+        return;
     }
+    let mut vec: Vec<u8> = prefix.bytes().collect();
+    let mut position = vec.len();
+    loop {
+        if position == 0 {
+            vec.insert(0, b'1');
+            break;
+        }
+        position -= 1;
+        match vec[position] {
+            b'.' => continue,
+            b'9' => vec[position] = b'0',
+            digit => {
+                vec[position] = digit + 1;
+                break;
+            }
+        }
+    }
+    // SAFETY: ASCII digits and '.'
+    out.push_str(unsafe { std::str::from_utf8_unchecked(&vec) });
+}
+
+/// `number.toFixed(digits)` written into `out`: an exact half rounds away from zero
+fn write_fixed(out: &mut String, value: f64, digits: usize) {
+    if !value.is_finite() {
+        write_js_string(out, value);
+        return;
+    }
+    let absolute = value.abs();
     if value < 0.0 {
-        format!("-{text}")
-    } else {
-        text
+        out.push('-');
     }
+    // Exact integer values can never land on an exact half-way rounding boundary.
+    if absolute.fract() == 0.0 {
+        let _ = write!(out, "{absolute:.digits$}");
+        return;
+    }
+    let start = out.len();
+    let _ = write!(out, "{absolute:.digits$}");
+    // Rust rounds an exact half to even. A half is exact only when one more digit ends the
+    // number, so that is the one case to correct.
+    let mut stack_longer = StackBuf::<64>::new();
+    let longer_owned: String;
+    let longer: &str = if write!(stack_longer, "{:.*}", digits + 1, absolute).is_ok() && !stack_longer.overflow {
+        stack_longer.as_str()
+    } else {
+        longer_owned = format!("{:.*}", digits + 1, absolute);
+        &longer_owned
+    };
+    if longer.ends_with('5') {
+        let mut stack_ext = StackBuf::<96>::new();
+        let ext_owned: String;
+        let extended: &str = if write!(stack_ext, "{:.*}", digits + 30, absolute).is_ok() && !stack_ext.overflow {
+            stack_ext.as_str()
+        } else {
+            ext_owned = format!("{:.*}", digits + 30, absolute);
+            &ext_owned
+        };
+        if extended.trim_end_matches('0') == longer.trim_end_matches('0') {
+            out.truncate(start);
+            round_up_decimal(out, longer);
+        }
+    }
+}
+
+/// `number.toFixed(digits)`: an exact half rounds away from zero
+pub fn to_fixed(value: f64, digits: usize) -> String {
+    let mut out = String::with_capacity(digits + 16);
+    write_fixed(&mut out, value, digits);
+    out
 }
 
 pub fn parse_number(raw: &str) -> Option<f64> {
@@ -263,8 +369,57 @@ pub fn parse_time_span(raw: &str) -> Option<f64> {
     Some(sign * ((((days * 24.0 + hours) * 60.0 + minutes) * 60.0 + seconds) * 1000.0 + millis))
 }
 
-pub fn format_time_span(milliseconds: f64) -> String {
-    let sign = if milliseconds < 0.0 { "-" } else { "" };
+#[inline]
+fn push_two_digits(out: &mut String, value: u64) {
+    let buf = [b'0' + (value / 10) as u8, b'0' + (value % 10) as u8];
+    // SAFETY: ASCII digits
+    out.push_str(unsafe { std::str::from_utf8_unchecked(&buf) });
+}
+
+#[inline]
+fn push_three_digits(out: &mut String, value: u64) {
+    let buf = [b'0' + (value / 100) as u8, b'0' + ((value / 10) % 10) as u8, b'0' + (value % 10) as u8];
+    // SAFETY: ASCII digits
+    out.push_str(unsafe { std::str::from_utf8_unchecked(&buf) });
+}
+
+#[inline]
+fn push_u64_padded(out: &mut String, mut value: u64, min_width: usize) {
+    let mut buf = [0u8; 20];
+    let mut index = buf.len();
+    loop {
+        index -= 1;
+        buf[index] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let digits = buf.len() - index;
+    for _ in digits..min_width {
+        out.push('0');
+    }
+    // SAFETY: ASCII digits
+    out.push_str(unsafe { std::str::from_utf8_unchecked(&buf[index..]) });
+}
+
+#[inline]
+fn push_spaces(out: &mut String, count: usize) {
+    const SPACES: &str = "                                ";
+    let mut remaining = count;
+    while remaining >= SPACES.len() {
+        out.push_str(SPACES);
+        remaining -= SPACES.len();
+    }
+    if remaining > 0 {
+        out.push_str(&SPACES[..remaining]);
+    }
+}
+
+pub fn write_time_span(out: &mut String, milliseconds: f64) {
+    if milliseconds < 0.0 {
+        out.push('-');
+    }
     let mut value = js_round(milliseconds).abs() as u64;
     let millis = value % 1000;
     value /= 1000;
@@ -274,15 +429,86 @@ pub fn format_time_span(milliseconds: f64) -> String {
     value /= 60;
     let hours = value % 24;
     let days = value / 24;
-    let day_prefix = if days > 0 { format!("{days}.") } else { String::new() };
-    format!("{sign}{day_prefix}{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+    if days > 0 {
+        push_u64_padded(out, days, 1);
+        out.push('.');
+    }
+    push_two_digits(out, hours);
+    out.push(':');
+    push_two_digits(out, minutes);
+    out.push(':');
+    push_two_digits(out, seconds);
+    out.push('.');
+    push_three_digits(out, millis);
+}
+
+pub fn format_time_span(milliseconds: f64) -> String {
+    let mut out = String::with_capacity(20);
+    write_time_span(&mut out, milliseconds);
+    out
 }
 
 // --- dates ----------------------------------------------------------------------------------------
 
+#[derive(Clone, Copy)]
+enum HourOffset {
+    /// Every instant in `[HH:00:00.000, HH:59:59.999]` shares this unambiguous UTC offset (ms).
+    Fixed(i64),
+    /// A DST boundary or unusual offset change occurs in this hour: query chrono per timestamp.
+    Transition,
+}
+
+const TZ_CACHE_SLOTS: usize = 16;
+
+thread_local! {
+    static LOCAL_TZ_CACHE: Cell<[(i64, HourOffset); TZ_CACHE_SLOTS]> = const { Cell::new([(i64::MIN, HourOffset::Transition); TZ_CACHE_SLOTS]) };
+}
+
+fn compute_hour_offset(date: NaiveDate, hours: u32) -> HourOffset {
+    let Some(start) = date.and_hms_milli_opt(hours, 0, 0, 0) else {
+        return HourOffset::Transition;
+    };
+    let Some(mid) = date.and_hms_milli_opt(hours, 30, 0, 0) else {
+        return HourOffset::Transition;
+    };
+    let Some(end) = date.and_hms_milli_opt(hours, 59, 59, 999) else {
+        return HourOffset::Transition;
+    };
+    match (Local.from_local_datetime(&start), Local.from_local_datetime(&mid), Local.from_local_datetime(&end)) {
+        (chrono::LocalResult::Single(a), chrono::LocalResult::Single(b), chrono::LocalResult::Single(c)) => {
+            let offset_secs = a.offset().local_minus_utc() as i64;
+            if b.offset().local_minus_utc() as i64 == offset_secs && c.offset().local_minus_utc() as i64 == offset_secs {
+                HourOffset::Fixed(offset_secs * 1000)
+            } else {
+                HourOffset::Transition
+            }
+        }
+        _ => HourOffset::Transition,
+    }
+}
+
+#[inline]
+fn cached_hour_offset(date: NaiveDate, hours: u32) -> HourOffset {
+    let key = (date.num_days_from_ce() as i64) * 24 + hours as i64;
+    let slot = (key as usize) & (TZ_CACHE_SLOTS - 1);
+    LOCAL_TZ_CACHE.with(|cache| {
+        let mut entries = cache.get();
+        if entries[slot].0 == key {
+            return entries[slot].1;
+        }
+        let computed = compute_hour_offset(date, hours);
+        entries[slot] = (key, computed);
+        cache.set(entries);
+        computed
+    })
+}
+
 fn local_millis(date: NaiveDate, hours: u32, minutes: u32, seconds: u32, millis: u32) -> Option<f64> {
     let naive = date.and_hms_milli_opt(hours, minutes, seconds, millis)?;
-    Local.from_local_datetime(&naive).earliest().map(|time| time.timestamp_millis() as f64)
+    match cached_hour_offset(date, hours) {
+        HourOffset::Fixed(offset_ms) => Some((naive.and_utc().timestamp_millis() - offset_ms) as f64),
+        HourOffset::Transition => Local.from_local_datetime(&naive).earliest().map(|time| time.timestamp_millis() as f64),
+    }
 }
 
 fn utc_millis(naive: NaiveDateTime, offset_minutes: i32) -> f64 {
@@ -381,10 +607,13 @@ fn clock(cursor: &mut Cursor) -> Option<Clock> {
     }
     let before_meridiem = cursor.at;
     cursor.spaces();
-    match cursor.word().to_ascii_uppercase().as_str() {
-        "AM" if (1..=12).contains(&hours) => hours %= 12,
-        "PM" if (1..=12).contains(&hours) => hours = hours % 12 + 12,
-        _ => cursor.at = before_meridiem,
+    let meridiem = cursor.word();
+    if meridiem.eq_ignore_ascii_case("AM") && (1..=12).contains(&hours) {
+        hours %= 12;
+    } else if meridiem.eq_ignore_ascii_case("PM") && (1..=12).contains(&hours) {
+        hours = hours % 12 + 12;
+    } else {
+        cursor.at = before_meridiem;
     }
     (hours < 24 && minutes < 60 && seconds < 60).then_some(Clock { hours, minutes, seconds, millis })
 }
@@ -415,12 +644,12 @@ fn zone(cursor: &mut Cursor) -> Option<i32> {
         cursor.at = start;
         return None;
     }
-    match cursor.word().to_ascii_uppercase().as_str() {
-        "Z" | "UTC" | "GMT" | "UT" => Some(0),
-        _ => {
-            cursor.at = start;
-            None
-        }
+    let word = cursor.word();
+    if word.eq_ignore_ascii_case("Z") || word.eq_ignore_ascii_case("UTC") || word.eq_ignore_ascii_case("GMT") || word.eq_ignore_ascii_case("UT") {
+        Some(0)
+    } else {
+        cursor.at = start;
+        None
     }
 }
 
@@ -491,13 +720,31 @@ fn slashed_date(text: &str) -> Option<f64> {
 }
 
 fn month_of(word: &str) -> Option<u32> {
-    const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-    const FULL: [&str; 12] = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-    let lower = word.to_ascii_lowercase();
-    if lower.len() < 3 {
+    const MONTHS: [&[u8]; 12] = [b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov", b"dec"];
+    const FULL: [&[u8]; 12] = [
+        b"january",
+        b"february",
+        b"march",
+        b"april",
+        b"may",
+        b"june",
+        b"july",
+        b"august",
+        b"september",
+        b"october",
+        b"november",
+        b"december",
+    ];
+    let bytes = word.as_bytes();
+    if bytes.len() < 3 {
         return None;
     }
-    (0..12).find(|&index| lower == MONTHS[index] || (lower.len() > 3 && FULL[index].starts_with(&lower))).map(|index| index as u32 + 1)
+    (0..12)
+        .find(|&index| {
+            bytes.eq_ignore_ascii_case(MONTHS[index])
+                || (bytes.len() > 3 && bytes.len() <= FULL[index].len() && FULL[index][..bytes.len()].eq_ignore_ascii_case(bytes))
+        })
+        .map(|index| index as u32 + 1)
 }
 
 /// Dates with a month name: `13 Mar 2026 09:14:02`, `Mar 13, 2026`, `Fri, 13 Mar 2026 09:14:02 GMT`,
@@ -518,9 +765,8 @@ fn named_month_date(text: &str) -> Option<f64> {
                     continue;
                 }
             }
-            const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-            let lower = word.to_ascii_lowercase();
-            if day.is_none() && month.is_none() && lower.len() >= 3 && DAYS.iter().any(|name| lower.starts_with(name)) {
+            const DAYS: [&[u8]; 7] = [b"mon", b"tue", b"wed", b"thu", b"fri", b"sat", b"sun"];
+            if day.is_none() && month.is_none() && word.len() >= 3 && DAYS.iter().any(|name| word.as_bytes()[..3].eq_ignore_ascii_case(name)) {
                 continue;
             }
             // Anything else can only be a time zone
@@ -575,6 +821,11 @@ pub fn parse_date_time(raw: &str) -> Option<f64> {
     if text.is_empty() {
         return None;
     }
+    // Fast path for the dominant ISO 8601 shape (`YYYY-...`)
+    let bytes = text.as_bytes();
+    if bytes.len() >= 5 && bytes[4] == b'-' && bytes[..4].iter().all(u8::is_ascii_digit) {
+        return iso_date(text);
+    }
     // d.m.yyyy [h:mm[:ss]] is day first, before the US reading of Date.parse can apply
     let dotted = (|| {
         let mut cursor = Cursor::new(text);
@@ -613,12 +864,40 @@ pub fn parse_date_time(raw: &str) -> Option<f64> {
     js_date_parse(text)
 }
 
+/// `new Date(ms).toISOString()` written into `out`
+pub fn write_iso_string(out: &mut String, milliseconds: f64) {
+    use chrono::Timelike;
+    match chrono::DateTime::from_timestamp_millis(milliseconds as i64) {
+        Some(time) => {
+            let year = time.year();
+            if (0..=9999).contains(&year) {
+                push_u64_padded(out, year as u64, 4);
+                out.push('-');
+                push_two_digits(out, time.month() as u64);
+                out.push('-');
+                push_two_digits(out, time.day() as u64);
+                out.push('T');
+                push_two_digits(out, time.hour() as u64);
+                out.push(':');
+                push_two_digits(out, time.minute() as u64);
+                out.push(':');
+                push_two_digits(out, time.second() as u64);
+                out.push('.');
+                push_three_digits(out, (time.timestamp_subsec_millis()) as u64);
+                out.push('Z');
+            } else {
+                let _ = write!(out, "{}", time.format("%Y-%m-%dT%H:%M:%S%.3fZ"));
+            }
+        }
+        None => out.push_str("Invalid Date"),
+    }
+}
+
 /// `new Date(ms).toISOString()`
 pub fn iso_string(milliseconds: f64) -> String {
-    match chrono::DateTime::from_timestamp_millis(milliseconds as i64) {
-        Some(time) => time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-        None => "Invalid Date".to_string(),
-    }
+    let mut out = String::with_capacity(24);
+    write_iso_string(&mut out, milliseconds);
+    out
 }
 
 // --- typed values -------------------------------------------------------------------------------
@@ -652,11 +931,13 @@ pub fn infer_value_type(selected: &str) -> ValueType {
 
 // --- writing diff values --------------------------------------------------------------------------
 
-fn format_number(value: f64) -> String {
+fn write_number(out: &mut String, value: f64) {
     if value.fract() == 0.0 {
-        js_string(value)
+        write_js_string(out, value);
     } else {
-        js_string(to_fixed(value, 6).parse().unwrap_or(value))
+        let mut fixed = String::with_capacity(32);
+        write_fixed(&mut fixed, value, 6);
+        write_js_string(out, fixed.parse().unwrap_or(value));
     }
 }
 
@@ -687,16 +968,37 @@ fn match_number_sample(text: &str) -> Option<NumberSample<'_>> {
     Some(NumberSample { separator: Some(bytes[index] as char), fraction: Some(&text[index + 1..]) })
 }
 
-fn format_number_like_sample(value: f64, sample: &str) -> String {
+fn replace_first_dot(out: &mut String, start: usize, separator: char) {
+    if separator == '.' {
+        return;
+    }
+    if separator.is_ascii() {
+        // SAFETY: replacing single ASCII byte '.' with another ASCII byte keeps valid UTF-8
+        let bytes = unsafe { out.as_bytes_mut() };
+        if let Some(pos) = bytes[start..].iter().position(|&b| b == b'.') {
+            bytes[start + pos] = separator as u8;
+        }
+    } else if let Some(rel) = out[start..].find('.') {
+        let pos = start + rel;
+        let mut sep_buf = [0u8; 4];
+        out.replace_range(pos..pos + 1, separator.encode_utf8(&mut sep_buf));
+    }
+}
+
+fn write_number_like_sample(out: &mut String, value: f64, sample: &str) {
     let Some(matched) = match_number_sample(sample.trim()) else {
-        return format_number(value);
+        write_number(out, value);
+        return;
     };
     let decimals = matched.fraction.map_or(0, str::len);
-    let formatted = if decimals > 0 { to_fixed(value, decimals) } else { js_string(js_round(value)) };
-    if matched.separator == Some(',') {
-        formatted.replacen('.', ",", 1)
+    let start = out.len();
+    if decimals > 0 {
+        write_fixed(out, value, decimals);
     } else {
-        formatted
+        write_js_string(out, js_round(value));
+    }
+    if let Some(sep) = matched.separator {
+        replace_first_dot(out, start, sep);
     }
 }
 
@@ -730,43 +1032,71 @@ fn rounding_step(fraction_digits: usize, has_seconds: bool) -> f64 {
     }
 }
 
-fn format_time_span_like_sample(milliseconds: f64, sample: &str) -> String {
+fn write_fraction_millis(out: &mut String, millis: u64, fraction_digits: usize) {
+    let buf = [b'0' + (millis / 100) as u8, b'0' + ((millis / 10) % 10) as u8, b'0' + (millis % 10) as u8];
+    out.push('.');
+    // SAFETY: ASCII digits
+    out.push_str(unsafe { std::str::from_utf8_unchecked(&buf[..fraction_digits]) });
+}
+
+fn write_time_span_like_sample(out: &mut String, milliseconds: f64, sample: &str) {
     let Some(parts) = match_time_span(sample.trim()) else {
-        return format_time_span(milliseconds);
+        write_time_span(out, milliseconds);
+        return;
     };
     let has_days = parts.days.is_some();
     let has_seconds = parts.seconds.is_some();
     let fraction_digits = parts.fraction.map_or(0, str::len);
     let broken = break_down(milliseconds, rounding_step(fraction_digits, has_seconds));
     if !has_days && broken.days > 0 {
-        return format_time_span(milliseconds);
+        write_time_span(out, milliseconds);
+        return;
     }
-    let mut output = String::from(if milliseconds < 0.0 { "-" } else { "" });
+    if milliseconds < 0.0 {
+        out.push('-');
+    }
     if has_days {
-        output += &format!("{}.", broken.days);
+        push_u64_padded(out, broken.days, 1);
+        out.push('.');
     }
-    output += &format!("{:02}:{:02}", broken.hours, broken.minutes);
+    push_two_digits(out, broken.hours);
+    out.push(':');
+    push_two_digits(out, broken.minutes);
     if has_seconds {
-        output += &format!(":{:02}", broken.seconds);
+        out.push(':');
+        push_two_digits(out, broken.seconds);
     }
     if fraction_digits > 0 {
-        output += &format!(".{}", &format!("{:03}", broken.millis)[..fraction_digits]);
+        write_fraction_millis(out, broken.millis, fraction_digits);
     }
-    output
 }
 
+#[inline]
 fn chars(text: &str) -> usize {
-    text.chars().count()
+    if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().count()
+    }
 }
 
-/// Pads the value to the width of the slice it replaces, on the side the slice had its spaces
-pub fn align_to_slice(formatted: &str, slice: &str, value_type: ValueType) -> String {
+/// Pads `formatted` to the width of `slice` and writes it into `out`.
+pub fn write_aligned_to_slice(out: &mut String, formatted: &str, slice: &str, value_type: ValueType) {
     let (width, template) = (chars(formatted), chars(slice));
     if template == 0 || width >= template {
-        return formatted.to_string();
+        out.push_str(formatted);
+        return;
     }
-    let leading = slice.chars().take_while(|ch| ch.is_whitespace()).count();
-    let trailing = slice.chars().rev().take_while(|ch| ch.is_whitespace()).count();
+    let (leading, trailing) = if slice.is_ascii() {
+        let bytes = slice.as_bytes();
+        let leading = bytes.iter().take_while(|&&b| b.is_ascii_whitespace()).count();
+        let trailing = bytes.iter().rev().take_while(|&&b| b.is_ascii_whitespace()).count();
+        (leading, trailing)
+    } else {
+        let leading = slice.chars().take_while(|ch| ch.is_whitespace()).count();
+        let trailing = slice.chars().rev().take_while(|ch| ch.is_whitespace()).count();
+        (leading, trailing)
+    };
     let padding = template - width;
     let left = if leading > 0 && trailing == 0 {
         padding
@@ -779,19 +1109,31 @@ pub fn align_to_slice(formatted: &str, slice: &str, value_type: ValueType) -> St
     } else {
         0
     };
-    format!("{}{}{}", " ".repeat(left), formatted, " ".repeat(padding - left))
+    push_spaces(out, left);
+    out.push_str(formatted);
+    push_spaces(out, padding - left);
 }
 
-fn align_to_width(formatted: String, width: usize, align_right: bool) -> String {
-    let length = chars(&formatted);
+/// Pads the value to the width of the slice it replaces, on the side the slice had its spaces
+pub fn align_to_slice(formatted: &str, slice: &str, value_type: ValueType) -> String {
+    let mut out = String::with_capacity(formatted.len().max(slice.len()));
+    write_aligned_to_slice(&mut out, formatted, slice, value_type);
+    out
+}
+
+fn write_aligned_to_width(out: &mut String, formatted: &str, width: usize, align_right: bool) {
+    let length = chars(formatted);
     if width == 0 || length >= width {
-        return formatted;
+        out.push_str(formatted);
+        return;
     }
-    let padding = " ".repeat(width - length);
+    let pad = width - length;
     if align_right {
-        padding + &formatted
+        push_spaces(out, pad);
+        out.push_str(formatted);
     } else {
-        formatted + &padding
+        out.push_str(formatted);
+        push_spaces(out, pad);
     }
 }
 
@@ -874,45 +1216,78 @@ impl ProfileSample {
     }
 }
 
-fn format_number_for_profile(value: f64, profile: Option<&DiffProfile>, slice: &str) -> String {
+fn write_number_for_profile(out: &mut String, scratch: &mut String, value: f64, profile: Option<&DiffProfile>, slice: &str) {
+    scratch.clear();
     let Some(DiffProfile::Number { separator, fraction_digits, width }) = profile else {
-        return align_to_width(format_number_like_sample(value, slice), (chars(slice.trim()) + 1).max(1), true);
+        write_number_like_sample(scratch, value, slice);
+        write_aligned_to_width(out, scratch, (chars(slice.trim()) + 1).max(1), true);
+        return;
     };
     let absolute = value.abs();
-    let formatted = if *fraction_digits > 0 { to_fixed(absolute, *fraction_digits) } else { js_string(js_round(absolute)) };
-    let formatted = if *separator == '.' { formatted } else { formatted.replacen('.', &separator.to_string(), 1) };
-    align_to_width(format!("{}{}", if value < 0.0 { "-" } else { "" }, formatted), *width, true)
+    if value < 0.0 {
+        scratch.push('-');
+    }
+    let start = scratch.len();
+    if *fraction_digits > 0 {
+        write_fixed(scratch, absolute, *fraction_digits);
+    } else {
+        write_js_string(scratch, js_round(absolute));
+    }
+    replace_first_dot(scratch, start, *separator);
+    write_aligned_to_width(out, scratch, *width, true);
 }
 
-fn format_time_span_for_profile(milliseconds: f64, profile: Option<&DiffProfile>, slice: &str) -> String {
+fn write_time_span_for_profile(out: &mut String, scratch: &mut String, milliseconds: f64, profile: Option<&DiffProfile>, slice: &str) {
+    scratch.clear();
     let Some(DiffProfile::TimeSpan { has_days, day_digits, hour_digits, has_seconds, fraction_digits, width }) = profile else {
-        return align_to_width(format_time_span_like_sample(milliseconds, slice), (chars(slice.trim()) + 1).max(1), true);
+        write_time_span_like_sample(scratch, milliseconds, slice);
+        write_aligned_to_width(out, scratch, (chars(slice.trim()) + 1).max(1), true);
+        return;
     };
     let broken = break_down(milliseconds, rounding_step(*fraction_digits, *has_seconds));
     if !has_days && broken.days > 0 {
-        return format_time_span(milliseconds);
+        write_time_span(out, milliseconds);
+        return;
     }
-    let mut output = String::from(if milliseconds < 0.0 { "-" } else { "" });
+    if milliseconds < 0.0 {
+        scratch.push('-');
+    }
     if *has_days {
-        output += &format!("{:0day_digits$}.", broken.days);
+        push_u64_padded(scratch, broken.days, *day_digits);
+        scratch.push('.');
     }
-    output += &format!("{:0hour_digits$}:{:02}", broken.hours, broken.minutes);
+    push_u64_padded(scratch, broken.hours, *hour_digits);
+    scratch.push(':');
+    push_two_digits(scratch, broken.minutes);
     if *has_seconds {
-        output += &format!(":{:02}", broken.seconds);
+        scratch.push(':');
+        push_two_digits(scratch, broken.seconds);
     }
     if *fraction_digits > 0 {
-        output += &format!(".{}", &format!("{:03}", broken.millis)[..*fraction_digits]);
+        write_fraction_millis(scratch, broken.millis, *fraction_digits);
     }
-    align_to_width(output, *width, true)
+    write_aligned_to_width(out, scratch, *width, true);
+}
+
+/// Writes the text of a diff value in place of `slice` into `out`, reusing `scratch` to avoid allocations.
+pub fn write_diff_value(out: &mut String, scratch: &mut String, value: f64, value_type: ValueType, slice: &str, profile: Option<&DiffProfile>) {
+    match value_type {
+        ValueType::Number => write_number_for_profile(out, scratch, value, profile, slice),
+        ValueType::TimeSpan => write_time_span_for_profile(out, scratch, value, profile, slice),
+        _ => {
+            scratch.clear();
+            write_time_span(scratch, value);
+            write_aligned_to_slice(out, scratch, slice, value_type);
+        }
+    }
 }
 
 /// The text of a diff value in place of `slice`
 pub fn format_diff_value(value: f64, value_type: ValueType, slice: &str, profile: Option<&DiffProfile>) -> String {
-    match value_type {
-        ValueType::Number => format_number_for_profile(value, profile, slice),
-        ValueType::TimeSpan => format_time_span_for_profile(value, profile, slice),
-        _ => align_to_slice(&format_time_span(value), slice, value_type),
-    }
+    let mut out = String::with_capacity(slice.len().max(24));
+    let mut scratch = String::with_capacity(24);
+    write_diff_value(&mut out, &mut scratch, value, value_type, slice, profile);
+    out
 }
 
 #[cfg(test)]
@@ -1030,5 +1405,22 @@ mod tests {
         assert_eq!(align_to_slice("7", "  42", ValueType::Number), "   7");
         assert_eq!(align_to_slice("7", "42  ", ValueType::Number), "7   ");
         assert_eq!(align_to_slice("ab", "abcd", ValueType::String), "ab  ");
+    }
+
+    #[test]
+    fn cached_local_millis_matches_chrono_across_the_whole_year_including_dst() {
+        let mut date = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+        while date <= end {
+            for hour in [0, 1, 2, 3, 12, 23] {
+                for &(minute, second, millis) in &[(0, 0, 0), (15, 30, 500), (59, 59, 999)] {
+                    let naive = date.and_hms_milli_opt(hour, minute, second, millis).unwrap();
+                    let expected = Local.from_local_datetime(&naive).earliest().map(|t| t.timestamp_millis() as f64);
+                    let actual = local_millis(date, hour, minute, second, millis);
+                    assert_eq!(actual, expected, "{date} {hour:02}:{minute:02}:{second:02}.{millis:03}");
+                }
+            }
+            date = date.succ_opt().unwrap();
+        }
     }
 }

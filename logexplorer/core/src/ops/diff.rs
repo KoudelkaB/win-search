@@ -5,8 +5,8 @@ use super::sort::{group_rows, Grouped, Keys, SliceSpec};
 use crate::cancel::{Cancel, OpResult};
 use crate::operator::DiffOp;
 use crate::stage::{DiffMeta, OutRows, Stage};
-use crate::text::{as_str, cols_to_bytes, Span};
-use crate::typed::{align_to_slice, format_diff_value, iso_string, parse_date_time, DiffProfile, ProfileSample, ValueType};
+use crate::text::{as_str, char_len, cols_to_bytes, Span};
+use crate::typed::{parse_date_time, write_aligned_to_slice, write_diff_value, write_iso_string, DiffProfile, ProfileSample, ValueType};
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -31,9 +31,11 @@ fn output_range(op: &DiffOp) -> (usize, usize) {
     }
 }
 
-fn diff_strings(current: &str, previous: &str) -> String {
+fn write_diff_strings(out: &mut String, current: &str, previous: &str) {
     let mut previous = previous.chars();
-    current.chars().map(|ch| if previous.next() == Some(ch) { ' ' } else { ch }).collect()
+    for ch in current.chars() {
+        out.push(if previous.next() == Some(ch) { ' ' } else { ch });
+    }
 }
 
 fn invert_string_diff(diff: &str, previous: &str) -> String {
@@ -48,6 +50,14 @@ fn invert_string_diff(diff: &str, previous: &str) -> String {
             }
         })
         .collect()
+}
+
+struct ChunkOut {
+    arena: Vec<u8>,
+    changed: Vec<(u32, usize, u32)>,
+    max_cols: u64,
+    arena_non_ascii: bool,
+    any_shrunk: bool,
 }
 
 struct Context<'a> {
@@ -81,39 +91,54 @@ impl Context<'_> {
         }
     }
 
-    /// The text written in place of the value of `block` (not reversing)
-    fn forward(&self, block: usize) -> String {
-        let raw = self.raw(block);
+    /// Writes the replacement for `block` into `out`; returns `false` when the row is unchanged.
+    fn write_forward(&self, block: usize, out: &mut String, scratch: &mut String) -> bool {
+        out.clear();
         match self.op.value_type {
-            ValueType::String if block > 0 => diff_strings(raw, self.raw(block - 1)),
-            ValueType::String => raw.to_string(),
-            ValueType::DateTime if block > 0 => format_diff_value(self.number(block) - self.number(block - 1), ValueType::TimeSpan, raw, self.profile.as_ref()),
-            ValueType::DateTime => raw.to_string(),
+            ValueType::String if block == 0 => return false,
+            ValueType::String => write_diff_strings(out, self.raw(block), self.raw(block - 1)),
+            ValueType::DateTime if block == 0 => return false,
+            ValueType::DateTime => {
+                let raw = self.raw(block);
+                write_diff_value(out, scratch, self.number(block) - self.number(block - 1), ValueType::TimeSpan, raw, self.profile.as_ref());
+            }
             value_type => {
+                let raw = self.raw(block);
                 let value = if block > 0 { self.number(block) - self.number(block - 1) } else { self.number(block) };
-                format_diff_value(value, value_type, raw, self.profile.as_ref())
+                write_diff_value(out, scratch, value, value_type, raw, self.profile.as_ref());
             }
         }
+        true
     }
 
     /// Writes the first row of `block` with `replacement` in the output columns
-    fn write(&self, block: usize, replacement: &str, arena: &mut Vec<u8>) -> Option<(u32, usize, u32)> {
+    fn write(&self, block: usize, replacement: &str, out: &mut ChunkOut) {
         let row = self.grouped.blocks[block].start;
-        let line = self.line_of(row as usize);
+        let span = self.spans[row as usize];
+        let line = as_str(self.stage.span_bytes(span));
         let (start, end) = cols_to_bytes(line, self.range.0, self.range.0 + self.range.1);
         if &line[start..end] == replacement {
-            return None;
+            return;
         }
-        let offset = arena.len();
-        arena.extend_from_slice(&line.as_bytes()[..start]);
-        arena.extend_from_slice(replacement.as_bytes());
-        arena.extend_from_slice(&line.as_bytes()[end..]);
-        Some((row, offset, (arena.len() - offset) as u32))
+        let offset = out.arena.len();
+        out.arena.extend_from_slice(&line.as_bytes()[..start]);
+        out.arena.extend_from_slice(replacement.as_bytes());
+        out.arena.extend_from_slice(&line.as_bytes()[end..]);
+        let new_len = out.arena.len() - offset;
+        let orig_ascii = self.stage.bufs[span.buf() as usize].ascii;
+        let line_ascii = orig_ascii && replacement.is_ascii();
+        if !line_ascii {
+            out.arena_non_ascii = true;
+        }
+        let old_cols = if orig_ascii { line.len() as u64 } else { char_len(line.as_bytes()) as u64 };
+        let new_cols = if line_ascii { new_len as u64 } else { char_len(&out.arena[offset..]) as u64 };
+        if new_cols < old_cols {
+            out.any_shrunk = true;
+        }
+        out.max_cols = out.max_cols.max(new_cols);
+        out.changed.push((row, offset, new_len as u32));
     }
 }
-
-/// The text of rewritten rows and, for each, `(row, offset in the text, length)`
-type Rewritten = (Vec<u8>, Vec<(u32, usize, u32)>);
 
 pub fn apply(stage: &Arc<Stage>, op: &DiffOp, cancel: &Cancel) -> OpResult<Stage> {
     let signature = signature(op);
@@ -136,34 +161,38 @@ pub fn apply(stage: &Arc<Stage>, op: &DiffOp, cancel: &Cancel) -> OpResult<Stage
         spans.extend_from_slice(&chunk);
     }
     let range = output_range(op);
-    let profile_type = if op.value_type == ValueType::DateTime { ValueType::TimeSpan } else { op.value_type };
-    let chunks: Vec<Rewritten> = {
+    let chunks: Vec<ChunkOut> = {
         let mut context = Context { stage, spans: &spans, op, spec, grouped: &grouped, profile: None, range };
-        if profile_type != ValueType::String {
+        // DateTime inputs never match TimeSpan profiles (and invert DateTime writes ISO dates), so only Number and TimeSpan build a column profile.
+        if matches!(op.value_type, ValueType::Number | ValueType::TimeSpan) {
             context.profile = (0..grouped.blocks.len())
                 .into_par_iter()
                 .with_min_len(1 << 12)
-                .map(|block| ProfileSample::of(context.raw(block), profile_type))
+                .map(|block| ProfileSample::of(context.raw(block), op.value_type))
                 // Rayon reduces neighbours in order, so "the first value with decimals" stays the first
                 .reduce(ProfileSample::default, ProfileSample::merge)
-                .profile(profile_type, range.1);
+                .profile(op.value_type, range.1);
         }
         cancel.check()?;
 
         // Changed rows: (row, offset in the chunk's text, length)
         if !op.invert {
             par_chunks(grouped.blocks.len(), cancel, |blocks| {
-                let mut arena = Vec::new();
-                let mut changed = Vec::new();
+                let mut out = ChunkOut { arena: Vec::new(), changed: Vec::new(), max_cols: 0, arena_non_ascii: false, any_shrunk: false };
+                let mut replacement = String::with_capacity(64);
+                let mut scratch = String::with_capacity(64);
                 for block in blocks {
-                    changed.extend(context.write(block, &context.forward(block), &mut arena));
+                    if context.write_forward(block, &mut replacement, &mut scratch) {
+                        context.write(block, &replacement, &mut out);
+                    }
                 }
-                Ok((arena, changed))
+                Ok(out)
             })?
         } else {
             // A running total: every row needs the restored value of the one before
-            let mut arena = Vec::new();
-            let mut changed = Vec::new();
+            let mut out = ChunkOut { arena: Vec::new(), changed: Vec::new(), max_cols: 0, arena_non_ascii: false, any_shrunk: false };
+            let mut replacement = String::with_capacity(64);
+            let mut scratch = String::with_capacity(64);
             let mut previous_text: Option<String> = None;
             let mut previous_value: Option<f64> = None;
             for block in 0..grouped.blocks.len() {
@@ -171,48 +200,64 @@ pub fn apply(stage: &Arc<Stage>, op: &DiffOp, cancel: &Cancel) -> OpResult<Stage
                     cancel.check()?;
                 }
                 let raw = context.raw(block);
-                let mut replacement = None;
+                let mut has_replacement = false;
                 match op.value_type {
                     ValueType::String => {
                         let restored = match &previous_text {
                             Some(previous) => invert_string_diff(raw, previous),
                             None => raw.to_string(),
                         };
-                        replacement = previous_text.is_some().then(|| restored.clone());
+                        if previous_text.is_some() {
+                            replacement.clear();
+                            replacement.push_str(&restored);
+                            has_replacement = true;
+                        }
                         previous_text = Some(restored);
                     }
                     value_type => match previous_value {
                         Some(previous) => {
                             let restored = context.number(block) + previous;
-                            replacement = Some(if value_type == ValueType::DateTime {
-                                align_to_slice(&iso_string(restored), raw, value_type)
+                            replacement.clear();
+                            if value_type == ValueType::DateTime {
+                                scratch.clear();
+                                write_iso_string(&mut scratch, restored);
+                                write_aligned_to_slice(&mut replacement, &scratch, raw, value_type);
                             } else {
-                                format_diff_value(restored, value_type, raw, context.profile.as_ref())
-                            });
+                                write_diff_value(&mut replacement, &mut scratch, restored, value_type, raw, context.profile.as_ref());
+                            }
+                            has_replacement = true;
                             previous_value = Some(restored);
                         }
                         None => previous_value = if value_type == ValueType::DateTime { parse_date_time(raw) } else { Some(context.number(block)) },
                     },
                 }
-                if let Some(replacement) = replacement {
-                    changed.extend(context.write(block, &replacement, &mut arena));
+                if has_replacement {
+                    context.write(block, &replacement, &mut out);
                 }
             }
-            vec![(arena, changed)]
+            vec![out]
         }
     };
 
     let arena_buf = stage.bufs.len() as u16;
+    let total_arena: usize = chunks.iter().map(|chunk| chunk.arena.len()).sum();
+    let arena_ascii = !chunks.iter().any(|chunk| chunk.arena_non_ascii);
+    let any_shrunk = chunks.iter().any(|chunk| chunk.any_shrunk);
+    let changed_max_cols = chunks.iter().map(|chunk| chunk.max_cols).max().unwrap_or(0);
+    let max_cols = (!any_shrunk).then(|| stage.max_cols.max(changed_max_cols));
     let mut arena = Vec::new();
-    arena.reserve_exact(chunks.iter().map(|(text, _)| text.len()).sum());
-    for (text, changed) in chunks {
+    arena.reserve_exact(total_arena);
+    for chunk in chunks {
         let base = arena.len();
-        arena.extend_from_slice(&text);
-        for (row, offset, length) in changed {
+        arena.extend_from_slice(&chunk.arena);
+        for (row, offset, length) in chunk.changed {
             spans[row as usize] = Span::new(arena_buf, (base + offset) as u64, length);
         }
     }
-    let mut out = stage.derive("Diff", OutRows { spans, origin: None, arena, max_cols: None, arena_resolved: true, arena_ascii: None });
+    let mut out = stage.derive(
+        "Diff",
+        OutRows { spans, origin: None, arena, max_cols, arena_resolved: true, arena_ascii: (total_arena > 0).then_some(arena_ascii) },
+    );
     out.diff_meta = Some(DiffMeta { signature, original: stage.clone() });
     Ok(out)
 }
