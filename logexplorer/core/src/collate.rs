@@ -51,7 +51,8 @@ fn weight(ch: char) -> u32 {
     }
 }
 
-fn ascii_compare(left: &[u8], right: &[u8]) -> Ordering {
+#[inline]
+pub fn compare_ascii(left: &[u8], right: &[u8]) -> Ordering {
     let mut case = Ordering::Equal;
     for (&x, &y) in left.iter().zip(right) {
         if x == y {
@@ -66,6 +67,20 @@ fn ascii_compare(left: &[u8], right: &[u8]) -> Ordering {
         }
     }
     left.len().cmp(&right.len()).then(case)
+}
+
+/// First 8 ASCII primary ranks packed big-endian into a `u64` (0 marks end-of-string).
+/// Whenever two keys differ, their `u64` order matches [`compare_ascii`] exactly.
+#[inline]
+pub fn ascii_prefix_key(bytes: &[u8]) -> u64 {
+    let mut key = 0u64;
+    let len = bytes.len().min(8);
+    let mut i = 0;
+    while i < len {
+        key |= (RANKS[bytes[i] as usize] as u64) << (56 - i * 8);
+        i += 1;
+    }
+    key
 }
 
 /// Base letters of the text, without accents
@@ -149,7 +164,7 @@ fn full_compare(left: &str, right: &str, numeric: bool, all_levels: bool) -> Ord
 #[inline]
 pub fn compare(left: &str, right: &str) -> Ordering {
     if left.is_ascii() && right.is_ascii() {
-        ascii_compare(left.as_bytes(), right.as_bytes())
+        compare_ascii(left.as_bytes(), right.as_bytes())
     } else {
         full_compare(left, right, false, true)
     }
@@ -196,5 +211,22 @@ mod tests {
         assert_eq!(items, ["id9", "id09", "ID9", "id10", "id100"]);
         assert_eq!(compare_natural("Á9", "a09", false), Ordering::Equal);
         assert_eq!(compare_natural("a", "A", true), Ordering::Less);
+    }
+
+    #[test]
+    fn ascii_prefix_key_agrees_with_compare_whenever_keys_differ() {
+        let samples = [
+            "", " ", "-", "_", "0", "9", "a", "A", "ab", "aB", "Ab", "abc",
+            "abcdefgh", "abcdefgH", "abcdefgh1", "abcdefgh2", "abcdefgi",
+            "[4711] START", "[4712] END", "START /api/orders/1", "START /api/orders/2",
+        ];
+        for &left in &samples {
+            for &right in &samples {
+                let key_order = ascii_prefix_key(left.as_bytes()).cmp(&ascii_prefix_key(right.as_bytes()));
+                if key_order != Ordering::Equal {
+                    assert_eq!(key_order, compare(left, right), "left={left:?} right={right:?}");
+                }
+            }
+        }
     }
 }

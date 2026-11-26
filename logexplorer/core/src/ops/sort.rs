@@ -6,7 +6,7 @@ use crate::cancel::{Cancel, OpResult};
 use crate::collate;
 use crate::operator::{AnchorSide, SortMode, SortOp, SortOrder};
 use crate::stage::Stage;
-use crate::text::{as_str, cols_to_bytes};
+use crate::text::{as_str, cols_to_bytes, Span};
 use crate::typed::{parse_typed, ValueType};
 use memchr::memmem;
 use rayon::prelude::*;
@@ -18,19 +18,29 @@ pub(crate) struct SliceSpec<'a> {
     pub pos: usize,
     pub len: usize,
     pub anchor: &'a str,
+    finder: Option<memmem::Finder<'a>>,
     pub side: AnchorSide,
     pub value_type: ValueType,
 }
 
 impl<'a> SliceSpec<'a> {
+    pub fn new(mode: SortMode, pos: usize, len: usize, anchor: &'a str, side: AnchorSide, value_type: ValueType) -> Self {
+        let finder = (mode == SortMode::Anchor && !anchor.is_empty()).then(|| memmem::Finder::new(anchor.as_bytes()));
+        SliceSpec { mode, pos, len, anchor, finder, side, value_type }
+    }
+
     pub fn positional(pos: u64, len: u64, value_type: ValueType) -> Self {
-        SliceSpec { mode: SortMode::Positional, pos: pos as usize, len: len.max(1) as usize, anchor: "", side: AnchorSide::After, value_type }
+        SliceSpec::new(SortMode::Positional, pos as usize, len.max(1) as usize, "", AnchorSide::After, value_type)
     }
 
     /// Byte range of the value in `line`; `None` when the row has none
+    #[inline]
     pub fn slice(&self, line: &str) -> Option<(usize, usize)> {
         if self.mode == SortMode::Anchor {
-            let at = if self.anchor.is_empty() { 0 } else { memmem::find(line.as_bytes(), self.anchor.as_bytes())? };
+            let at = match &self.finder {
+                Some(finder) => finder.find(line.as_bytes())?,
+                None => 0,
+            };
             if self.side == AnchorSide::Before {
                 let prefix = line[..at].trim_end();
                 let token = prefix.split_whitespace().next_back()?;
@@ -64,8 +74,8 @@ pub(crate) struct Block {
 pub(crate) enum Keys {
     /// Per block
     Numbers(Vec<f64>),
-    /// Byte range of the value in the first row of each block
-    Slices(Vec<(u32, u32)>),
+    /// Span of the value in the first row of each block
+    Slices(Vec<Span>),
 }
 
 pub(crate) struct Grouped {
@@ -84,11 +94,11 @@ pub(crate) fn group_rows(stage: &Stage, spec: &SliceSpec, invert_date_time: bool
         let mut numbers = Vec::new();
         let mut slices = Vec::new();
         let mut starts = Vec::new();
-        stage.for_each_row(range, |row, _span, line_bytes| {
+        stage.for_each_row(range, |row, span, line_bytes| {
             let line = as_str(line_bytes);
             let Some((start, end)) = spec.slice(line) else { return };
             if is_text {
-                slices.push((start as u32, end as u32));
+                slices.push(span.sub(start, end));
             } else {
                 match parse_typed(&line[start..end], spec.value_type, invert_date_time) {
                     Some(value) => numbers.push(value),
@@ -118,28 +128,64 @@ pub(crate) fn group_rows(stage: &Stage, spec: &SliceSpec, invert_date_time: bool
     Ok(Grouped { leading, blocks, keys: if is_text { Keys::Slices(slices) } else { Keys::Numbers(numbers) } })
 }
 
+/// Order-preserving bijection from finite `f64` (with `-0.0` mapped to `+0.0`) to `u64`.
+#[inline]
+fn f64_to_sortable_u64(value: f64) -> u64 {
+    let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
+    if (bits >> 63) != 0 {
+        !bits
+    } else {
+        bits ^ (1u64 << 63)
+    }
+}
+
 pub fn apply(stage: &Stage, op: &SortOp, cancel: &Cancel) -> OpResult<Stage> {
-    let spec = SliceSpec { mode: op.mode, pos: op.pos as usize, len: op.len.max(1) as usize, anchor: &op.anchor, side: op.anchor_side, value_type: op.value_type };
+    let spec = SliceSpec::new(op.mode, op.pos as usize, op.len.max(1) as usize, &op.anchor, op.anchor_side, op.value_type);
     let grouped = group_rows(stage, &spec, false, cancel)?;
     cancel.check()?;
     let descending = op.order == SortOrder::Desc;
-    let mut order: Vec<u32> = (0..grouped.blocks.len() as u32).collect();
     let directed = |ordering: Ordering| if descending { ordering.reverse() } else { ordering };
-    match &grouped.keys {
+    let order: Vec<u32> = match grouped.keys {
         Keys::Numbers(numbers) => {
-            order.par_sort_by(|&left, &right| directed(numbers[left as usize].partial_cmp(&numbers[right as usize]).unwrap_or(Ordering::Equal)).then(left.cmp(&right)))
+            let mut keyed: Vec<(u64, u32)> = numbers
+                .into_par_iter()
+                .enumerate()
+                .map(|(block, value)| {
+                    let key = f64_to_sortable_u64(value);
+                    (if descending { !key } else { key }, block as u32)
+                })
+                .collect();
+            keyed.par_sort_unstable();
+            keyed.into_iter().map(|(_, block)| block).collect()
         }
         Keys::Slices(slices) => {
-            if grouped.blocks.len() >= 1024 {
-                stage.ensure_random_access();
+            let all_ascii = stage.bufs.iter().all(|buf| buf.ascii);
+            if all_ascii {
+                let mut keyed: Vec<(u64, u32)> = slices
+                    .par_iter()
+                    .enumerate()
+                    .map(|(block, &span)| {
+                        let key = collate::ascii_prefix_key(stage.span_bytes(span));
+                        (if descending { !key } else { key }, block as u32)
+                    })
+                    .collect();
+                keyed.par_sort_unstable_by(|&(lk, lb), &(rk, rb)| {
+                    lk.cmp(&rk)
+                        .then_with(|| directed(collate::compare_ascii(stage.span_bytes(slices[lb as usize]), stage.span_bytes(slices[rb as usize]))))
+                        .then(lb.cmp(&rb))
+                });
+                keyed.into_iter().map(|(_, block)| block).collect()
+            } else {
+                let mut order: Vec<u32> = (0..slices.len() as u32).collect();
+                order.par_sort_unstable_by(|&left, &right| {
+                    let left_text = as_str(stage.span_bytes(slices[left as usize]));
+                    let right_text = as_str(stage.span_bytes(slices[right as usize]));
+                    directed(collate::compare(left_text, right_text)).then(left.cmp(&right))
+                });
+                order
             }
-            let text = |block: u32| {
-                let (start, end) = slices[block as usize];
-                &stage.line(grouped.blocks[block as usize].start as usize)[start as usize..end as usize]
-            };
-            order.par_sort_by(|&left, &right| directed(collate::compare(text(left), text(right))).then(left.cmp(&right)));
         }
-    }
+    };
     cancel.check()?;
     let mut origin: Vec<u32> = Vec::with_capacity(stage.len());
     origin.extend(0..grouped.leading as u32);
@@ -208,5 +254,22 @@ mod tests {
         assert_eq!(lines_of(&apply(&stage, &sort(0, 14, ValueType::TimeSpan), &Cancel::new()).unwrap()), ["00:00:02.500", "00:00:10.000", "1.00:00:00.000"]);
         let dates = stage_of(&["13.3.2026 10:00", "2.1.2026 09:00", "1.12.2025 23:59"]);
         assert_eq!(lines_of(&apply(&dates, &sort(0, 20, ValueType::DateTime), &Cancel::new()).unwrap()), ["1.12.2025 23:59", "2.1.2026 09:00", "13.3.2026 10:00"]);
+    }
+
+    #[test]
+    fn sortable_f64_keys_preserve_order_and_long_text_prefixes_resolve_ties() {
+        let values = [f64::NEG_INFINITY, -1e100, -10.5, -1.0, -0.0, 0.0, 1e-300, 1.0, 10.5, 1e100, f64::INFINITY];
+        for &a in &values {
+            for &b in &values {
+                assert_eq!(f64_to_sortable_u64(a).cmp(&f64_to_sortable_u64(b)), a.partial_cmp(&b).unwrap(), "a={a} b={b}");
+            }
+        }
+        let stage = stage_of(&["prefix_00_B", "prefix_00_a", "prefix_00_A", "prefix_00_b", "prefix_00"]);
+        let asc = apply(&stage, &sort(0, 20, ValueType::String), &Cancel::new()).unwrap();
+        assert_eq!(lines_of(&asc), ["prefix_00", "prefix_00_a", "prefix_00_A", "prefix_00_b", "prefix_00_B"]);
+        let mut desc_op = sort(0, 20, ValueType::String);
+        desc_op.order = SortOrder::Desc;
+        let desc = apply(&stage, &desc_op, &Cancel::new()).unwrap();
+        assert_eq!(lines_of(&desc), ["prefix_00_B", "prefix_00_b", "prefix_00_A", "prefix_00_a", "prefix_00"]);
     }
 }

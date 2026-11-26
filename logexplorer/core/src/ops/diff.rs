@@ -77,10 +77,12 @@ impl Context<'_> {
     }
 
     fn raw(&self, block: usize) -> &str {
-        let line = self.line_of(self.grouped.blocks[block].start as usize);
         match &self.grouped.keys {
-            Keys::Slices(slices) => &line[slices[block].0 as usize..slices[block].1 as usize],
-            Keys::Numbers(_) => self.spec.slice(line).map_or("", |(start, end)| &line[start..end]),
+            Keys::Slices(slices) => as_str(self.stage.span_bytes(slices[block])),
+            Keys::Numbers(_) => {
+                let line = self.line_of(self.grouped.blocks[block].start as usize);
+                self.spec.slice(line).map_or("", |(start, end)| &line[start..end])
+            }
         }
     }
 

@@ -6,8 +6,9 @@ use super::{par_chunks, trim_span};
 use crate::cancel::{Cancel, OpError, OpResult};
 use crate::literal::Needle;
 use crate::operator::{ExtractMode, ExtractOp, ExtractScope, RowMode};
-use crate::stage::{OutRows, Stage};
+use crate::stage::{OutRows, Rows, Stage};
 use crate::text::{as_str, char_len, cols_to_bytes, Span};
+use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 use std::ops::Range;
 
@@ -165,21 +166,34 @@ impl Pattern {
         Ok(Pattern { engine, group, crosses_rows })
     }
 
+    fn new_locations(&self) -> Option<regex::CaptureLocations> {
+        match &self.engine {
+            Engine::Fast(regex) if self.group > 0 => Some(regex.capture_locations()),
+            _ => None,
+        }
+    }
+
     /// Calls `found` with the byte range of the group of every match (`None` when the group
-    /// took no part in it); only the first match unless `all`
-    fn each_match(&self, text: &str, all: bool, mut found: impl FnMut(Option<(usize, usize)>)) -> OpResult<()> {
+    /// took no part in it); only the first match unless `all`. Reuses `locations` across rows.
+    fn each_match(
+        &self,
+        text: &str,
+        all: bool,
+        locations: &mut Option<regex::CaptureLocations>,
+        mut found: impl FnMut(Option<(usize, usize)>),
+    ) -> OpResult<()> {
         let mut at = 0;
         match &self.engine {
             Engine::Fast(regex) => {
-                let mut locations = regex.capture_locations();
                 while at <= text.len() {
                     let whole = if self.group == 0 {
                         let Some(whole) = regex.find_at(text, at) else { break };
                         found(Some((whole.start(), whole.end())));
                         whole
                     } else {
-                        let Some(whole) = regex.captures_read_at(&mut locations, text, at) else { break };
-                        found(locations.get(self.group));
+                        let locs = locations.get_or_insert_with(|| regex.capture_locations());
+                        let Some(whole) = regex.captures_read_at(locs, text, at) else { break };
+                        found(locs.get(self.group));
                         whole
                     };
                     if !all {
@@ -205,17 +219,19 @@ impl Pattern {
     }
 }
 
-fn collect_chunks(
+fn collect_chunks<S>(
     stage: &Stage,
     op: &ExtractOp,
     rows: Range<usize>,
     cancel: &Cancel,
-    per_row: impl Fn(&mut Output, usize, Span, &[u8]) -> OpResult<()> + Sync,
+    init: impl Fn() -> S + Sync,
+    per_row: impl Fn(&mut Output, &mut S, usize, Span, &[u8]) -> OpResult<()> + Sync,
 ) -> OpResult<OutRows> {
     let base = rows.start;
     let chunks = par_chunks(rows.len(), cancel, |range| {
         let mut output = Output::new(stage, op);
-        stage.try_for_each_row(base + range.start..base + range.end, |row, span, line| per_row(&mut output, row, span, line))?;
+        let mut state = init();
+        stage.try_for_each_row(base + range.start..base + range.end, |row, span, line| per_row(&mut output, &mut state, row, span, line))?;
         Ok(output)
     })?;
     let total = chunks.iter().map(|chunk| chunk.spans.len()).sum();
@@ -236,22 +252,65 @@ fn collect_chunks(
 }
 
 fn regex_rows(stage: &Stage, op: &ExtractOp, pattern: &Pattern, rows: Range<usize>, cancel: &Cancel) -> OpResult<OutRows> {
-    collect_chunks(stage, op, rows, cancel, |output, row, span, line| {
-        pattern.each_match(as_str(line), op.all_matches, |group| {
-            if let Some((start, end)) = group {
-                output.add(span.sub(start, end), row);
-            }
-        })
-    })
+    collect_chunks(
+        stage,
+        op,
+        rows,
+        cancel,
+        || pattern.new_locations(),
+        |output, locations, row, span, line| {
+            pattern.each_match(as_str(line), op.all_matches, locations, |group| {
+                if let Some((start, end)) = group {
+                    output.add(span.sub(start, end), row);
+                }
+            })
+        },
+    )
+}
+
+fn has_cr(bytes: &[u8]) -> bool {
+    if bytes.len() < (1 << 20) {
+        return memchr::memchr(b'\r', bytes).is_some();
+    }
+    bytes.par_chunks(1 << 20).any(|chunk| memchr::memchr(b'\r', chunk).is_some())
 }
 
 /// The pattern over the rows joined by line breaks, for matches that cross rows
 fn regex_whole_text(stage: &Stage, op: &ExtractOp, pattern: &Pattern, cancel: &Cancel) -> OpResult<OutRows> {
     let rows = stage.len();
+    let mut locations = pattern.new_locations();
+    // Zero-copy fast path: when rows are contiguous LF-only lines in one buffer, search it directly.
+    if let Rows::Lines(index) = &stage.rows {
+        let bytes = stage.bufs[index.buf as usize].bytes();
+        let first_start = if rows > 0 { index.row_start(0, bytes) } else { 0 };
+        let region_end = index.end as usize;
+        let region = &bytes[first_start..region_end];
+        if !has_cr(region) {
+            let text = as_str(region);
+            let mut output = Output::new(stage, op);
+            pattern.each_match(text, op.all_matches, &mut locations, |group| {
+                if let Some((start, end)) = group {
+                    let (from_row, from_line_start) = index.row_of_offset(first_start + start, bytes);
+                    let from = (from_row, (first_start + start) - from_line_start);
+                    let (to_row, to_line_start) = index.row_of_offset(first_start + end, bytes);
+                    let to = (to_row, (first_start + end) - to_line_start);
+                    // An end right after a line break belongs to the row before it
+                    let to = if to.1 == 0 && to.0 > from.0 && end > start && region[end - 1] == b'\n' {
+                        (to.0 - 1, stage.span(to.0 - 1).len() as usize)
+                    } else {
+                        to
+                    };
+                    output.add_range(from, to);
+                }
+            })?;
+            return Ok(output.into_out_rows());
+        }
+    }
+
     let mut text = String::new();
     text.try_reserve_exact(stage.text_bytes() as usize).map_err(|_| OpError::msg("Not enough memory to search the whole view."))?;
     let mut starts = Vec::with_capacity(rows);
-    for row in 0..rows {
+    stage.try_for_each_row(0..rows, |row, _, line| {
         if row % 8192 == 0 {
             cancel.check()?;
         }
@@ -259,8 +318,9 @@ fn regex_whole_text(stage: &Stage, op: &ExtractOp, pattern: &Pattern, cancel: &C
             text.push('\n');
         }
         starts.push(text.len());
-        text.push_str(stage.line(row));
-    }
+        text.push_str(as_str(line));
+        Ok(())
+    })?;
     let mut output = Output::new(stage, op);
     // Matches come in order, so the row of an offset is found by walking on
     let mut row = 0;
@@ -270,7 +330,7 @@ fn regex_whole_text(stage: &Stage, op: &ExtractOp, pattern: &Pattern, cancel: &C
         }
         (*row, offset - starts[*row])
     };
-    pattern.each_match(&text, op.all_matches, |group| {
+    pattern.each_match(&text, op.all_matches, &mut locations, |group| {
         if let Some((start, end)) = group {
             let from = locate(start, &mut row);
             let mut end_row = from.0;
@@ -296,22 +356,22 @@ fn apply_regex(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<OutRo
     }
     // Only the first match of the whole view
     let mut output = Output::new(stage, op);
-    for row in 0..stage.len() {
+    let mut locations = pattern.new_locations();
+    let mut matched = false;
+    stage.try_for_each_row(0..stage.len(), |row, span, line| {
+        if matched {
+            return Ok(());
+        }
         if row % 8192 == 0 {
             cancel.check()?;
         }
-        let span = stage.span(row);
-        let mut matched = false;
-        pattern.each_match(as_str(stage.span_bytes(span)), false, |group| {
+        pattern.each_match(as_str(line), false, &mut locations, |group| {
             matched = true;
             if let Some((start, end)) = group {
                 output.add(span.sub(start, end), row);
             }
-        })?;
-        if matched {
-            break;
-        }
-    }
+        })
+    })?;
     Ok(output.into_out_rows())
 }
 
@@ -411,7 +471,7 @@ pub fn apply(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<Stage> 
             let start = Needle::new(&op.start_anchor, op.case_sensitive);
             let end = Needle::new(&op.end_anchor, op.case_sensitive);
             if op.scope == ExtractScope::Line {
-                collect_chunks(stage, op, row_bounds(stage, op), cancel, |output, row, span, line| {
+                collect_chunks(stage, op, row_bounds(stage, op), cancel, || (), |output, _, row, span, line| {
                     between_in_row(output, row, span, line, &start, &end, op.all_matches);
                     Ok(())
                 })?
@@ -421,7 +481,7 @@ pub fn apply(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<Stage> 
         }
         ExtractMode::Column => {
             let (pos, len) = (op.pos as usize, op.len.max(1) as usize);
-            collect_chunks(stage, op, row_bounds(stage, op), cancel, |output, row, span, line| {
+            collect_chunks(stage, op, row_bounds(stage, op), cancel, || (), |output, _, row, span, line| {
                 let (start, end) = cols_to_bytes(as_str(line), pos, pos + len);
                 output.add(span.sub(start, end), row);
                 Ok(())
@@ -476,6 +536,15 @@ mod tests {
         let op = ExtractOp { pattern: r"BEGIN([\s\S]*?)END".into(), ..extract() };
         assert_eq!(run(&stage, &op), ["a", "b", "c", "d"]);
         assert_eq!(row_ids_of(&apply(&stage, &op, &Cancel::new()).unwrap()), [0, 1, 2, 3]);
+
+        // Same result for UTF-8 BOM (LF zero-copy path) and CRLF (normalized fallback path)
+        let bom_stage = crate::load::source_from_bytes(b"\xef\xbb\xbfBEGIN a\nb\nc END\nBEGIN d END".to_vec(), "bom", "bom").unwrap().stage;
+        assert_eq!(run(&bom_stage, &op), ["a", "b", "c", "d"]);
+        assert_eq!(row_ids_of(&apply(&bom_stage, &op, &Cancel::new()).unwrap()), [0, 1, 2, 3]);
+
+        let crlf_stage = crate::load::source_from_bytes(b"BEGIN a\r\nb\r\nc END\r\nBEGIN d END".to_vec(), "crlf", "crlf").unwrap().stage;
+        assert_eq!(run(&crlf_stage, &op), ["a", "b", "c", "d"]);
+        assert_eq!(row_ids_of(&apply(&crlf_stage, &op, &Cancel::new()).unwrap()), [0, 1, 2, 3]);
     }
 
     #[test]
