@@ -19,9 +19,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
         let search_length = op.search.len();
         let chunks = par_chunks(stage.len(), cancel, |range| {
             let mut assembler = Assembler::with_origin(stage, splits_rows);
-            for row in range {
-                let span = stage.span(row);
-                let line = stage.span_bytes(span);
+            stage.for_each_row(range, |row, span, line| {
                 let mut copied = 0;
                 for found in finder.find_iter(line) {
                     assembler.push_span(span.sub(copied, found), row as u32);
@@ -30,7 +28,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
                 }
                 assembler.push_span(span.sub(copied, line.len()), row as u32);
                 assembler.end_row(row as u32);
-            }
+            });
             assembler.finish()
         })?;
         return Ok(stage.derive("Replace", merge_chunks(chunks, splits_rows, stage.bufs.len() as u16)?));

@@ -49,22 +49,27 @@ pub fn apply(stage: &Stage, op: &UniqueOp, cancel: &Cancel) -> OpResult<Stage> {
     let mut seen: HashTable<u32> = HashTable::with_capacity(stage.len());
     // (value, row) of the first occurrences
     let mut entries: Vec<(Span, u32)> = Vec::new();
-    for row in 0..stage.len() {
+    stage.try_for_each_row(0..stage.len(), |row, raw_span, raw_line| {
         if row % 8192 == 0 {
             cancel.check()?;
         }
-        let span = if op.trim { trim_span(stage, stage.span(row)) } else { stage.span(row) };
+        let (span, text) = if op.trim {
+            let trimmed = trim_span(stage, raw_span);
+            (trimmed, stage.span_bytes(trimmed))
+        } else {
+            (raw_span, raw_line)
+        };
         if op.ignore_empty && span.is_empty() {
-            continue;
+            return Ok(());
         }
-        let text = stage.span_bytes(span);
         let hash = hash_of(&builder, text, op.case_sensitive);
         let found = seen.find(hash, |&entry| same(stage.span_bytes(entries[entry as usize].0), text, op.case_sensitive)).is_some();
         if !found {
             seen.insert_unique(hash, entries.len() as u32, |&entry| hash_of(&builder, stage.span_bytes(entries[entry as usize].0), op.case_sensitive));
             entries.push((span, row as u32));
         }
-    }
+        Ok(())
+    })?;
     drop(seen);
     if op.order != UniqueOrder::Stable {
         cancel.check()?;

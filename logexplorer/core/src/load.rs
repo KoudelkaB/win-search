@@ -1,11 +1,12 @@
 //! Loading sources: reading, decoding to UTF-8, the line index, and combining several files.
 //!
 //! A UTF-8 file without tabs is used exactly as it was read - one allocation of the file's
-//! size plus 4 bytes a line. Only tabs (expanded to four spaces), UTF-16 and
-//! invalid UTF-8 need a converted copy, and then the bytes read are released.
+//! size plus sparse checkpoints (every 64 lines). Only tabs (expanded to four spaces), UTF-16
+//! and invalid UTF-8 need a converted copy, and then the bytes read are released.
 
 use crate::cancel::{Cancel, OpError, OpResult};
-use crate::stage::{RowIds, SourceDesc, SrcIds, Stage, Starts, NO_SRC};
+use crate::ops::par_chunks;
+use crate::stage::{LineIndex, RowIds, SourceDesc, SrcIds, Stage, Starts, LINE_INDEX_STRIDE, NO_SRC};
 use crate::text::{char_len, Buf, BufRef, Span};
 use rayon::prelude::*;
 use std::io::Read;
@@ -15,6 +16,9 @@ use std::sync::Arc;
 
 pub const TAB_REPLACEMENT: &str = "    ";
 const SCAN_CHUNK: usize = 1 << 20;
+const BATCH_CHUNKS: usize = 64;
+const DENSE_THRESHOLD: usize = 65_536;
+const SHRINK_SLACK: usize = 1 << 20;
 
 /// Bytes read so far and in total, for a progress display.
 #[derive(Default)]
@@ -69,43 +73,59 @@ pub fn detect_encoding(bytes: &[u8]) -> Detected {
     Detected { encoding: "utf-8", offset: 0 }
 }
 
-/// Valid UTF-8, checked in parallel
-fn is_utf8(bytes: &[u8]) -> bool {
-    if bytes.len() < 2 * SCAN_CHUNK {
-        return simdutf8::basic::from_utf8(bytes).is_ok();
+/// Splits `bytes[offset..]` into ~1 MiB chunks on UTF-8 boundaries without ever splitting `\r\n`.
+fn chunk_ranges_for(bytes: &[u8], offset: usize) -> Vec<(usize, usize)> {
+    let end = bytes.len();
+    if offset >= end {
+        return Vec::new();
     }
-    // Chunks start at character boundaries so that each can be checked on its own
-    let mut cuts = vec![0];
-    let mut at = SCAN_CHUNK;
-    while at < bytes.len() {
-        while at < bytes.len() && (bytes[at] & 0xC0) == 0x80 {
-            at += 1;
+    if end - offset < 2 * SCAN_CHUNK {
+        return vec![(offset, end)];
+    }
+    let mut ranges = Vec::with_capacity((end - offset) / SCAN_CHUNK + 1);
+    let mut start = offset;
+    while start < end {
+        let mut cut = (start + SCAN_CHUNK).min(end);
+        while cut < end && ((bytes[cut] & 0xC0) == 0x80 || (bytes[cut] == b'\n' && bytes[cut - 1] == b'\r')) {
+            cut += 1;
         }
-        cuts.push(at);
-        at += SCAN_CHUNK;
+        ranges.push((start, cut));
+        start = cut;
     }
-    cuts.push(bytes.len());
-    cuts.par_windows(2).all(|pair| simdutf8::basic::from_utf8(&bytes[pair[0]..pair[1]]).is_ok())
+    ranges
 }
 
-fn count_tabs(bytes: &[u8]) -> usize {
-    bytes.par_chunks(SCAN_CHUNK).map(|chunk| memchr::memchr_iter(b'\t', chunk).count()).sum()
+/// Valid UTF-8, checked in parallel for large buffers
+fn is_utf8(bytes: &[u8]) -> bool {
+    let ranges = chunk_ranges_for(bytes, 0);
+    if ranges.len() <= 1 {
+        return bytes.is_ascii() || simdutf8::basic::from_utf8(bytes).is_ok();
+    }
+    ranges.par_iter().all(|&(start, end)| {
+        let chunk = &bytes[start..end];
+        chunk.is_ascii() || simdutf8::basic::from_utf8(chunk).is_ok()
+    })
 }
 
-/// The text with every tab as four spaces
-fn expand_tabs(bytes: &[u8], tabs: usize) -> Vec<u8> {
+/// The text of `ranges` inside `bytes` with every tab expanded to four spaces, using precomputed per-chunk tab counts.
+fn expand_tabs_with_counts(bytes: &[u8], ranges: &[(usize, usize)], chunk_tabs: &[usize], total_tabs: usize, parallel: bool) -> Vec<u8> {
     let extra = TAB_REPLACEMENT.len() - 1;
-    let mut out = vec![0u8; bytes.len() + tabs * extra];
-    // Output ranges of the chunks, then every chunk is expanded on its own
-    let mut targets = Vec::new();
+    let total_in: usize = ranges.iter().map(|&(start, end)| end - start).sum();
+    let mut out = vec![0u8; total_in + total_tabs * extra];
+    let mut targets = Vec::with_capacity(ranges.len());
     let mut rest: &mut [u8] = &mut out;
-    for chunk in bytes.chunks(SCAN_CHUNK) {
-        let size = chunk.len() + memchr::memchr_iter(b'\t', chunk).count() * extra;
+    for (&(start, end), &tabs) in ranges.iter().zip(chunk_tabs) {
+        let size = (end - start) + tabs * extra;
         let (head, tail) = rest.split_at_mut(size);
         targets.push(head);
         rest = tail;
     }
-    bytes.par_chunks(SCAN_CHUNK).zip(targets.into_par_iter()).for_each(|(chunk, target)| {
+    let expand_one = |(&(start, end), &tabs, target): (&(usize, usize), &usize, &mut [u8])| {
+        let chunk = &bytes[start..end];
+        if tabs == 0 {
+            target.copy_from_slice(chunk);
+            return;
+        }
         let mut written = 0;
         let mut copied = 0;
         for tab in memchr::memchr_iter(b'\t', chunk) {
@@ -118,7 +138,18 @@ fn expand_tabs(bytes: &[u8], tabs: usize) -> Vec<u8> {
         }
         let plain = &chunk[copied..];
         target[written..written + plain.len()].copy_from_slice(plain);
-    });
+    };
+    if parallel {
+        ranges
+            .par_iter()
+            .zip(chunk_tabs.par_iter())
+            .zip(targets.into_par_iter())
+            .for_each(|((range, tabs), target)| expand_one((range, tabs, target)));
+    } else {
+        for ((range, tabs), target) in ranges.iter().zip(chunk_tabs.iter()).zip(targets.into_iter()) {
+            expand_one((range, tabs, target));
+        }
+    }
     out
 }
 
@@ -144,109 +175,282 @@ pub fn decode_bytes(bytes: Vec<u8>) -> (Vec<u8>, usize, &'static str) {
             }
         }
     };
-    let tabs = count_tabs(&text[offset..]);
-    if tabs == 0 {
+    let ranges = chunk_ranges_for(&text, offset);
+    if ranges.is_empty() {
         return (text, offset, detected.encoding);
     }
-    let expanded = expand_tabs(&text[offset..], tabs);
+    let parallel = ranges.len() > 1;
+    let chunk_tabs: Vec<usize> = if parallel {
+        ranges.par_iter().map(|&(start, end)| memchr::memchr_iter(b'\t', &text[start..end]).count()).collect()
+    } else {
+        ranges.iter().map(|&(start, end)| memchr::memchr_iter(b'\t', &text[start..end]).count()).collect()
+    };
+    let total_tabs: usize = chunk_tabs.iter().sum();
+    if total_tabs == 0 {
+        return (text, offset, detected.encoding);
+    }
+    let expanded = expand_tabs_with_counts(&text, &ranges, &chunk_tabs, total_tabs, parallel);
     (expanded, 0, detected.encoding)
 }
 
-struct LineScan {
-    starts: Starts,
-    max_cols: u64,
-    chars: u64,
+#[derive(Default)]
+struct ChunkScan {
+    base: usize,
+    valid_utf8: bool,
+    ascii: bool,
+    tabs: usize,
+    /// Relative offsets (from `base`) of each new line started inside this chunk
+    starts: Vec<u32>,
+    first_part_bytes: u64,
+    first_part_cols: u64,
+    inner_cols: u64,
+    max_inner_cols: u64,
+    max_inner_bytes: u64,
+    last_part_bytes: u64,
+    last_part_cols: u64,
 }
 
-/// Starts of the lines of `bytes[start..]`. A line ends with `\n`, `\r\n` or a lone `\r`.
-fn index_lines(bytes: &[u8], start: usize, ascii: bool) -> OpResult<LineScan> {
-    let region = &bytes[start..];
-    let total = bytes.len();
-    // Line starts of each chunk, relative to the chunk
-    let chunks: Vec<Vec<u32>> = region
-        .par_chunks(SCAN_CHUNK)
-        .enumerate()
-        .map(|(chunk_index, chunk)| {
-            let base = start + chunk_index * SCAN_CHUNK;
-            let mut starts = Vec::new();
-            for position in memchr::memchr2_iter(b'\n', b'\r', chunk) {
-                // The \r of \r\n is not a line end of its own: the \n after it is
-                if chunk[position] == b'\r' && base + position + 1 < total && bytes[base + position + 1] == b'\n' {
-                    continue;
-                }
-                starts.push(position as u32 + 1);
+fn scan_chunk(bytes: &[u8], base: usize, end: usize, check_utf8: bool, known_ascii: Option<bool>, count_tabs: bool, collect_lines: bool) -> ChunkScan {
+    let chunk = &bytes[base..end];
+    let ascii = known_ascii.unwrap_or_else(|| chunk.is_ascii());
+    let valid_utf8 = !check_utf8 || ascii || simdutf8::basic::from_utf8(chunk).is_ok();
+    if !valid_utf8 {
+        return ChunkScan { base, valid_utf8: false, ..Default::default() };
+    }
+    if !collect_lines {
+        let tabs = if count_tabs { memchr::memchr_iter(b'\t', chunk).count() } else { 0 };
+        return ChunkScan { base, valid_utf8: true, ascii, tabs, ..Default::default() };
+    }
+    let mut starts = Vec::with_capacity(chunk.len() / 64);
+    let mut tabs = 0usize;
+    let mut line_start = 0usize;
+    let (mut first_part_bytes, mut first_part_cols) = (0u64, 0u64);
+    let (mut inner_cols, mut max_inner_cols, mut max_inner_bytes) = (0u64, 0u64, 0u64);
+
+    let mut on_break = |pos: usize, byte: u8| {
+        // The \r of \r\n is not a line end of its own: the \n after it is (cuts never split \r\n)
+        if byte == b'\r' && pos + 1 < chunk.len() && chunk[pos + 1] == b'\n' {
+            return;
+        }
+        let line_end = if byte == b'\n' && pos > line_start && chunk[pos - 1] == b'\r' { pos - 1 } else { pos };
+        let byte_len = (line_end - line_start) as u64;
+        let col_len = if ascii { byte_len } else { char_len(&chunk[line_start..line_end]) as u64 };
+        if starts.is_empty() {
+            first_part_bytes = byte_len;
+            first_part_cols = col_len;
+        } else {
+            inner_cols += col_len;
+            max_inner_cols = max_inner_cols.max(col_len);
+            max_inner_bytes = max_inner_bytes.max(byte_len);
+        }
+        starts.push((pos + 1) as u32);
+        line_start = pos + 1;
+    };
+
+    if count_tabs {
+        for pos in memchr::memchr3_iter(b'\n', b'\r', b'\t', chunk) {
+            let byte = chunk[pos];
+            if byte == b'\t' {
+                tabs += 1;
+                continue;
             }
-            starts
-        })
-        .collect();
-    let lines = 1 + chunks.iter().map(Vec::len).sum::<usize>();
-    if lines > u32::MAX as usize - 1 {
+            on_break(pos, byte);
+        }
+    } else {
+        for pos in memchr::memchr2_iter(b'\n', b'\r', chunk) {
+            on_break(pos, chunk[pos]);
+        }
+    }
+
+    let tail = &chunk[line_start..];
+    let tail_bytes = tail.len() as u64;
+    let tail_cols = if ascii { tail_bytes } else { char_len(tail) as u64 };
+    let (last_part_bytes, last_part_cols) = if starts.is_empty() {
+        first_part_bytes = tail_bytes;
+        first_part_cols = tail_cols;
+        (0, 0)
+    } else {
+        (tail_bytes, tail_cols)
+    };
+
+    ChunkScan { base, valid_utf8: true, ascii, tabs, starts, first_part_bytes, first_part_cols, inner_cols, max_inner_cols, max_inner_bytes, last_part_bytes, last_part_cols }
+}
+
+/// Single-pass UTF-8 check, ASCII check, tab count, sparse line indexing and column metrics.
+#[allow(clippy::too_many_arguments)]
+fn scan_and_build(
+    mut bytes: Vec<u8>,
+    offset: usize,
+    encoding: &str,
+    check_utf8: bool,
+    check_tabs: bool,
+    known_ascii: Option<bool>,
+    name: &str,
+    path: &str,
+) -> OpResult<TextSource> {
+    if bytes.capacity().saturating_sub(bytes.len()) > SHRINK_SLACK {
+        bytes.shrink_to_fit();
+    }
+    let total = bytes.len();
+    let ranges = chunk_ranges_for(&bytes, offset);
+    if ranges.is_empty() {
+        let (checkpoints, dense) = if total <= u32::MAX as usize {
+            (Starts::U32(vec![offset as u32]), Starts::U32(vec![offset as u32]))
+        } else {
+            (Starts::U64(vec![offset as u64]), Starts::U64(vec![offset as u64]))
+        };
+        let buf = Buf::with_ascii(bytes, true);
+        let index = LineIndex::new(0, 1, checkpoints, total as u64, Some(dense));
+        let stage = Stage::from_lines(buf, index, 0, SourceDesc::new(name, path, 0));
+        return Ok(TextSource {
+            name: if name.is_empty() { "Clipboard".to_string() } else { name.to_string() },
+            path: if path.is_empty() { name.to_string() } else { path.to_string() },
+            encoding: encoding.to_string(),
+            stage,
+            chars: 0,
+        });
+    }
+
+    let parallel = ranges.len() > 1;
+    let use_u32 = total <= u32::MAX as usize;
+    let mut cp_u32 = if use_u32 { vec![offset as u32] } else { Vec::new() };
+    let mut cp_u64 = if use_u32 { Vec::new() } else { vec![offset as u64] };
+    let mut small_dense: Option<Starts> = None;
+
+    let mut chunk_tabs = Vec::with_capacity(ranges.len());
+    let mut total_tabs = 0usize;
+    let mut all_ascii = true;
+    let mut invalid_utf8 = false;
+
+    let mut line_idx = 1usize;
+    let (mut carry_bytes, mut carry_cols) = (0u64, 0u64);
+    let (mut max_cols, mut longest_bytes, mut total_content_cols) = (0u64, 0u64, 0u64);
+
+    for batch in ranges.chunks(BATCH_CHUNKS) {
+        let collect_lines = total_tabs == 0;
+        let scans: Vec<ChunkScan> = if parallel {
+            batch.par_iter().map(|&(start, end)| scan_chunk(&bytes, start, end, check_utf8, known_ascii, check_tabs, collect_lines)).collect()
+        } else {
+            batch.iter().map(|&(start, end)| scan_chunk(&bytes, start, end, check_utf8, known_ascii, check_tabs, collect_lines)).collect()
+        };
+        for scan in scans {
+            if !scan.valid_utf8 {
+                invalid_utf8 = true;
+                break;
+            }
+            all_ascii &= scan.ascii;
+            chunk_tabs.push(scan.tabs);
+            total_tabs += scan.tabs;
+            if total_tabs > 0 {
+                continue;
+            }
+            // Extract every LINE_INDEX_STRIDE-th global line start directly from this chunk
+            let mut next_cp = (LINE_INDEX_STRIDE - (line_idx % LINE_INDEX_STRIDE)) % LINE_INDEX_STRIDE;
+            if use_u32 {
+                let base = scan.base as u32;
+                while next_cp < scan.starts.len() {
+                    cp_u32.push(base + scan.starts[next_cp]);
+                    next_cp += LINE_INDEX_STRIDE;
+                }
+            } else {
+                let base = scan.base as u64;
+                while next_cp < scan.starts.len() {
+                    cp_u64.push(base + scan.starts[next_cp] as u64);
+                    next_cp += LINE_INDEX_STRIDE;
+                }
+            }
+            if !parallel && scan.starts.len() + 1 <= DENSE_THRESHOLD {
+                if use_u32 {
+                    let base = scan.base as u32;
+                    let mut all = Vec::with_capacity(scan.starts.len() + 1);
+                    all.push(offset as u32);
+                    all.extend(scan.starts.iter().map(|&rel| base + rel));
+                    small_dense = Some(Starts::U32(all));
+                } else {
+                    let base = scan.base as u64;
+                    let mut all = Vec::with_capacity(scan.starts.len() + 1);
+                    all.push(offset as u64);
+                    all.extend(scan.starts.iter().map(|&rel| base + rel as u64));
+                    small_dense = Some(Starts::U64(all));
+                }
+            }
+            if scan.starts.is_empty() {
+                carry_bytes += scan.first_part_bytes;
+                carry_cols += scan.first_part_cols;
+            } else {
+                let joined_bytes = carry_bytes + scan.first_part_bytes;
+                let joined_cols = carry_cols + scan.first_part_cols;
+                longest_bytes = longest_bytes.max(joined_bytes).max(scan.max_inner_bytes);
+                max_cols = max_cols.max(joined_cols).max(scan.max_inner_cols);
+                total_content_cols += joined_cols + scan.inner_cols;
+                carry_bytes = scan.last_part_bytes;
+                carry_cols = scan.last_part_cols;
+            }
+            line_idx += scan.starts.len();
+        }
+        if invalid_utf8 {
+            break;
+        }
+    }
+
+    if invalid_utf8 {
+        // Like a browser's TextDecoder: invalid sequences become U+FFFD
+        let decoded = String::from_utf8_lossy(&bytes[offset..]).into_owned().into_bytes();
+        drop(bytes);
+        return scan_and_build(decoded, 0, encoding, false, check_tabs, None, name, path);
+    }
+    if total_tabs > 0 {
+        let expanded = expand_tabs_with_counts(&bytes, &ranges, &chunk_tabs, total_tabs, parallel);
+        drop(bytes);
+        return scan_and_build(expanded, 0, encoding, false, false, Some(all_ascii), name, path);
+    }
+
+    // Finish the final line
+    longest_bytes = longest_bytes.max(carry_bytes);
+    max_cols = max_cols.max(carry_cols);
+    total_content_cols += carry_cols;
+
+    if line_idx > u32::MAX as usize - 1 {
         return Err(OpError::msg("The source has too many lines."));
     }
-    let starts = if total <= u32::MAX as usize {
-        let mut all = Vec::with_capacity(lines);
-        all.push(start as u32);
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            let base = (start + chunk_index * SCAN_CHUNK) as u32;
-            all.extend(chunk.iter().map(|&offset| base + offset));
-        }
-        Starts::U32(all)
-    } else {
-        let mut all = Vec::with_capacity(lines);
-        all.push(start as u64);
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            let base = (start + chunk_index * SCAN_CHUNK) as u64;
-            all.extend(chunk.iter().map(|&offset| base + offset as u64));
-        }
-        Starts::U64(all)
-    };
-    drop(chunks);
-    let index = crate::stage::LineIndex { buf: 0, starts, end: total as u64 };
-    let (max_cols, chars, longest_bytes) = (0..lines)
-        .into_par_iter()
-        .with_min_len(1 << 14)
-        .map(|row| {
-            let (line_start, line_end) = index.bounds(row, bytes);
-            let cols = if ascii { line_end - line_start } else { char_len(&bytes[line_start..line_end]) } as u64;
-            (cols, cols, (line_end - line_start) as u64)
-        })
-        .reduce(|| (0, 0, 0), |left, right| (left.0.max(right.0), left.1 + right.1, left.2.max(right.2)));
     if longest_bytes > u32::MAX as u64 {
         return Err(OpError::msg("A line of the source is longer than 4 GiB."));
     }
-    Ok(LineScan { starts: index.starts, max_cols, chars: chars + lines as u64 - 1 })
-}
 
-fn source_from_decoded(text: Vec<u8>, offset: usize, name: &str, path: &str, encoding: &str) -> OpResult<TextSource> {
-    let mut text = text;
-    text.shrink_to_fit();
-    // A byte order mark is skipped by the rows, so it must not make the buffer "not ASCII"
-    let ascii = crate::text::is_ascii_par(&text[offset..]);
-    let buf: BufRef = Buf::with_ascii(text, ascii);
-    let scan = index_lines(buf.bytes(), offset, buf.ascii)?;
-    let end = buf.len() as u64;
-    let stage = Stage::from_lines(buf, scan.starts, end, scan.max_cols, SourceDesc::new(name, path, 0));
+    let checkpoints = if use_u32 { Starts::U32(cp_u32) } else { Starts::U64(cp_u64) };
+    let buf: BufRef = Buf::with_ascii(bytes, all_ascii);
+    let index = LineIndex::new(0, line_idx, checkpoints, total as u64, small_dense);
+    if line_idx <= DENSE_THRESHOLD || (longest_bytes > 8192 && line_idx * 4 <= total / 16) {
+        index.ensure_dense(buf.bytes());
+    }
+    let stage = Stage::from_lines(buf, index, max_cols, SourceDesc::new(name, path, 0));
     Ok(TextSource {
         name: if name.is_empty() { "Clipboard".to_string() } else { name.to_string() },
         path: if path.is_empty() { name.to_string() } else { path.to_string() },
         encoding: encoding.to_string(),
         stage,
-        chars: scan.chars,
+        chars: total_content_cols + line_idx as u64 - 1,
     })
 }
 
 /// A source from the bytes of a file.
 pub fn source_from_bytes(bytes: Vec<u8>, name: &str, path: &str) -> OpResult<TextSource> {
-    let (text, offset, encoding) = decode_bytes(bytes);
-    source_from_decoded(text, offset, name, path, encoding)
+    let detected = detect_encoding(&bytes);
+    match detected.encoding {
+        "utf-16le" | "utf-16be" => {
+            let encoding = if detected.encoding == "utf-16le" { encoding_rs::UTF_16LE } else { encoding_rs::UTF_16BE };
+            let (decoded, _) = encoding.decode_without_bom_handling(&bytes[detected.offset..]);
+            let decoded = decoded.into_owned().into_bytes();
+            drop(bytes);
+            scan_and_build(decoded, 0, detected.encoding, false, true, None, name, path)
+        }
+        _ => scan_and_build(bytes, detected.offset, detected.encoding, true, true, None, name, path),
+    }
 }
 
 /// A source from text that is already a string (the clipboard).
 pub fn source_from_text(text: String, name: &str, path: &str) -> OpResult<TextSource> {
-    let bytes = text.into_bytes();
-    let tabs = count_tabs(&bytes);
-    let bytes = if tabs == 0 { bytes } else { expand_tabs(&bytes, tabs) };
-    source_from_decoded(bytes, 0, name, path, "clipboard")
+    scan_and_build(text.into_bytes(), 0, "clipboard", false, true, None, name, path)
 }
 
 /// The raw stage of a text; for tests and small inputs.
@@ -255,18 +459,37 @@ pub fn stage_from_text(text: String, name: &str, path: &str) -> Stage {
 }
 
 fn read_file(path: &Path, progress: &LoadProgress, cancel: &Cancel) -> OpResult<Vec<u8>> {
+    const READ_CHUNK: usize = 16 << 20;
     let io_error = |error: std::io::Error| OpError::Msg(error.to_string());
     let mut file = std::fs::File::open(path).map_err(io_error)?;
     let length = file.metadata().map_err(io_error)?.len() as usize;
     let mut data = Vec::new();
-    data.try_reserve_exact(length + 1).map_err(|_| OpError::msg("Not enough memory to load the file."))?;
-    loop {
+    data.try_reserve_exact(length).map_err(|_| OpError::msg("Not enough memory to load the file."))?;
+    // Fill the exact preallocated capacity in large chunks without overshooting into a reallocation.
+    while data.len() < length {
         cancel.check()?;
-        let read = (&mut file).take(16 << 20).read_to_end(&mut data).map_err(io_error)?;
+        let step = (length - data.len()).min(READ_CHUNK) as u64;
+        let read = (&mut file).take(step).read_to_end(&mut data).map_err(io_error)?;
         if read == 0 {
-            break;
+            return Ok(data);
         }
         progress.done.fetch_add(read as u64, Ordering::Relaxed);
+    }
+    // Check whether the file grew while we were reading it without growing `data` on normal EOF.
+    let mut probe = [0u8; 4096];
+    cancel.check()?;
+    let extra = file.read(&mut probe).map_err(io_error)?;
+    if extra > 0 {
+        data.extend_from_slice(&probe[..extra]);
+        progress.done.fetch_add(extra as u64, Ordering::Relaxed);
+        loop {
+            cancel.check()?;
+            let read = (&mut file).take(READ_CHUNK as u64).read_to_end(&mut data).map_err(io_error)?;
+            if read == 0 {
+                break;
+            }
+            progress.done.fetch_add(read as u64, Ordering::Relaxed);
+        }
     }
     Ok(data)
 }
@@ -352,10 +575,22 @@ pub fn merge_append(bundles: &[Bundle]) -> OpResult<Stage> {
     }
     let mut spans = Vec::with_capacity(total);
     let mut src = Vec::with_capacity(total);
+    let cancel = Cancel::new();
     for (bundle, &(buf_offset, src_offset)) in bundles.iter().zip(&prepared.offsets) {
         let stage = bundle.stage;
-        spans.par_extend((0..stage.len()).into_par_iter().with_min_len(1 << 14).map(|row| remap(stage.span(row), buf_offset)));
-        src.par_extend((0..stage.len()).into_par_iter().with_min_len(1 << 14).map(|row| remap_src(stage.src(row), src_offset)));
+        let chunks = par_chunks(stage.len(), &cancel, |range| {
+            let mut chunk_spans = Vec::with_capacity(range.len());
+            let mut chunk_src = Vec::with_capacity(range.len());
+            stage.for_each_row(range, |row, span, _| {
+                chunk_spans.push(remap(span, buf_offset));
+                chunk_src.push(remap_src(stage.src(row), src_offset));
+            });
+            Ok((chunk_spans, chunk_src))
+        })?;
+        for (chunk_spans, chunk_src) in chunks {
+            spans.extend_from_slice(&chunk_spans);
+            src.extend_from_slice(&chunk_src);
+        }
     }
     Ok(combined(prepared, spans, src))
 }
@@ -367,6 +602,11 @@ pub fn merge_zip(bundles: &[Bundle]) -> OpResult<Stage> {
     let total = longest * bundles.len();
     if total > u32::MAX as usize - 1 {
         return Err(OpError::msg("The sources have too many lines."));
+    }
+    if longest >= 16_384 {
+        for bundle in bundles {
+            bundle.stage.ensure_random_access();
+        }
     }
     let width = bundles.len();
     let offsets = &prepared.offsets;
@@ -392,11 +632,11 @@ pub fn merge_zip(bundles: &[Bundle]) -> OpResult<Stage> {
 pub fn rezip_by_source(stage: &Stage) -> OpResult<Stage> {
     let count = stage.sources.len();
     let mut per_source: Vec<Vec<Span>> = vec![Vec::new(); count];
-    for row in 0..stage.len() {
+    stage.for_each_row(0..stage.len(), |row, span, _| {
         if let Some(rows) = per_source.get_mut(stage.src(row) as usize) {
-            rows.push(stage.span(row));
+            rows.push(span);
         }
-    }
+    });
     let longest = per_source.iter().map(Vec::len).max().unwrap_or(0);
     let mut spans = Vec::with_capacity(longest * count);
     let mut src = Vec::with_capacity(longest * count);
@@ -412,7 +652,17 @@ pub fn rezip_by_source(stage: &Stage) -> OpResult<Stage> {
 
 /// The same rows as one source called `name`.
 pub fn flatten_sources(stage: &Stage, name: &str) -> Stage {
-    let spans: Vec<Span> = (0..stage.len()).into_par_iter().with_min_len(1 << 14).map(|row| stage.span(row)).collect();
+    let cancel = Cancel::new();
+    let chunks = par_chunks(stage.len(), &cancel, |range| {
+        let mut chunk_spans = Vec::with_capacity(range.len());
+        stage.for_each_row(range, |_, span, _| chunk_spans.push(span));
+        Ok(chunk_spans)
+    })
+    .unwrap();
+    let mut spans = Vec::with_capacity(stage.len());
+    for chunk in chunks {
+        spans.extend_from_slice(&chunk);
+    }
     let source = SourceDesc::new(name, name, 0);
     Stage::from_spans("Raw", stage.bufs.clone(), spans, SrcIds::Uniform(0), RowIds::Identity, Arc::new(vec![source]))
 }
@@ -462,8 +712,56 @@ mod tests {
         let text = line.repeat(200_000);
         let source = source_from_bytes(text.into_bytes(), "big", "big").unwrap();
         assert_eq!(source.stage.len(), 200_001);
+        assert_eq!(source.stage.max_cols, 16);
+        assert_eq!(source.chars, 200_000 * 16 + 200_000);
+        // Sparse checkpoints: 200k lines use ~12 KiB instead of 800 KiB before random access
+        assert!(source.stage.own_bytes < 64 * 1024, "own_bytes={}", source.stage.own_bytes);
         assert!((0..200_000).all(|row| source.stage.line(row) == "0123456789abcdef"));
         assert_eq!(source.stage.line(200_000), "");
+        if let crate::stage::Rows::Lines(index) = &source.stage.rows {
+            let bytes = source.stage.bufs[0].bytes();
+            assert_eq!(index.row_of_offset(0, bytes), (0, 0));
+            assert_eq!(index.row_of_offset(18 * 100 + 5, bytes), (100, 18 * 100));
+            assert_eq!(index.row_of_offset(bytes.len(), bytes), (200_000, bytes.len()));
+            // Materializing dense gives the exact same bounds and row_of_offset
+            index.ensure_dense(bytes);
+            assert_eq!(index.row_of_offset(18 * 100 + 5, bytes), (100, 18 * 100));
+            assert_eq!(source.stage.line(199_999), "0123456789abcdef");
+            assert_eq!(source.stage.line(200_000), "");
+        } else {
+            panic!("expected Rows::Lines");
+        }
+    }
+
+    #[test]
+    fn chunk_boundaries_preserve_crlf_multibyte_long_lines_and_tabs() {
+        // Place \r\n and a multibyte UTF-8 character right across the 1 MiB chunk boundary
+        let mut bytes = vec![b'a'; SCAN_CHUNK - 1];
+        bytes.extend_from_slice(b"\r\n");
+        bytes.extend_from_slice(&vec![b'b'; SCAN_CHUNK - 1]);
+        bytes.extend_from_slice("ž\n".as_bytes());
+        bytes.extend_from_slice(&vec![b'c'; SCAN_CHUNK + 50]);
+        let source = source_from_bytes(bytes, "edge", "edge").unwrap();
+        assert_eq!(source.stage.len(), 3);
+        assert_eq!(source.stage.line(0).len(), SCAN_CHUNK - 1);
+        assert_eq!(source.stage.line(1).chars().count(), SCAN_CHUNK);
+        assert_eq!(source.stage.line(2).len(), SCAN_CHUNK + 50);
+        assert_eq!(source.stage.max_cols, (SCAN_CHUNK + 50) as u64);
+        assert_eq!(source.chars, (SCAN_CHUNK - 1 + SCAN_CHUNK + SCAN_CHUNK + 50 + 2) as u64);
+
+        // Large file (> 2 MiB) with a single tab in the first chunk only
+        let mut with_tab = Vec::with_capacity(2 * SCAN_CHUNK + 100);
+        with_tab.extend_from_slice(b"\tfirst\n");
+        for _ in 0..150_000 {
+            with_tab.extend_from_slice(b"0123456789abcdef\n");
+        }
+        let source = source_from_bytes(with_tab, "tab", "tab").unwrap();
+        assert_eq!(source.stage.len(), 150_002);
+        assert_eq!(source.stage.line(0), "    first");
+        assert_eq!(source.stage.line(1), "0123456789abcdef");
+        assert_eq!(source.stage.line(150_000), "0123456789abcdef");
+        assert_eq!(source.stage.line(150_001), "");
+        assert_eq!(source.stage.max_cols, 16);
     }
 
     #[test]

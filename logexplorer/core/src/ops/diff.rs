@@ -5,7 +5,7 @@ use super::sort::{group_rows, Grouped, Keys, SliceSpec};
 use crate::cancel::{Cancel, OpResult};
 use crate::operator::DiffOp;
 use crate::stage::{DiffMeta, OutRows, Stage};
-use crate::text::{cols_to_bytes, Span};
+use crate::text::{as_str, cols_to_bytes, Span};
 use crate::typed::{align_to_slice, format_diff_value, iso_string, parse_date_time, DiffProfile, ProfileSample, ValueType};
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -52,6 +52,7 @@ fn invert_string_diff(diff: &str, previous: &str) -> String {
 
 struct Context<'a> {
     stage: &'a Stage,
+    spans: &'a [Span],
     op: &'a DiffOp,
     spec: SliceSpec<'a>,
     grouped: &'a Grouped,
@@ -60,8 +61,13 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
+    #[inline]
+    fn line_of(&self, row: usize) -> &str {
+        as_str(self.stage.span_bytes(self.spans[row]))
+    }
+
     fn raw(&self, block: usize) -> &str {
-        let line = self.stage.line(self.grouped.blocks[block].start as usize);
+        let line = self.line_of(self.grouped.blocks[block].start as usize);
         match &self.grouped.keys {
             Keys::Slices(slices) => &line[slices[block].0 as usize..slices[block].1 as usize],
             Keys::Numbers(_) => self.spec.slice(line).map_or("", |(start, end)| &line[start..end]),
@@ -93,7 +99,7 @@ impl Context<'_> {
     /// Writes the first row of `block` with `replacement` in the output columns
     fn write(&self, block: usize, replacement: &str, arena: &mut Vec<u8>) -> Option<(u32, usize, u32)> {
         let row = self.grouped.blocks[block].start;
-        let line = self.stage.line(row as usize);
+        let line = self.line_of(row as usize);
         let (start, end) = cols_to_bytes(line, self.range.0, self.range.0 + self.range.1);
         if &line[start..end] == replacement {
             return None;
@@ -120,72 +126,82 @@ pub fn apply(stage: &Arc<Stage>, op: &DiffOp, cancel: &Cancel) -> OpResult<Stage
     let invert_date_time = op.invert && op.value_type == ValueType::DateTime;
     let spec = SliceSpec::positional(op.pos, op.len, op.value_type);
     let grouped = group_rows(stage, &spec, invert_date_time, cancel)?;
+    let span_chunks = par_chunks(stage.len(), cancel, |range| {
+        let mut chunk = Vec::with_capacity(range.len());
+        stage.for_each_row(range, |_, span, _| chunk.push(span));
+        Ok(chunk)
+    })?;
+    let mut spans = Vec::with_capacity(stage.len());
+    for chunk in span_chunks {
+        spans.extend_from_slice(&chunk);
+    }
     let range = output_range(op);
     let profile_type = if op.value_type == ValueType::DateTime { ValueType::TimeSpan } else { op.value_type };
-    let mut context = Context { stage, op, spec, grouped: &grouped, profile: None, range };
-    if profile_type != ValueType::String {
-        context.profile = (0..grouped.blocks.len())
-            .into_par_iter()
-            .with_min_len(1 << 12)
-            .map(|block| ProfileSample::of(context.raw(block), profile_type))
-            // Rayon reduces neighbours in order, so "the first value with decimals" stays the first
-            .reduce(ProfileSample::default, ProfileSample::merge)
-            .profile(profile_type, range.1);
-    }
-    cancel.check()?;
+    let chunks: Vec<Rewritten> = {
+        let mut context = Context { stage, spans: &spans, op, spec, grouped: &grouped, profile: None, range };
+        if profile_type != ValueType::String {
+            context.profile = (0..grouped.blocks.len())
+                .into_par_iter()
+                .with_min_len(1 << 12)
+                .map(|block| ProfileSample::of(context.raw(block), profile_type))
+                // Rayon reduces neighbours in order, so "the first value with decimals" stays the first
+                .reduce(ProfileSample::default, ProfileSample::merge)
+                .profile(profile_type, range.1);
+        }
+        cancel.check()?;
 
-    // Changed rows: (row, offset in the chunk's text, length)
-    let chunks: Vec<Rewritten> = if !op.invert {
-        par_chunks(grouped.blocks.len(), cancel, |blocks| {
+        // Changed rows: (row, offset in the chunk's text, length)
+        if !op.invert {
+            par_chunks(grouped.blocks.len(), cancel, |blocks| {
+                let mut arena = Vec::new();
+                let mut changed = Vec::new();
+                for block in blocks {
+                    changed.extend(context.write(block, &context.forward(block), &mut arena));
+                }
+                Ok((arena, changed))
+            })?
+        } else {
+            // A running total: every row needs the restored value of the one before
             let mut arena = Vec::new();
             let mut changed = Vec::new();
-            for block in blocks {
-                changed.extend(context.write(block, &context.forward(block), &mut arena));
-            }
-            Ok((arena, changed))
-        })?
-    } else {
-        // A running total: every row needs the restored value of the one before
-        let mut arena = Vec::new();
-        let mut changed = Vec::new();
-        let mut previous_text: Option<String> = None;
-        let mut previous_value: Option<f64> = None;
-        for block in 0..grouped.blocks.len() {
-            if block % 4096 == 0 {
-                cancel.check()?;
-            }
-            let raw = context.raw(block);
-            let mut replacement = None;
-            match op.value_type {
-                ValueType::String => {
-                    let restored = match &previous_text {
-                        Some(previous) => invert_string_diff(raw, previous),
-                        None => raw.to_string(),
-                    };
-                    replacement = previous_text.is_some().then(|| restored.clone());
-                    previous_text = Some(restored);
+            let mut previous_text: Option<String> = None;
+            let mut previous_value: Option<f64> = None;
+            for block in 0..grouped.blocks.len() {
+                if block % 4096 == 0 {
+                    cancel.check()?;
                 }
-                value_type => match previous_value {
-                    Some(previous) => {
-                        let restored = context.number(block) + previous;
-                        replacement = Some(if value_type == ValueType::DateTime {
-                            align_to_slice(&iso_string(restored), raw, value_type)
-                        } else {
-                            format_diff_value(restored, value_type, raw, context.profile.as_ref())
-                        });
-                        previous_value = Some(restored);
+                let raw = context.raw(block);
+                let mut replacement = None;
+                match op.value_type {
+                    ValueType::String => {
+                        let restored = match &previous_text {
+                            Some(previous) => invert_string_diff(raw, previous),
+                            None => raw.to_string(),
+                        };
+                        replacement = previous_text.is_some().then(|| restored.clone());
+                        previous_text = Some(restored);
                     }
-                    None => previous_value = if value_type == ValueType::DateTime { parse_date_time(raw) } else { Some(context.number(block)) },
-                },
+                    value_type => match previous_value {
+                        Some(previous) => {
+                            let restored = context.number(block) + previous;
+                            replacement = Some(if value_type == ValueType::DateTime {
+                                align_to_slice(&iso_string(restored), raw, value_type)
+                            } else {
+                                format_diff_value(restored, value_type, raw, context.profile.as_ref())
+                            });
+                            previous_value = Some(restored);
+                        }
+                        None => previous_value = if value_type == ValueType::DateTime { parse_date_time(raw) } else { Some(context.number(block)) },
+                    },
+                }
+                if let Some(replacement) = replacement {
+                    changed.extend(context.write(block, &replacement, &mut arena));
+                }
             }
-            if let Some(replacement) = replacement {
-                changed.extend(context.write(block, &replacement, &mut arena));
-            }
+            vec![(arena, changed)]
         }
-        vec![(arena, changed)]
     };
 
-    let mut spans: Vec<Span> = (0..stage.len()).into_par_iter().with_min_len(1 << 14).map(|row| stage.span(row)).collect();
     let arena_buf = stage.bufs.len() as u16;
     let mut arena = Vec::new();
     arena.reserve_exact(chunks.iter().map(|(text, _)| text.len()).sum());

@@ -30,6 +30,9 @@ pub fn find_forward(stage: &Stage, needle: &Needle, from: Point) -> Option<Match
         return Some(found(stage, from.row, bytes, false));
     }
     let first_in = |row: usize| needle.find_at(stage.line_bytes(row), 0);
+    if stage.len() >= 16_384 {
+        stage.ensure_random_access();
+    }
     if let Some(row) = (from.row + 1..stage.len()).into_par_iter().with_min_len(1024).find_first(|&row| first_in(row).is_some()) {
         return Some(found(stage, row, first_in(row)?, false));
     }
@@ -51,6 +54,9 @@ pub fn find_backward(stage: &Stage, needle: &Needle, from: Point) -> Option<Matc
         }
     }
     let last_in = |row: usize| needle.rfind_from(stage.line_bytes(row), usize::MAX - 64);
+    if stage.len() >= 16_384 {
+        stage.ensure_random_access();
+    }
     if let Some(row) = (0..from.row).into_par_iter().with_min_len(1024).find_last(|&row| last_in(row).is_some()) {
         return Some(found(stage, row, last_in(row)?, false));
     }

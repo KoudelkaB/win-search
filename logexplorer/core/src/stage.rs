@@ -2,8 +2,9 @@
 
 use crate::text::{as_str, char_len, Buf, BufRef, Span, ARENA};
 use rayon::prelude::*;
+use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Row without a source file (JS -1)
 pub const NO_SRC: u16 = u16::MAX;
@@ -73,7 +74,15 @@ impl Starts {
         }
     }
 
-    fn heap_bytes(&self) -> usize {
+    #[inline]
+    pub fn partition_point_le(&self, offset: u64) -> usize {
+        match self {
+            Starts::U32(list) => list.partition_point(|&start| (start as u64) <= offset).saturating_sub(1),
+            Starts::U64(list) => list.partition_point(|&start| start <= offset).saturating_sub(1),
+        }
+    }
+
+    pub(crate) fn heap_bytes(&self) -> usize {
         match self {
             Starts::U32(list) => list.capacity() * 4,
             Starts::U64(list) => list.capacity() * 8,
@@ -81,28 +90,212 @@ impl Starts {
     }
 }
 
-/// The consecutive lines of one region of a buffer: 4 bytes a row for files under 4 GiB.
+/// Number of consecutive lines represented by one checkpoint in [`LineIndex`].
+pub const LINE_INDEX_STRIDE: usize = 64;
+
+/// Finds `(line_end_without_eol, next_line_start)` starting at `start` in `bytes[..region_end]`.
+#[inline]
+pub(crate) fn scan_line_end(bytes: &[u8], start: usize, region_end: usize) -> (usize, usize) {
+    match memchr::memchr2(b'\n', b'\r', &bytes[start..region_end]) {
+        None => (region_end, region_end),
+        Some(rel) => {
+            let pos = start + rel;
+            if bytes[pos] == b'\r' && pos + 1 < region_end && bytes[pos + 1] == b'\n' {
+                (pos, pos + 2)
+            } else {
+                (pos, pos + 1)
+            }
+        }
+    }
+}
+
+#[inline]
+fn bounds_from_starts(starts: &Starts, index: usize, region_end: usize, bytes: &[u8]) -> (usize, usize) {
+    let start = starts.get(index) as usize;
+    if index + 1 == starts.len() {
+        return (start, region_end);
+    }
+    let mut end = starts.get(index + 1) as usize - 1;
+    if bytes[end] == b'\n' && end > start && bytes[end - 1] == b'\r' {
+        end -= 1;
+    }
+    (start, end)
+}
+
+/// Sequential iterator over `(start, end)` byte bounds of consecutive lines.
+pub struct LineBoundsIter<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    region_end: usize,
+    remaining: usize,
+}
+
+impl Iterator for LineBoundsIter<'_> {
+    type Item = (usize, usize);
+
+    #[inline]
+    fn next(&mut self) -> Option<(usize, usize)> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let start = self.pos;
+        let (end, next) = scan_line_end(self.bytes, start, self.region_end);
+        self.pos = next;
+        Some((start, end))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+/// The consecutive lines of one region of a buffer: sparse checkpoints every 64 lines (~0.7 MiB
+/// for 11M lines) with a full per-line index materialized lazily only when heavy random access needs it.
 pub struct LineIndex {
     pub buf: u16,
-    /// Offset of the first byte of each line
-    pub starts: Starts,
+    pub lines: usize,
+    /// Offset of every [`LINE_INDEX_STRIDE`]-th line (line 0, 64, 128, ...)
+    pub checkpoints: Starts,
     /// End of the region (the end of the last line)
     pub end: u64,
+    /// Full per-line offsets, built on demand for heavy random access
+    dense: OnceLock<Starts>,
 }
 
 impl LineIndex {
+    pub fn new(buf: u16, lines: usize, checkpoints: Starts, end: u64, dense: Option<Starts>) -> Self {
+        let cell = OnceLock::new();
+        if let Some(starts) = dense {
+            let _ = cell.set(starts);
+        }
+        LineIndex { buf, lines, checkpoints, end, dense: cell }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.lines
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.lines == 0
+    }
+
+    pub fn heap_bytes(&self) -> usize {
+        self.checkpoints.heap_bytes() + self.dense.get().map_or(0, Starts::heap_bytes)
+    }
+
+    /// Materializes the full per-line start table once, in parallel for large files.
+    pub fn ensure_dense(&self, bytes: &[u8]) -> &Starts {
+        self.dense.get_or_init(|| self.build_dense(bytes))
+    }
+
+    fn build_dense(&self, bytes: &[u8]) -> Starts {
+        let region_end = self.end as usize;
+        let parallel = self.lines >= 16_384;
+        if self.end <= u32::MAX as u64 {
+            let mut all = vec![0u32; self.lines];
+            let fill = |(cp_idx, slot): (usize, &mut [u32])| {
+                let mut pos = self.checkpoints.get(cp_idx) as usize;
+                for out in slot {
+                    *out = pos as u32;
+                    let (_, next) = scan_line_end(bytes, pos, region_end);
+                    pos = next;
+                }
+            };
+            if parallel {
+                all.par_chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
+            } else {
+                all.chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
+            }
+            Starts::U32(all)
+        } else {
+            let mut all = vec![0u64; self.lines];
+            let fill = |(cp_idx, slot): (usize, &mut [u64])| {
+                let mut pos = self.checkpoints.get(cp_idx) as usize;
+                for out in slot {
+                    *out = pos as u64;
+                    let (_, next) = scan_line_end(bytes, pos, region_end);
+                    pos = next;
+                }
+            };
+            if parallel {
+                all.par_chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
+            } else {
+                all.chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
+            }
+            Starts::U64(all)
+        }
+    }
+
+    /// Byte offset where line `index` begins.
+    #[inline]
+    pub fn row_start(&self, index: usize, bytes: &[u8]) -> usize {
+        if let Some(dense) = self.dense.get() {
+            return dense.get(index) as usize;
+        }
+        let mut pos = self.checkpoints.get(index / LINE_INDEX_STRIDE) as usize;
+        let skip = index % LINE_INDEX_STRIDE;
+        let region_end = self.end as usize;
+        for _ in 0..skip {
+            let (_, next) = scan_line_end(bytes, pos, region_end);
+            pos = next;
+        }
+        pos
+    }
+
     /// Byte range of line `index` without its terminator (`\n`, `\r\n` or a lone `\r`)
     #[inline]
     pub fn bounds(&self, index: usize, bytes: &[u8]) -> (usize, usize) {
-        let start = self.starts.get(index) as usize;
-        if index + 1 == self.starts.len() {
-            return (start, self.end as usize);
+        if let Some(dense) = self.dense.get() {
+            return bounds_from_starts(dense, index, self.end as usize, bytes);
         }
-        let mut end = self.starts.get(index + 1) as usize - 1;
-        if bytes[end] == b'\n' && end > start && bytes[end - 1] == b'\r' {
-            end -= 1;
+        let cp_start = self.checkpoints.get(index / LINE_INDEX_STRIDE) as usize;
+        let mut pos = cp_start;
+        let skip = index % LINE_INDEX_STRIDE;
+        let region_end = self.end as usize;
+        for _ in 0..skip {
+            let (_, next) = scan_line_end(bytes, pos, region_end);
+            pos = next;
         }
-        (start, end)
+        let (end, _) = scan_line_end(bytes, pos, region_end);
+        // Guard against a single huge line inside a checkpoint block turning random lookups into megabyte scans
+        if end.saturating_sub(cp_start) > (1 << 20) && self.lines * 4 <= bytes.len() / 8 {
+            let _ = self.ensure_dense(bytes);
+        }
+        (pos, end)
+    }
+
+    /// Sequential iterator over `(start, end)` bounds of lines in `range`.
+    #[inline]
+    pub fn iter_range<'a>(&self, bytes: &'a [u8], range: Range<usize>) -> LineBoundsIter<'a> {
+        if range.is_empty() {
+            return LineBoundsIter { bytes, pos: 0, region_end: 0, remaining: 0 };
+        }
+        let pos = self.row_start(range.start, bytes);
+        LineBoundsIter { bytes, pos, region_end: self.end as usize, remaining: range.len() }
+    }
+
+    /// `(row, line_start)` containing byte `offset` in the buffer.
+    pub fn row_of_offset(&self, offset: usize, bytes: &[u8]) -> (usize, usize) {
+        if let Some(dense) = self.dense.get() {
+            let row = dense.partition_point_le(offset as u64);
+            return (row, dense.get(row) as usize);
+        }
+        let cp_idx = self.checkpoints.partition_point_le(offset as u64);
+        let mut row = cp_idx * LINE_INDEX_STRIDE;
+        let mut pos = self.checkpoints.get(cp_idx) as usize;
+        let region_end = self.end as usize;
+        while row + 1 < self.lines {
+            let (_, next) = scan_line_end(bytes, pos, region_end);
+            if next > offset {
+                break;
+            }
+            pos = next;
+            row += 1;
+        }
+        (row, pos)
     }
 }
 
@@ -158,7 +351,7 @@ impl Stage {
     #[inline]
     pub fn len(&self) -> usize {
         match &self.rows {
-            Rows::Lines(index) => index.starts.len(),
+            Rows::Lines(index) => index.len(),
             Rows::Indexed { rows, .. } => rows.len(),
             Rows::Spans(spans) => spans.len(),
         }
@@ -261,23 +454,108 @@ impl Stage {
         self.sources.len() > 1
     }
 
+    /// Calls `f(row, span, line_bytes)` sequentially over `range` without per-row checkpoint scanning.
+    #[inline]
+    pub fn for_each_row(&self, range: Range<usize>, mut f: impl FnMut(usize, Span, &[u8])) {
+        match &self.rows {
+            Rows::Lines(index) => {
+                let bytes = self.bufs[index.buf as usize].bytes();
+                let buf = index.buf;
+                for (offset, (start, end)) in index.iter_range(bytes, range.clone()).enumerate() {
+                    let row = range.start + offset;
+                    f(row, Span::new(buf, start as u64, (end - start) as u32), &bytes[start..end]);
+                }
+            }
+            Rows::Indexed { base, rows } => {
+                let bytes = self.bufs[base.buf as usize].bytes();
+                if range.len() >= 1024 {
+                    base.ensure_dense(bytes);
+                }
+                let buf = base.buf;
+                for (offset, &base_row) in rows[range.clone()].iter().enumerate() {
+                    let row = range.start + offset;
+                    let (start, end) = base.bounds(base_row as usize, bytes);
+                    f(row, Span::new(buf, start as u64, (end - start) as u32), &bytes[start..end]);
+                }
+            }
+            Rows::Spans(spans) => {
+                for (offset, &span) in spans[range.clone()].iter().enumerate() {
+                    let row = range.start + offset;
+                    let start = span.off() as usize;
+                    let line = &self.bufs[span.buf() as usize].bytes()[start..start + span.len() as usize];
+                    f(row, span, line);
+                }
+            }
+        }
+    }
+
+    /// Fallible variant of [`Stage::for_each_row`].
+    #[inline]
+    pub fn try_for_each_row<E>(&self, range: Range<usize>, mut f: impl FnMut(usize, Span, &[u8]) -> Result<(), E>) -> Result<(), E> {
+        match &self.rows {
+            Rows::Lines(index) => {
+                let bytes = self.bufs[index.buf as usize].bytes();
+                let buf = index.buf;
+                for (offset, (start, end)) in index.iter_range(bytes, range.clone()).enumerate() {
+                    let row = range.start + offset;
+                    f(row, Span::new(buf, start as u64, (end - start) as u32), &bytes[start..end])?;
+                }
+            }
+            Rows::Indexed { base, rows } => {
+                let bytes = self.bufs[base.buf as usize].bytes();
+                if range.len() >= 1024 {
+                    base.ensure_dense(bytes);
+                }
+                let buf = base.buf;
+                for (offset, &base_row) in rows[range.clone()].iter().enumerate() {
+                    let row = range.start + offset;
+                    let (start, end) = base.bounds(base_row as usize, bytes);
+                    f(row, Span::new(buf, start as u64, (end - start) as u32), &bytes[start..end])?;
+                }
+            }
+            Rows::Spans(spans) => {
+                for (offset, &span) in spans[range.clone()].iter().enumerate() {
+                    let row = range.start + offset;
+                    let start = span.off() as usize;
+                    let line = &self.bufs[span.buf() as usize].bytes()[start..start + span.len() as usize];
+                    f(row, span, line)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Materializes a dense line index when an operation is about to perform millions of random row lookups.
+    pub fn ensure_random_access(&self) {
+        match &self.rows {
+            Rows::Lines(index) => {
+                index.ensure_dense(self.bufs[index.buf as usize].bytes());
+            }
+            Rows::Indexed { base, .. } => {
+                base.ensure_dense(self.bufs[base.buf as usize].bytes());
+            }
+            Rows::Spans(_) => {}
+        }
+    }
+
     /// Bytes of all rows joined by `\n`
     pub fn text_bytes(&self) -> u64 {
         let rows = self.len();
         let content: u64 = match &self.rows {
             Rows::Lines(index) => {
                 let bytes = self.bufs[index.buf as usize].bytes();
-                (0..rows)
+                let step = 1 << 16;
+                let chunks: Vec<Range<usize>> = (0..rows).step_by(step).map(|start| start..(start + step).min(rows)).collect();
+                chunks
                     .into_par_iter()
-                    .with_min_len(1 << 14)
-                    .map(|row| {
-                        let (start, end) = index.bounds(row, bytes);
-                        (end - start) as u64
-                    })
+                    .map(|range| index.iter_range(bytes, range).map(|(start, end)| (end - start) as u64).sum::<u64>())
                     .sum()
             }
             Rows::Indexed { base, rows: indices } => {
                 let bytes = self.bufs[base.buf as usize].bytes();
+                if indices.len() >= 16_384 {
+                    base.ensure_dense(bytes);
+                }
                 indices
                     .par_iter()
                     .with_min_len(1 << 14)
@@ -293,13 +571,13 @@ impl Stage {
     }
 
     /// The stage of a loaded source: the consecutive lines of one buffer.
-    pub fn from_lines(buf: BufRef, starts: Starts, end: u64, max_cols: u64, source: SourceDesc) -> Stage {
-        let own_bytes = starts.heap_bytes();
+    pub fn from_lines(buf: BufRef, index: LineIndex, max_cols: u64, source: SourceDesc) -> Stage {
+        let own_bytes = index.heap_bytes();
         Stage {
             id: next_stage_id(),
             label: "Raw",
             bufs: vec![buf],
-            rows: Rows::Lines(Arc::new(LineIndex { buf: 0, starts, end })),
+            rows: Rows::Lines(Arc::new(index)),
             src: SrcIds::Uniform(0),
             row_ids: RowIds::Identity,
             sources: Arc::new(vec![source]),
@@ -557,6 +835,9 @@ pub struct OutRows {
 fn max_cols_indexed(bufs: &[BufRef], base: &LineIndex, rows: &[u32]) -> u64 {
     let buf = &bufs[base.buf as usize];
     let bytes = buf.bytes();
+    if rows.len() >= 16_384 {
+        base.ensure_dense(bytes);
+    }
     if buf.ascii {
         rows.par_iter()
             .with_min_len(1 << 14)

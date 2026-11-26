@@ -6,7 +6,7 @@ use crate::cancel::{Cancel, OpResult};
 use crate::collate;
 use crate::operator::{AnchorSide, SortMode, SortOp, SortOrder};
 use crate::stage::Stage;
-use crate::text::cols_to_bytes;
+use crate::text::{as_str, cols_to_bytes};
 use crate::typed::{parse_typed, ValueType};
 use memchr::memmem;
 use rayon::prelude::*;
@@ -84,19 +84,19 @@ pub(crate) fn group_rows(stage: &Stage, spec: &SliceSpec, invert_date_time: bool
         let mut numbers = Vec::new();
         let mut slices = Vec::new();
         let mut starts = Vec::new();
-        for row in range {
-            let line = stage.line(row);
-            let Some((start, end)) = spec.slice(line) else { continue };
+        stage.for_each_row(range, |row, _span, line_bytes| {
+            let line = as_str(line_bytes);
+            let Some((start, end)) = spec.slice(line) else { return };
             if is_text {
                 slices.push((start as u32, end as u32));
             } else {
                 match parse_typed(&line[start..end], spec.value_type, invert_date_time) {
                     Some(value) => numbers.push(value),
-                    None => continue,
+                    None => return,
                 }
             }
             starts.push(row as u32);
-        }
+        });
         Ok((starts, numbers, slices))
     })?;
     let count: usize = found.iter().map(|(starts, _, _)| starts.len()).sum();
@@ -130,6 +130,9 @@ pub fn apply(stage: &Stage, op: &SortOp, cancel: &Cancel) -> OpResult<Stage> {
             order.par_sort_by(|&left, &right| directed(numbers[left as usize].partial_cmp(&numbers[right as usize]).unwrap_or(Ordering::Equal)).then(left.cmp(&right)))
         }
         Keys::Slices(slices) => {
+            if grouped.blocks.len() >= 1024 {
+                stage.ensure_random_access();
+            }
             let text = |block: u32| {
                 let (start, end) = slices[block as usize];
                 &stage.line(grouped.blocks[block as usize].start as usize)[start as usize..end as usize]

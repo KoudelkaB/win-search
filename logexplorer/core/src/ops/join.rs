@@ -35,13 +35,13 @@ pub fn apply(stage: &Stage, op: &JoinOp, cancel: &Cancel) -> OpResult<Stage> {
     let mut assembler = Assembler::with_origin(stage, true);
     let (mut first, mut last) = (NO_ROW, NO_ROW);
     let mut joined = 0usize;
-    for row in 0..stage.len() {
+    stage.try_for_each_row(0..stage.len(), |row, raw_span, _| {
         if row % 8192 == 0 {
             cancel.check()?;
         }
-        let span = if op.trim { trim_span(stage, stage.span(row)) } else { stage.span(row) };
+        let span = if op.trim { trim_span(stage, raw_span) } else { raw_span };
         if op.skip_empty && span.is_empty() {
-            continue;
+            return Ok(());
         }
         if joined == 0 {
             first = row as u32;
@@ -52,7 +52,8 @@ pub fn apply(stage: &Stage, op: &JoinOp, cancel: &Cancel) -> OpResult<Stage> {
         assembler.push_span(span, row as u32);
         last = row as u32;
         joined += 1;
-    }
+        Ok(())
+    })?;
     if joined == 0 {
         assembler.push_text(prefix.as_bytes(), first);
     }

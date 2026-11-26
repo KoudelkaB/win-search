@@ -5,6 +5,7 @@ use crate::cancel::{Cancel, OpResult};
 use crate::literal::LiteralSet;
 use crate::operator::FilterOp;
 use crate::stage::{SourceDesc, Stage};
+use crate::text::char_len;
 
 /// A filter ready to test rows; also colors the rows the next filter would keep.
 pub struct FilterMatcher {
@@ -25,28 +26,54 @@ impl FilterMatcher {
     }
 
     #[inline]
+    pub fn matches_line(&self, stage: &Stage, row: usize, line: &[u8]) -> bool {
+        if let Some(allowed) = &self.allowed {
+            if !allowed.get(stage.src(row) as usize).copied().unwrap_or(false) {
+                return false;
+            }
+        }
+        (!self.include.has_clauses() || self.include.is_match(line)) && !self.exclude.is_match(line)
+    }
+
+    #[inline]
     pub fn matches(&self, stage: &Stage, row: usize) -> bool {
+        if let Some(allowed) = &self.allowed {
+            if !allowed.get(stage.src(row) as usize).copied().unwrap_or(false) {
+                return false;
+            }
+        }
         let line = stage.line_bytes(row);
-        if (self.include.has_clauses() && !self.include.is_match(line)) || self.exclude.is_match(line) {
-            return false;
-        }
-        match &self.allowed {
-            None => true,
-            Some(allowed) => allowed.get(stage.src(row) as usize).copied().unwrap_or(false),
-        }
+        (!self.include.has_clauses() || self.include.is_match(line)) && !self.exclude.is_match(line)
     }
 }
 
 pub fn apply(stage: &Stage, op: &FilterOp, cancel: &Cancel) -> OpResult<Stage> {
     let matcher = FilterMatcher::new(op, &stage.sources);
-    let kept = par_chunks(stage.len(), cancel, |range| Ok(range.filter(|&row| matcher.matches(stage, row)).map(|row| row as u32).collect::<Vec<u32>>()))?;
-    let total = kept.iter().map(Vec::len).sum();
+    let kept = par_chunks(stage.len(), cancel, |range| {
+        let mut rows = Vec::new();
+        let mut max_cols = 0u64;
+        stage.for_each_row(range, |row, span, line| {
+            if matcher.matches_line(stage, row, line) {
+                rows.push(row as u32);
+                let cols = if span.is_empty() {
+                    0
+                } else if stage.bufs[span.buf() as usize].ascii {
+                    span.len() as u64
+                } else {
+                    char_len(line) as u64
+                };
+                max_cols = max_cols.max(cols);
+            }
+        });
+        Ok((rows, max_cols))
+    })?;
+    let total: usize = kept.iter().map(|(rows, _)| rows.len()).sum();
+    let max_cols = kept.iter().map(|(_, cols)| *cols).max().unwrap_or(0);
     let mut origin = Vec::with_capacity(total);
-    for chunk in kept {
+    for (chunk, _) in kept {
         origin.extend_from_slice(&chunk);
     }
-    let known_max_cols = (origin.len() == stage.len()).then_some(stage.max_cols);
-    Ok(stage.derive_rows("Filter", origin, known_max_cols))
+    Ok(stage.derive_rows("Filter", origin, Some(max_cols)))
 }
 
 #[cfg(test)]

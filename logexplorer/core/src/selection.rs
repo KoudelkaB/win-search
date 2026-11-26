@@ -2,7 +2,7 @@
 
 use crate::operator::Prefill;
 use crate::stage::Stage;
-use crate::text::{cols_to_bytes, slice_cols};
+use crate::text::{as_str, char_len, cols_to_bytes, slice_cols};
 use rayon::prelude::*;
 use std::io::Write;
 
@@ -65,15 +65,18 @@ impl Selection {
 /// The selected text, rows joined by `\n`
 pub fn selection_text(stage: &Stage, selection: &Selection) -> String {
     let selection = selection.normalized();
-    let last = selection.end.row.min(stage.len().saturating_sub(1));
+    if stage.is_empty() || selection.start.row >= stage.len() {
+        return String::new();
+    }
+    let last = selection.end.row.min(stage.len() - 1);
     let mut out = String::new();
-    for row in selection.start.row..=last {
+    stage.for_each_row(selection.start.row..last + 1, |row, _, line| {
         if row > selection.start.row {
             out.push('\n');
         }
         let (start, end) = selection.cols_in_row(row).unwrap_or((0, 0));
-        out.push_str(slice_cols(stage.line(row), start, end));
-    }
+        out.push_str(slice_cols(as_str(line), start, end));
+    });
     out
 }
 
@@ -87,13 +90,23 @@ pub fn selection_chars(stage: &Stage, selection: &Selection) -> u64 {
     if selection.start.row > last {
         return 0;
     }
-    let row_chars = |row| {
-        let (start, end) = selection.cols_in_row(row).unwrap_or((0, 0));
-        let cols = stage.line_cols(row);
-        (end.min(cols).saturating_sub(start.min(cols))) as u64
-    };
     let rows = selection.start.row..last + 1;
-    let chars: u64 = if rows.len() < (1 << 14) { rows.map(row_chars).sum() } else { rows.into_par_iter().with_min_len(1 << 14).map(row_chars).sum() };
+    let sum_range = |range: std::ops::Range<usize>| {
+        let mut total = 0u64;
+        stage.for_each_row(range, |row, span, line| {
+            let (start, end) = selection.cols_in_row(row).unwrap_or((0, 0));
+            let cols = if stage.bufs[span.buf() as usize].ascii { span.len() as usize } else { char_len(line) };
+            total += (end.min(cols).saturating_sub(start.min(cols))) as u64;
+        });
+        total
+    };
+    let chars: u64 = if rows.len() < (1 << 14) {
+        sum_range(rows)
+    } else {
+        let step = 1 << 14;
+        let chunks: Vec<std::ops::Range<usize>> = (rows.start..rows.end).step_by(step).map(|start| start..(start + step).min(rows.end)).collect();
+        chunks.into_par_iter().map(sum_range).sum()
+    };
     chars + (last - selection.start.row) as u64
 }
 
@@ -110,40 +123,40 @@ pub fn block_text(stage: &Stage, selection: &Selection) -> String {
 }
 
 fn block_rows(stage: &Stage, from_row: usize, to_row: usize, start_col: usize, end_col: usize) -> String {
-    if end_col <= start_col {
+    if end_col <= start_col || from_row >= to_row {
         return String::new();
     }
     let mut out = String::new();
-    for row in from_row..to_row {
+    stage.for_each_row(from_row..to_row, |row, _, line| {
         if row > from_row {
             out.push('\n');
         }
-        out.push_str(slice_cols(stage.line(row), start_col, end_col));
-    }
+        out.push_str(slice_cols(as_str(line), start_col, end_col));
+    });
     out
 }
 
 /// All rows joined by `\n`
 pub fn stage_text(stage: &Stage) -> String {
     let mut out = String::with_capacity(stage.text_bytes() as usize);
-    for row in 0..stage.len() {
+    stage.for_each_row(0..stage.len(), |row, _, line| {
         if row > 0 {
             out.push('\n');
         }
-        out.push_str(stage.line(row));
-    }
+        out.push_str(as_str(line));
+    });
     out
 }
 
 /// Writes all rows joined by `\n`, without building the text in memory
 pub fn write_stage(stage: &Stage, writer: &mut impl Write) -> std::io::Result<()> {
     let mut writer = std::io::BufWriter::with_capacity(1 << 20, writer);
-    for row in 0..stage.len() {
+    stage.try_for_each_row(0..stage.len(), |row, _, line| {
         if row > 0 {
             writer.write_all(b"\n")?;
         }
-        writer.write_all(stage.line_bytes(row))?;
-    }
+        writer.write_all(line)
+    })?;
     writer.flush()
 }
 

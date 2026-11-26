@@ -205,13 +205,17 @@ impl Pattern {
     }
 }
 
-fn collect_chunks(stage: &Stage, op: &ExtractOp, rows: Range<usize>, cancel: &Cancel, per_row: impl Fn(&mut Output, usize) -> OpResult<()> + Sync) -> OpResult<OutRows> {
+fn collect_chunks(
+    stage: &Stage,
+    op: &ExtractOp,
+    rows: Range<usize>,
+    cancel: &Cancel,
+    per_row: impl Fn(&mut Output, usize, Span, &[u8]) -> OpResult<()> + Sync,
+) -> OpResult<OutRows> {
     let base = rows.start;
     let chunks = par_chunks(rows.len(), cancel, |range| {
         let mut output = Output::new(stage, op);
-        for row in range {
-            per_row(&mut output, base + row)?;
-        }
+        stage.try_for_each_row(base + range.start..base + range.end, |row, span, line| per_row(&mut output, row, span, line))?;
         Ok(output)
     })?;
     let total = chunks.iter().map(|chunk| chunk.spans.len()).sum();
@@ -232,9 +236,8 @@ fn collect_chunks(stage: &Stage, op: &ExtractOp, rows: Range<usize>, cancel: &Ca
 }
 
 fn regex_rows(stage: &Stage, op: &ExtractOp, pattern: &Pattern, rows: Range<usize>, cancel: &Cancel) -> OpResult<OutRows> {
-    collect_chunks(stage, op, rows, cancel, |output, row| {
-        let span = stage.span(row);
-        pattern.each_match(as_str(stage.span_bytes(span)), op.all_matches, |group| {
+    collect_chunks(stage, op, rows, cancel, |output, row, span, line| {
+        pattern.each_match(as_str(line), op.all_matches, |group| {
             if let Some((start, end)) = group {
                 output.add(span.sub(start, end), row);
             }
@@ -314,9 +317,7 @@ fn apply_regex(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<OutRo
 
 // --- between two texts ------------------------------------------------------------------------
 
-fn between_in_row(output: &mut Output, row: usize, start: &Needle, end: &Needle, all: bool) {
-    let span = output.stage.span(row);
-    let line = output.stage.span_bytes(span);
+fn between_in_row(output: &mut Output, row: usize, span: Span, line: &[u8], start: &Needle, end: &Needle, all: bool) {
     let mut cursor = 0;
     while cursor <= line.len() {
         let anchor = if start.is_empty() {
@@ -410,8 +411,8 @@ pub fn apply(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<Stage> 
             let start = Needle::new(&op.start_anchor, op.case_sensitive);
             let end = Needle::new(&op.end_anchor, op.case_sensitive);
             if op.scope == ExtractScope::Line {
-                collect_chunks(stage, op, row_bounds(stage, op), cancel, |output, row| {
-                    between_in_row(output, row, &start, &end, op.all_matches);
+                collect_chunks(stage, op, row_bounds(stage, op), cancel, |output, row, span, line| {
+                    between_in_row(output, row, span, line, &start, &end, op.all_matches);
                     Ok(())
                 })?
             } else {
@@ -420,9 +421,8 @@ pub fn apply(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<Stage> 
         }
         ExtractMode::Column => {
             let (pos, len) = (op.pos as usize, op.len.max(1) as usize);
-            collect_chunks(stage, op, row_bounds(stage, op), cancel, |output, row| {
-                let span = stage.span(row);
-                let (start, end) = cols_to_bytes(as_str(stage.span_bytes(span)), pos, pos + len);
+            collect_chunks(stage, op, row_bounds(stage, op), cancel, |output, row, span, line| {
+                let (start, end) = cols_to_bytes(as_str(line), pos, pos + len);
                 output.add(span.sub(start, end), row);
                 Ok(())
             })?
