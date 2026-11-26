@@ -91,6 +91,8 @@ struct Metrics {
     rect: Rect,
     font: FontId,
     row_height: f32,
+    /// Top of the text below the top of its row
+    text_offset: f32,
     char_width: f32,
     text_left: f32,
     gutter: f32,
@@ -367,13 +369,13 @@ fn paint_rows(ui: &egui::Ui, app: &mut App, metrics: &Metrics, stage: &Stage) {
             painter.rect_filled(row_rect, 0.0, theme::HOVER_ROW);
         }
         if let Some(gutter) = gutter {
-            painter.text(Pos2::new(gutter.right() - 8.0, top + metrics.row_height / 2.0), egui::Align2::RIGHT_CENTER, grouped(row as u64 + 1), metrics.font.clone(), theme::MUTED);
+            painter.text(Pos2::new(gutter.right() - 8.0, top + metrics.text_offset), egui::Align2::RIGHT_TOP, grouped(row as u64 + 1), metrics.font.clone(), theme::MUTED);
         }
 
         let visible = app.viewer.visible(stage, row, scroll_left, cols);
         let keeps = app.viewer.preview_matches(stage, row);
         let galley = (!visible.is_empty()).then(|| text_painter.layout_no_wrap(visible.to_owned(), metrics.font.clone(), if keeps { theme::PREVIEW } else { theme::TEXT }));
-        let text_top = top + (metrics.row_height - galley.as_ref().map_or(metrics.row_height, |galley| galley.size().y)) / 2.0;
+        let text_top = top + metrics.text_offset;
 
         if let Some((start, end)) = selection.and_then(|selection| selection.cols_in_row(row)) {
             let to_end = end == usize::MAX;
@@ -411,16 +413,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, stage: Option<&Arc<Stage>>) {
     let outer = ui.available_rect_before_wrap();
     ui.allocate_rect(outer, Sense::hover());
     let rect = Rect::from_min_max(outer.min, Pos2::new(outer.right() - SCROLLBAR, outer.bottom() - SCROLLBAR));
-    let font = theme::mono_font();
-    let (char_width, font_height) = ui.fonts_mut(|fonts| (fonts.glyph_width(&font, '0'), fonts.row_height(&font)));
-    let row_height = (font_height + 3.0).ceil();
+    let font = theme::view_font();
+    let (char_width, line_box) = ui.fonts_mut(|fonts| (fonts.glyph_width(&font, '0'), fonts.row_height(&font)));
+    let row_height = theme::view_row_height();
+    // Text is centered in its row; in a row lower than the font's line box it ends at the
+    // bottom of the row, so the background of the next row never covers its descenders
+    let slack = row_height - line_box;
+    let text_offset = slack.min(slack / 2.0);
     let gutter = if app.view.show_line_numbers {
         let digits = grouped(stage.map_or(1, |stage| stage.len().max(1)) as u64).chars().count();
         digits as f32 * char_width + 16.0
     } else {
         0.0
     };
-    let metrics = Metrics { rect, font, row_height, char_width: char_width.max(1.0), text_left: rect.left() + gutter + TEXT_PADDING, gutter };
+    let metrics = Metrics { rect, font, row_height, text_offset, char_width: char_width.max(1.0), text_left: rect.left() + gutter + TEXT_PADDING, gutter };
 
     app.view.row_height = row_height;
     app.view.char_width = metrics.char_width;

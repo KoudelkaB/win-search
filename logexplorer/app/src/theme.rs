@@ -23,6 +23,13 @@ pub const BODY_SIZE: f32 = 14.0;
 pub const SMALL_SIZE: f32 = 12.0;
 pub const HEADING_SIZE: f32 = 17.0;
 const MONO_SIZE: f32 = 13.0;
+/// Text of the file view: denser than the controls, so more of a log fits. Smaller sizes would
+/// match the HTML Log Explorer at its 80 % zoom in characters per line, but Hack then reads as
+/// too narrow and thin
+const VIEW_SIZE: f32 = 11.0;
+/// Rows of the file view as close as log viewers set them: a digit fills two thirds of a row.
+/// The line box of Hack (1.16 em) plus padding made rows half as high again as needed.
+const VIEW_LINE_SPACING: f32 = 1.1;
 
 /// Base colors of the per-file tints
 const TONES: [(u8, u8, u8); 8] = [(211, 83, 70), (28, 125, 108), (45, 116, 209), (181, 123, 16), (122, 79, 179), (0, 137, 173), (156, 79, 124), (98, 119, 42)];
@@ -37,6 +44,16 @@ pub fn source_tint(tone: usize, hovered: bool) -> Color32 {
 
 pub fn mono_font() -> FontId {
     FontId::monospace(MONO_SIZE)
+}
+
+/// The font of the rows and line numbers of the file view
+pub fn view_font() -> FontId {
+    FontId::monospace(VIEW_SIZE)
+}
+
+/// The height of a row of the file view
+pub fn view_row_height() -> f32 {
+    (VIEW_SIZE * VIEW_LINE_SPACING).round()
 }
 
 pub fn apply(ctx: &egui::Context) {
