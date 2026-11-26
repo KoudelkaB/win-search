@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub const CACHE_MAX_STAGES: usize = 24;
 const CACHE_FLOOR_BYTES: usize = 64 << 20;
-const CACHE_MIN_BYTES: usize = 128 << 20;
+const CACHE_MIN_BYTES: usize = 256 << 20;
 const CACHE_MAX_BYTES: usize = 512 << 20;
 
 #[cfg(windows)]
@@ -100,7 +100,7 @@ pub struct StageCache {
 
 impl Default for StageCache {
     fn default() -> Self {
-        StageCache { entries: HashMap::new(), clock: 0, max_bytes: cache_budget(0, available_memory_bytes()) }
+        StageCache { entries: HashMap::new(), clock: 0, max_bytes: cache_budget(CACHE_MAX_BYTES * 2, available_memory_bytes()) }
     }
 }
 

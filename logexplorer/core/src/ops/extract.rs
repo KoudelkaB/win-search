@@ -6,9 +6,8 @@ use super::{par_chunks, trim_span};
 use crate::cancel::{Cancel, OpError, OpResult};
 use crate::literal::Needle;
 use crate::operator::{ExtractMode, ExtractOp, ExtractScope, RowMode};
-use crate::stage::{OutRows, Rows, Stage};
+use crate::stage::{EolKind, OutRows, Rows, Stage};
 use crate::text::{as_str, char_len, cols_to_bytes, Span};
-use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 use std::ops::Range;
 
@@ -268,24 +267,17 @@ fn regex_rows(stage: &Stage, op: &ExtractOp, pattern: &Pattern, rows: Range<usiz
     )
 }
 
-fn has_cr(bytes: &[u8]) -> bool {
-    if bytes.len() < (1 << 20) {
-        return memchr::memchr(b'\r', bytes).is_some();
-    }
-    bytes.par_chunks(1 << 20).any(|chunk| memchr::memchr(b'\r', chunk).is_some())
-}
-
 /// The pattern over the rows joined by line breaks, for matches that cross rows
 fn regex_whole_text(stage: &Stage, op: &ExtractOp, pattern: &Pattern, cancel: &Cancel) -> OpResult<OutRows> {
     let rows = stage.len();
     let mut locations = pattern.new_locations();
     // Zero-copy fast path: when rows are contiguous LF-only lines in one buffer, search it directly.
     if let Rows::Lines(index) = &stage.rows {
-        let bytes = stage.bufs[index.buf as usize].bytes();
-        let first_start = if rows > 0 { index.row_start(0, bytes) } else { 0 };
-        let region_end = index.end as usize;
-        let region = &bytes[first_start..region_end];
-        if !has_cr(region) {
+        if index.eol_kind == EolKind::LfOnly {
+            let bytes = stage.bufs[index.buf as usize].bytes();
+            let first_start = if rows > 0 { index.row_start(0, bytes) } else { 0 };
+            let region_end = index.end as usize;
+            let region = &bytes[first_start..region_end];
             let text = as_str(region);
             let mut output = Output::new(stage, op);
             pattern.each_match(text, op.all_matches, &mut locations, |group| {

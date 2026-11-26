@@ -6,7 +6,7 @@
 
 use crate::cancel::{Cancel, OpError, OpResult};
 use crate::ops::par_chunks;
-use crate::stage::{LineIndex, RowIds, SourceDesc, SrcIds, Stage, Starts, LINE_INDEX_STRIDE, NO_SRC};
+use crate::stage::{EolKind, LineIndex, RowIds, SourceDesc, SrcIds, Stage, Starts, LINE_INDEX_STRIDE, NO_SRC};
 use crate::text::{char_len, Buf, BufRef, Span};
 use rayon::prelude::*;
 use std::io::Read;
@@ -146,7 +146,7 @@ fn expand_tabs_with_counts(bytes: &[u8], ranges: &[(usize, usize)], chunk_tabs: 
             .zip(targets.into_par_iter())
             .for_each(|((range, tabs), target)| expand_one((range, tabs, target)));
     } else {
-        for ((range, tabs), target) in ranges.iter().zip(chunk_tabs.iter()).zip(targets.into_iter()) {
+        for ((range, tabs), target) in ranges.iter().zip(chunk_tabs.iter()).zip(targets) {
             expand_one((range, tabs, target));
         }
     }
@@ -198,6 +198,8 @@ struct ChunkScan {
     base: usize,
     valid_utf8: bool,
     ascii: bool,
+    has_cr: bool,
+    has_lone_cr: bool,
     tabs: usize,
     /// Relative offsets (from `base`) of each new line started inside this chunk
     starts: Vec<u32>,
@@ -223,14 +225,20 @@ fn scan_chunk(bytes: &[u8], base: usize, end: usize, check_utf8: bool, known_asc
     }
     let mut starts = Vec::with_capacity(chunk.len() / 64);
     let mut tabs = 0usize;
+    let mut has_cr = false;
+    let mut has_lone_cr = false;
     let mut line_start = 0usize;
     let (mut first_part_bytes, mut first_part_cols) = (0u64, 0u64);
     let (mut inner_cols, mut max_inner_cols, mut max_inner_bytes) = (0u64, 0u64, 0u64);
 
     let mut on_break = |pos: usize, byte: u8| {
         // The \r of \r\n is not a line end of its own: the \n after it is (cuts never split \r\n)
-        if byte == b'\r' && pos + 1 < chunk.len() && chunk[pos + 1] == b'\n' {
-            return;
+        if byte == b'\r' {
+            has_cr = true;
+            if pos + 1 < chunk.len() && chunk[pos + 1] == b'\n' {
+                return;
+            }
+            has_lone_cr = true;
         }
         let line_end = if byte == b'\n' && pos > line_start && chunk[pos - 1] == b'\r' { pos - 1 } else { pos };
         let byte_len = (line_end - line_start) as u64;
@@ -273,7 +281,7 @@ fn scan_chunk(bytes: &[u8], base: usize, end: usize, check_utf8: bool, known_asc
         (tail_bytes, tail_cols)
     };
 
-    ChunkScan { base, valid_utf8: true, ascii, tabs, starts, first_part_bytes, first_part_cols, inner_cols, max_inner_cols, max_inner_bytes, last_part_bytes, last_part_cols }
+    ChunkScan { base, valid_utf8: true, ascii, has_cr, has_lone_cr, tabs, starts, first_part_bytes, first_part_cols, inner_cols, max_inner_cols, max_inner_bytes, last_part_bytes, last_part_cols }
 }
 
 /// Single-pass UTF-8 check, ASCII check, tab count, sparse line indexing and column metrics.
@@ -300,7 +308,7 @@ fn scan_and_build(
             (Starts::U64(vec![offset as u64]), Starts::U64(vec![offset as u64]))
         };
         let buf = Buf::with_ascii(bytes, true);
-        let index = LineIndex::new(0, 1, checkpoints, total as u64, Some(dense));
+        let index = LineIndex::new(0, 1, checkpoints, total as u64, EolKind::LfOnly, Some(dense));
         let stage = Stage::from_lines(buf, index, 0, SourceDesc::new(name, path, 0));
         return Ok(TextSource {
             name: if name.is_empty() { "Clipboard".to_string() } else { name.to_string() },
@@ -320,6 +328,8 @@ fn scan_and_build(
     let mut chunk_tabs = Vec::with_capacity(ranges.len());
     let mut total_tabs = 0usize;
     let mut all_ascii = true;
+    let mut any_cr = false;
+    let mut any_lone_cr = false;
     let mut invalid_utf8 = false;
 
     let mut line_idx = 1usize;
@@ -339,6 +349,8 @@ fn scan_and_build(
                 break;
             }
             all_ascii &= scan.ascii;
+            any_cr |= scan.has_cr;
+            any_lone_cr |= scan.has_lone_cr;
             chunk_tabs.push(scan.tabs);
             total_tabs += scan.tabs;
             if total_tabs > 0 {
@@ -359,7 +371,7 @@ fn scan_and_build(
                     next_cp += LINE_INDEX_STRIDE;
                 }
             }
-            if !parallel && scan.starts.len() + 1 <= DENSE_THRESHOLD {
+            if !parallel && scan.starts.len() < DENSE_THRESHOLD {
                 if use_u32 {
                     let base = scan.base as u32;
                     let mut all = Vec::with_capacity(scan.starts.len() + 1);
@@ -418,8 +430,15 @@ fn scan_and_build(
     }
 
     let checkpoints = if use_u32 { Starts::U32(cp_u32) } else { Starts::U64(cp_u64) };
+    let eol_kind = if any_lone_cr {
+        EolKind::Mixed
+    } else if any_cr {
+        EolKind::CrLf
+    } else {
+        EolKind::LfOnly
+    };
     let buf: BufRef = Buf::with_ascii(bytes, all_ascii);
-    let index = LineIndex::new(0, line_idx, checkpoints, total as u64, small_dense);
+    let index = LineIndex::new(0, line_idx, checkpoints, total as u64, eol_kind, small_dense);
     if line_idx <= DENSE_THRESHOLD || (longest_bytes > 8192 && line_idx * 4 <= total / 16) {
         index.ensure_dense(buf.bytes());
     }

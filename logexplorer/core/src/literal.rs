@@ -4,6 +4,24 @@ use crate::operator::Clause;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use memchr::memmem;
 
+/// Rough rarity score for picking an ASCII byte to prefilter with `memchr` / `memchr2`.
+/// Non-alphabetic punctuation/digits score lowest (single-byte `memchr` without case folding).
+fn ascii_anchor_cost(byte: u8) -> u8 {
+    if !byte.is_ascii_alphabetic() {
+        return if byte == b' ' { 220 } else { 1 };
+    }
+    // Approximate English/log letter frequency rank (lower = rarer)
+    match byte.to_ascii_lowercase() {
+        b'q' | b'z' | b'j' | b'x' => 10,
+        b'k' | b'v' | b'w' | b'y' | b'b' => 20,
+        b'g' | b'f' | b'p' | b'm' | b'h' => 30,
+        b'u' | b'c' | b'd' | b'l' => 40,
+        b'r' | b'n' | b'o' | b'i' | b's' | b't' | b'a' => 50,
+        b'e' => 60,
+        _ => 15,
+    }
+}
+
 /// One text to find.
 pub enum Needle {
     Empty,
@@ -11,8 +29,9 @@ pub enum Needle {
     /// Case-insensitive ASCII literal searched with SIMD byte scans in both directions
     AsciiFold {
         needle: Vec<u8>,
-        first_lo: u8,
-        first_hi: u8,
+        anchor_pos: usize,
+        anchor_lo: u8,
+        anchor_hi: u8,
     },
     /// Case-insensitive non-ASCII literal, by Unicode simple case folding
     Fold(regex::bytes::Regex, bool),
@@ -28,9 +47,10 @@ impl Needle {
         }
         if text.is_ascii() {
             let needle = text.as_bytes().to_vec();
-            let first_lo = needle[0].to_ascii_lowercase();
-            let first_hi = needle[0].to_ascii_uppercase();
-            return Needle::AsciiFold { needle, first_lo, first_hi };
+            let anchor_pos = needle.iter().enumerate().min_by_key(|&(_, &b)| ascii_anchor_cost(b)).map_or(0, |(idx, _)| idx);
+            let anchor_lo = needle[anchor_pos].to_ascii_lowercase();
+            let anchor_hi = needle[anchor_pos].to_ascii_uppercase();
+            return Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi };
         }
         let has_break = text.as_bytes().iter().any(|&b| b == b'\n' || b == b'\r');
         match regex::bytes::RegexBuilder::new(&regex::escape(text)).case_insensitive(true).build() {
@@ -62,24 +82,26 @@ impl Needle {
         match self {
             Needle::Empty => Some((from, from)),
             Needle::Exact(finders, length) => finders.0.find(&hay[from..]).map(|at| (from + at, from + at + length)),
-            Needle::AsciiFold { needle, first_lo, first_hi } => {
+            Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi } => {
                 let len = needle.len();
                 if from.saturating_add(len) > hay.len() {
                     return None;
                 }
-                let search_end = hay.len() - len + 1;
-                let mut at = from;
+                let anchor = *anchor_pos;
+                let search_end = hay.len() - len + anchor + 1;
+                let mut at = from + anchor;
                 while at < search_end {
-                    let rel = if first_lo == first_hi {
-                        memchr::memchr(*first_lo, &hay[at..search_end])?
+                    let rel = if anchor_lo == anchor_hi {
+                        memchr::memchr(*anchor_lo, &hay[at..search_end])?
                     } else {
-                        memchr::memchr2(*first_lo, *first_hi, &hay[at..search_end])?
+                        memchr::memchr2(*anchor_lo, *anchor_hi, &hay[at..search_end])?
                     };
-                    let pos = at + rel;
+                    let hit = at + rel;
+                    let pos = hit - anchor;
                     if hay[pos..pos + len].eq_ignore_ascii_case(needle) {
                         return Some((pos, pos + len));
                     }
-                    at = pos + 1;
+                    at = hit + 1;
                 }
                 None
             }
@@ -95,23 +117,25 @@ impl Needle {
                 let end = (limit.saturating_add(*length)).min(hay.len());
                 finders.1.rfind(&hay[..end]).map(|at| (at, at + length))
             }
-            Needle::AsciiFold { needle, first_lo, first_hi } => {
+            Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi } => {
                 let len = needle.len();
                 if hay.len() < len {
                     return None;
                 }
+                let anchor = *anchor_pos;
                 let max_start = limit.min(hay.len() - len);
-                let mut end = max_start + 1;
-                while end > 0 {
-                    let pos = if first_lo == first_hi {
-                        memchr::memrchr(*first_lo, &hay[..end])?
+                let mut end = max_start + anchor + 1;
+                while end > anchor {
+                    let rel = if anchor_lo == anchor_hi {
+                        memchr::memrchr(*anchor_lo, &hay[anchor..end])?
                     } else {
-                        memchr::memrchr2(*first_lo, *first_hi, &hay[..end])?
+                        memchr::memrchr2(*anchor_lo, *anchor_hi, &hay[anchor..end])?
                     };
+                    let pos = rel;
                     if hay[pos..pos + len].eq_ignore_ascii_case(needle) {
                         return Some((pos, pos + len));
                     }
-                    end = pos;
+                    end = anchor + rel;
                 }
                 None
             }
@@ -143,7 +167,9 @@ pub struct LiteralSet {
     clauses: usize,
     single: Option<memmem::Finder<'static>>,
     exact: Option<AhoCorasick>,
-    /// ASCII alternatives matched without regard to ASCII case
+    /// Single ASCII case-insensitive alternative using SIMD anchor scan (avoids AhoCorasick per-row overhead)
+    single_ascii_fold: Option<Needle>,
+    /// Multiple ASCII alternatives matched without regard to ASCII case
     ascii_fold: Option<AhoCorasick>,
     /// Alternatives with other letters, by Unicode case folding
     unicode_fold: Option<regex::bytes::Regex>,
@@ -174,11 +200,13 @@ impl LiteralSet {
             (!patterns.is_empty()).then(|| AhoCorasickBuilder::new().match_kind(MatchKind::Standard).ascii_case_insensitive(fold).build(patterns).ok()).flatten()
         };
         let single = (exact.len() == 1).then(|| memmem::Finder::new(exact[0]).into_owned());
+        let single_ascii_fold = (ascii_fold.len() == 1).then(|| Needle::new(ascii_fold[0], false));
         LiteralSet {
             clauses: count,
             exact: if single.is_some() { None } else { build(&exact, false) },
             single,
-            ascii_fold: build(&ascii_fold, true),
+            ascii_fold: if single_ascii_fold.is_some() { None } else { build(&ascii_fold, true) },
+            single_ascii_fold,
             unicode_fold: (!unicode_fold.is_empty()).then(|| regex::bytes::RegexBuilder::new(&unicode_fold.join("|")).case_insensitive(true).build().ok()).flatten(),
             has_cr,
         }
@@ -191,7 +219,12 @@ impl LiteralSet {
 
     /// True when the set has clauses but zero searchable alternatives (matches nothing)
     pub fn matches_nothing(&self) -> bool {
-        self.clauses > 0 && self.single.is_none() && self.exact.is_none() && self.ascii_fold.is_none() && self.unicode_fold.is_none()
+        self.clauses > 0
+            && self.single.is_none()
+            && self.exact.is_none()
+            && self.single_ascii_fold.is_none()
+            && self.ascii_fold.is_none()
+            && self.unicode_fold.is_none()
     }
 
     /// True when this set can scan contiguous multi-line byte slices with a single fast engine
@@ -199,7 +232,10 @@ impl LiteralSet {
         if self.has_cr || self.unicode_fold.is_some() {
             return false;
         }
-        let engines = usize::from(self.single.is_some()) + usize::from(self.exact.is_some()) + usize::from(self.ascii_fold.is_some());
+        let engines = usize::from(self.single.is_some())
+            + usize::from(self.exact.is_some())
+            + usize::from(self.single_ascii_fold.is_some())
+            + usize::from(self.ascii_fold.is_some());
         engines == 1
     }
 
@@ -213,6 +249,9 @@ impl LiteralSet {
         if let Some(finder) = &self.single {
             return finder.find(slice).map(|at| from + at);
         }
+        if let Some(needle) = &self.single_ascii_fold {
+            return needle.find_at(hay, from).map(|(start, _)| start);
+        }
         if let Some(set) = &self.exact {
             return set.find(slice).map(|found| from + found.start());
         }
@@ -225,6 +264,7 @@ impl LiteralSet {
     #[inline]
     pub fn is_match(&self, hay: &[u8]) -> bool {
         self.single.as_ref().is_some_and(|finder| finder.find(hay).is_some())
+            || self.single_ascii_fold.as_ref().is_some_and(|needle| needle.find_at(hay, 0).is_some())
             || self.exact.as_ref().is_some_and(|set| set.is_match(hay))
             || self.ascii_fold.as_ref().is_some_and(|set| set.is_match(hay))
             || self.unicode_fold.as_ref().is_some_and(|regex| regex.is_match(hay))
@@ -259,6 +299,13 @@ mod tests {
         assert_eq!(punct.find_at(b"x=err y=ERR", 0), Some((1, 5)));
         assert_eq!(punct.rfind_from(b"x=err y=ERR", 11), Some((7, 11)));
         assert_eq!(punct.rfind_from(b"x=err y=ERR", 6), Some((1, 5)));
+        let mid_anchor = Needle::new("status=", false);
+        assert!(matches!(mid_anchor, Needle::AsciiFold { anchor_pos: 6, .. }));
+        assert_eq!(mid_anchor.find_at(b"xxstatus=1 yySTATUS=2", 0), Some((2, 9)));
+        assert_eq!(mid_anchor.find_at(b"xxstatus=1 yySTATUS=2", 3), Some((13, 20)));
+        assert_eq!(mid_anchor.rfind_from(b"xxstatus=1 yySTATUS=2", 21), Some((13, 20)));
+        assert_eq!(mid_anchor.rfind_from(b"xxstatus=1 yySTATUS=2", 12), Some((2, 9)));
+        assert_eq!(mid_anchor.rfind_from(b"xxstatus=1 yySTATUS=2", 1), None);
     }
 
     #[test]

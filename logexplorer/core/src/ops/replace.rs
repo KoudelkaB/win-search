@@ -1,10 +1,11 @@
 //! Replace: literal replacement in the whole stage; the searched text and its replacement
 //! may contain line breaks, so rows can be split and joined.
 
-use super::{merge_chunks, par_chunks, Assembler};
-use crate::cancel::{Cancel, OpResult};
+use super::{merge_chunks, par_chunks, Assembler, Chunk};
+use crate::cancel::{Cancel, OpError, OpResult};
 use crate::operator::ReplaceOp;
 use crate::stage::Stage;
+use crate::text::{char_len, Span, ARENA};
 use memchr::memmem;
 
 pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> {
@@ -17,8 +18,62 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
         // A match cannot cross rows: every row on its own, in parallel
         let finder = memmem::Finder::new(op.search.as_bytes());
         let search_length = op.search.len();
+        if !splits_rows {
+            // Direct single-line fast path: avoids per-row Assembler spill and redundant ASCII checks
+            let all_ascii = stage.bufs.iter().all(|buf| buf.ascii) && replacement.is_ascii();
+            let chunks = par_chunks(stage.len(), cancel, |range| {
+                let mut out = Chunk::default();
+                out.spans.reserve(range.len());
+                let mut overflow = false;
+                stage.for_each_row(range, |_, span, line| {
+                    let Some(first) = finder.find(line) else {
+                        let cols = if span.is_empty() {
+                            0
+                        } else if all_ascii || stage.bufs[span.buf() as usize].ascii {
+                            span.len() as u64
+                        } else {
+                            char_len(line) as u64
+                        };
+                        out.max_cols = out.max_cols.max(cols);
+                        out.spans.push(span);
+                        return;
+                    };
+                    let start = out.arena.len();
+                    out.arena.extend_from_slice(&line[..first]);
+                    out.arena.extend_from_slice(replacement);
+                    let mut copied = first + search_length;
+                    while let Some(rel) = finder.find(&line[copied..]) {
+                        let found = copied + rel;
+                        out.arena.extend_from_slice(&line[copied..found]);
+                        out.arena.extend_from_slice(replacement);
+                        copied = found + search_length;
+                    }
+                    out.arena.extend_from_slice(&line[copied..]);
+                    let len = out.arena.len() - start;
+                    overflow |= len > u32::MAX as usize;
+                    let cols = if all_ascii {
+                        len as u64
+                    } else {
+                        let slice = &out.arena[start..];
+                        if slice.is_ascii() {
+                            len as u64
+                        } else {
+                            out.arena_non_ascii = true;
+                            char_len(slice) as u64
+                        }
+                    };
+                    out.max_cols = out.max_cols.max(cols);
+                    out.spans.push(Span::new(ARENA, start as u64, len as u32));
+                });
+                if overflow {
+                    return Err(OpError::msg("A row of the result is longer than 4 GiB."));
+                }
+                Ok(out)
+            })?;
+            return Ok(stage.derive("Replace", merge_chunks(chunks, false, stage.bufs.len() as u16)?));
+        }
         let chunks = par_chunks(stage.len(), cancel, |range| {
-            let mut assembler = Assembler::with_origin(stage, splits_rows);
+            let mut assembler = Assembler::with_origin(stage, true);
             stage.for_each_row(range, |row, span, line| {
                 let mut copied = 0;
                 for found in finder.find_iter(line) {
@@ -31,7 +86,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
             });
             assembler.finish()
         })?;
-        return Ok(stage.derive("Replace", merge_chunks(chunks, splits_rows, stage.bufs.len() as u16)?));
+        return Ok(stage.derive("Replace", merge_chunks(chunks, true, stage.bufs.len() as u16)?));
     }
 
     // The search spans rows: its first line ends a row, its last line starts one, and the

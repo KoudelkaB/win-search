@@ -18,7 +18,11 @@ use std::ops::Range;
 
 /// The stage after `operator`.
 pub fn apply(stage: &std::sync::Arc<Stage>, operator: &Operator, cancel: &Cancel) -> OpResult<Stage> {
-    cancel.check()?;
+    // Materialize a dense line table before parallel workers enter `for_each_row` on a large
+    // `Rows::Indexed` stage, so `OnceLock` never stalls rayon workers during `build_dense`.
+    if matches!(stage.rows, crate::stage::Rows::Indexed { .. }) && stage.len() >= 16_384 {
+        stage.ensure_random_access();
+    }
     match &operator.kind {
         OpKind::Filter(op) => filter::apply(stage, op, cancel),
         OpKind::Replace(op) => replace::apply(stage, op, cancel),

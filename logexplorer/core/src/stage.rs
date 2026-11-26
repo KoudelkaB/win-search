@@ -93,6 +93,17 @@ impl Starts {
 /// Number of consecutive lines represented by one checkpoint in [`LineIndex`].
 pub const LINE_INDEX_STRIDE: usize = 64;
 
+/// Line-ending structure of the region indexed by a [`LineIndex`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EolKind {
+    /// No `\r` bytes in the region: every line break is `\n`.
+    LfOnly,
+    /// Every `\r` is part of `\r\n` (no lone `\r` line breaks).
+    CrLf,
+    /// At least one lone `\r` line break is present.
+    Mixed,
+}
+
 /// Finds `(line_end_without_eol, next_line_start)` starting at `start` in `bytes[..region_end]`.
 #[inline]
 pub(crate) fn scan_line_end(bytes: &[u8], start: usize, region_end: usize) -> (usize, usize) {
@@ -110,6 +121,28 @@ pub(crate) fn scan_line_end(bytes: &[u8], start: usize, region_end: usize) -> (u
 }
 
 #[inline]
+pub(crate) fn scan_line_end_kind(bytes: &[u8], start: usize, region_end: usize, kind: EolKind) -> (usize, usize) {
+    match kind {
+        EolKind::LfOnly => match memchr::memchr(b'\n', &bytes[start..region_end]) {
+            None => (region_end, region_end),
+            Some(rel) => {
+                let nl = start + rel;
+                (nl, nl + 1)
+            }
+        },
+        EolKind::CrLf => match memchr::memchr(b'\n', &bytes[start..region_end]) {
+            None => (region_end, region_end),
+            Some(rel) => {
+                let nl = start + rel;
+                let end = if nl > start && bytes[nl - 1] == b'\r' { nl - 1 } else { nl };
+                (end, nl + 1)
+            }
+        },
+        EolKind::Mixed => scan_line_end(bytes, start, region_end),
+    }
+}
+
+#[inline]
 fn bounds_from_starts(starts: &Starts, index: usize, region_end: usize, bytes: &[u8]) -> (usize, usize) {
     let start = starts.get(index) as usize;
     if index + 1 == starts.len() {
@@ -122,12 +155,18 @@ fn bounds_from_starts(starts: &Starts, index: usize, region_end: usize, bytes: &
     (start, end)
 }
 
+enum BoundsMode<'a> {
+    Lf { iter: memchr::Memchr<'a>, base: usize, strip_cr: bool },
+    Mixed,
+}
+
 /// Sequential iterator over `(start, end)` byte bounds of consecutive lines.
 pub struct LineBoundsIter<'a> {
     bytes: &'a [u8],
     pos: usize,
     region_end: usize,
     remaining: usize,
+    mode: BoundsMode<'a>,
 }
 
 impl Iterator for LineBoundsIter<'_> {
@@ -140,9 +179,24 @@ impl Iterator for LineBoundsIter<'_> {
         }
         self.remaining -= 1;
         let start = self.pos;
-        let (end, next) = scan_line_end(self.bytes, start, self.region_end);
-        self.pos = next;
-        Some((start, end))
+        match &mut self.mode {
+            BoundsMode::Lf { iter, base, strip_cr } => {
+                if let Some(rel) = iter.next() {
+                    let nl = *base + rel;
+                    self.pos = nl + 1;
+                    let end = if *strip_cr && nl > start && self.bytes[nl - 1] == b'\r' { nl - 1 } else { nl };
+                    Some((start, end))
+                } else {
+                    self.pos = self.region_end;
+                    Some((start, self.region_end))
+                }
+            }
+            BoundsMode::Mixed => {
+                let (end, next) = scan_line_end(self.bytes, start, self.region_end);
+                self.pos = next;
+                Some((start, end))
+            }
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -159,17 +213,18 @@ pub struct LineIndex {
     pub checkpoints: Starts,
     /// End of the region (the end of the last line)
     pub end: u64,
+    pub eol_kind: EolKind,
     /// Full per-line offsets, built on demand for heavy random access
     dense: OnceLock<Starts>,
 }
 
 impl LineIndex {
-    pub fn new(buf: u16, lines: usize, checkpoints: Starts, end: u64, dense: Option<Starts>) -> Self {
+    pub fn new(buf: u16, lines: usize, checkpoints: Starts, end: u64, eol_kind: EolKind, dense: Option<Starts>) -> Self {
         let cell = OnceLock::new();
         if let Some(starts) = dense {
             let _ = cell.set(starts);
         }
-        LineIndex { buf, lines, checkpoints, end, dense: cell }
+        LineIndex { buf, lines, checkpoints, end, eol_kind, dense: cell }
     }
 
     #[inline]
@@ -194,18 +249,31 @@ impl LineIndex {
     fn build_dense(&self, bytes: &[u8]) -> Starts {
         let region_end = self.end as usize;
         let parallel = self.lines >= 16_384;
+        let kind = self.eol_kind;
         if self.end <= u32::MAX as u64 {
             let mut all = vec![0u32; self.lines];
             let fill = |(cp_idx, slot): (usize, &mut [u32])| {
                 let mut pos = self.checkpoints.get(cp_idx) as usize;
-                for out in slot {
-                    *out = pos as u32;
-                    let (_, next) = scan_line_end(bytes, pos, region_end);
-                    pos = next;
+                if kind != EolKind::Mixed {
+                    let mut iter = memchr::memchr_iter(b'\n', &bytes[pos..region_end]);
+                    let base = pos;
+                    for out in slot {
+                        *out = pos as u32;
+                        pos = match iter.next() {
+                            Some(rel) => base + rel + 1,
+                            None => region_end,
+                        };
+                    }
+                } else {
+                    for out in slot {
+                        *out = pos as u32;
+                        let (_, next) = scan_line_end(bytes, pos, region_end);
+                        pos = next;
+                    }
                 }
             };
             if parallel {
-                all.par_chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
+                all.par_chunks_mut(LINE_INDEX_STRIDE).with_min_len(256).enumerate().for_each(fill);
             } else {
                 all.chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
             }
@@ -214,14 +282,26 @@ impl LineIndex {
             let mut all = vec![0u64; self.lines];
             let fill = |(cp_idx, slot): (usize, &mut [u64])| {
                 let mut pos = self.checkpoints.get(cp_idx) as usize;
-                for out in slot {
-                    *out = pos as u64;
-                    let (_, next) = scan_line_end(bytes, pos, region_end);
-                    pos = next;
+                if kind != EolKind::Mixed {
+                    let mut iter = memchr::memchr_iter(b'\n', &bytes[pos..region_end]);
+                    let base = pos;
+                    for out in slot {
+                        *out = pos as u64;
+                        pos = match iter.next() {
+                            Some(rel) => base + rel + 1,
+                            None => region_end,
+                        };
+                    }
+                } else {
+                    for out in slot {
+                        *out = pos as u64;
+                        let (_, next) = scan_line_end(bytes, pos, region_end);
+                        pos = next;
+                    }
                 }
             };
             if parallel {
-                all.par_chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
+                all.par_chunks_mut(LINE_INDEX_STRIDE).with_min_len(256).enumerate().for_each(fill);
             } else {
                 all.chunks_mut(LINE_INDEX_STRIDE).enumerate().for_each(fill);
             }
@@ -239,7 +319,7 @@ impl LineIndex {
         let skip = index % LINE_INDEX_STRIDE;
         let region_end = self.end as usize;
         for _ in 0..skip {
-            let (_, next) = scan_line_end(bytes, pos, region_end);
+            let (_, next) = scan_line_end_kind(bytes, pos, region_end, self.eol_kind);
             pos = next;
         }
         pos
@@ -256,10 +336,10 @@ impl LineIndex {
         let skip = index % LINE_INDEX_STRIDE;
         let region_end = self.end as usize;
         for _ in 0..skip {
-            let (_, next) = scan_line_end(bytes, pos, region_end);
+            let (_, next) = scan_line_end_kind(bytes, pos, region_end, self.eol_kind);
             pos = next;
         }
-        let (end, _) = scan_line_end(bytes, pos, region_end);
+        let (end, _) = scan_line_end_kind(bytes, pos, region_end, self.eol_kind);
         // Guard against a single huge line inside a checkpoint block turning random lookups into megabyte scans
         if end.saturating_sub(cp_start) > (1 << 20) && self.lines * 4 <= bytes.len() / 8 {
             let _ = self.ensure_dense(bytes);
@@ -271,10 +351,16 @@ impl LineIndex {
     #[inline]
     pub fn iter_range<'a>(&self, bytes: &'a [u8], range: Range<usize>) -> LineBoundsIter<'a> {
         if range.is_empty() {
-            return LineBoundsIter { bytes, pos: 0, region_end: 0, remaining: 0 };
+            return LineBoundsIter { bytes, pos: 0, region_end: 0, remaining: 0, mode: BoundsMode::Mixed };
         }
         let pos = self.row_start(range.start, bytes);
-        LineBoundsIter { bytes, pos, region_end: self.end as usize, remaining: range.len() }
+        let region_end = self.end as usize;
+        let mode = match self.eol_kind {
+            EolKind::LfOnly => BoundsMode::Lf { iter: memchr::memchr_iter(b'\n', &bytes[pos..region_end]), base: pos, strip_cr: false },
+            EolKind::CrLf => BoundsMode::Lf { iter: memchr::memchr_iter(b'\n', &bytes[pos..region_end]), base: pos, strip_cr: true },
+            EolKind::Mixed => BoundsMode::Mixed,
+        };
+        LineBoundsIter { bytes, pos, region_end, remaining: range.len(), mode }
     }
 
     /// `(row, line_start)` containing byte `offset` in the buffer.
@@ -288,7 +374,7 @@ impl LineIndex {
         let mut pos = self.checkpoints.get(cp_idx) as usize;
         let region_end = self.end as usize;
         while row + 1 < self.lines {
-            let (_, next) = scan_line_end(bytes, pos, region_end);
+            let (_, next) = scan_line_end_kind(bytes, pos, region_end, self.eol_kind);
             if next > offset {
                 break;
             }

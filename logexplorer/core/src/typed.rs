@@ -169,7 +169,7 @@ impl<const N: usize> std::fmt::Write for StackBuf<N> {
 fn round_up_decimal(out: &mut String, longer: &str) {
     let mut kept = [0u8; 128];
     let prefix = longer[..longer.len() - 1].trim_end_matches('.');
-    if prefix.len() + 1 <= kept.len() {
+    if prefix.len() < kept.len() {
         let len = prefix.len();
         kept[1..1 + len].copy_from_slice(prefix.as_bytes());
         let mut position = 1 + len;

@@ -4,7 +4,7 @@ use super::par_chunks;
 use crate::cancel::{Cancel, OpResult};
 use crate::literal::LiteralSet;
 use crate::operator::FilterOp;
-use crate::stage::{scan_line_end, LineIndex, Rows, SourceDesc, SrcIds, Stage, LINE_INDEX_STRIDE};
+use crate::stage::{scan_line_end_kind, LineIndex, Rows, SourceDesc, SrcIds, Stage, LINE_INDEX_STRIDE};
 use crate::text::char_len;
 use rayon::prelude::*;
 
@@ -54,11 +54,37 @@ impl FilterMatcher {
     }
 }
 
+/// Returns true when the include filter looks selective (< 5% hit rate on a small sample),
+/// where skipping whole multi-line spans with SIMD beats scanning line by line.
+fn is_selective_sample(stage: &Stage, matcher: &FilterMatcher) -> bool {
+    const SAMPLE_ROWS: usize = 512;
+    let total = stage.len();
+    let sample = SAMPLE_ROWS.min(total);
+    let mut hits = 0usize;
+    stage.for_each_row(0..sample, |_, _, line| {
+        if matcher.include.is_match(line) {
+            hits += 1;
+        }
+    });
+    // Also sample the middle when the file is large so header blocks do not skew the estimate.
+    if total >= SAMPLE_ROWS * 4 {
+        let mid = total / 2;
+        stage.for_each_row(mid..mid + SAMPLE_ROWS, |_, _, line| {
+            if matcher.include.is_match(line) {
+                hits += 1;
+            }
+        });
+        return hits * 20 < SAMPLE_ROWS * 2;
+    }
+    hits * 20 < sample
+}
+
 /// Scans contiguous multi-line byte blocks directly with `memmem`/`AhoCorasick`, then maps hits to rows.
 fn apply_chunk_include(stage: &Stage, index: &LineIndex, matcher: &FilterMatcher, cancel: &Cancel) -> OpResult<Stage> {
     let buf = &stage.bufs[index.buf as usize];
     let bytes = buf.bytes();
     let ascii = buf.ascii;
+    let eol_kind = index.eol_kind;
     let region_end = index.end as usize;
     let total_rows = index.len();
     let num_cp = index.checkpoints.len();
@@ -90,7 +116,7 @@ fn apply_chunk_include(stage: &Stage, index: &LineIndex, matcher: &FilterMatcher
                     cur_pos = line_start;
                 } else {
                     while cur_row + 1 < r_end {
-                        let (_, next) = scan_line_end(bytes, cur_pos, region_end);
+                        let (_, next) = scan_line_end_kind(bytes, cur_pos, region_end, eol_kind);
                         if next > abs_pos {
                             break;
                         }
@@ -98,7 +124,7 @@ fn apply_chunk_include(stage: &Stage, index: &LineIndex, matcher: &FilterMatcher
                         cur_row += 1;
                     }
                 }
-                let (line_end, next_start) = scan_line_end(bytes, cur_pos, region_end);
+                let (line_end, next_start) = scan_line_end_kind(bytes, cur_pos, region_end, eol_kind);
                 let line = &bytes[cur_pos..line_end];
                 if !has_exclude || !matcher.exclude.is_match(line) {
                     rows.push(cur_row as u32);
@@ -139,7 +165,7 @@ pub fn apply(stage: &Stage, op: &FilterOp, cancel: &Cancel) -> OpResult<Stage> {
             return Ok(stage.copy_as("Filter"));
         }
         if let Rows::Lines(index) = &stage.rows {
-            if stage.len() >= CHUNK_FILTER_MIN_ROWS && matcher.include.has_clauses() && matcher.include.can_chunk_scan() {
+            if stage.len() >= CHUNK_FILTER_MIN_ROWS && matcher.include.has_clauses() && matcher.include.can_chunk_scan() && is_selective_sample(stage, &matcher) {
                 return apply_chunk_include(stage, index, &matcher, cancel);
             }
         }
