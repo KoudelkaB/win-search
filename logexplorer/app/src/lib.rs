@@ -49,6 +49,30 @@ pub fn create_native(context: &eframe::CreationContext<'_>, options: Options) ->
     app
 }
 
+/// Tunes wgpu for a 2D text viewer: small GPU allocator blocks, low-power adapter
+/// preference, and on Windows primary backends only (Vulkan and DX12 with the system
+/// WARP fallback) so the OpenGL ICD driver is not loaded alongside them.
+pub fn configure_wgpu(config: &mut eframe::egui_wgpu::WgpuConfiguration) {
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup else {
+        return;
+    };
+    #[cfg(windows)]
+    if eframe::wgpu::Backends::from_env().is_none() {
+        setup.instance_descriptor.backends = eframe::wgpu::Backends::PRIMARY;
+    }
+    if eframe::wgpu::PowerPreference::from_env().is_none() {
+        setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
+    }
+    let default_descriptor = std::sync::Arc::clone(&setup.device_descriptor);
+    setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+        let mut descriptor = default_descriptor(adapter);
+        descriptor.memory_hints = eframe::wgpu::MemoryHints::Manual {
+            suballocated_device_memory_block_size: (4 << 20)..(16 << 20),
+        };
+        descriptor
+    });
+}
+
 /// Reads the command line: `[--combine append|zip] [--filter TEXT] [--case-sensitive]
 /// [--lang LANG] [--data-dir DIR] [--files0-from LIST] [FILE...]`
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
@@ -144,5 +168,21 @@ mod tests {
         assert_eq!(options.files[400], PathBuf::from(&names[399]));
         assert_eq!(options.combine_zip, Some(false));
         assert!(parse_args(["--files0-from", folder.path().join("missing").to_str().unwrap()].map(String::from)).unwrap_err().starts_with("--files0-from"));
+    }
+
+    #[test]
+    fn wgpu_options_use_low_power_and_primary_backends_on_windows() {
+        let mut native = eframe::NativeOptions::default();
+        configure_wgpu(&mut native.wgpu_options);
+        let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = native.wgpu_options.wgpu_setup else {
+            panic!("expected CreateNew wgpu setup");
+        };
+        if eframe::wgpu::PowerPreference::from_env().is_none() {
+            assert_eq!(setup.power_preference, eframe::wgpu::PowerPreference::LowPower);
+        }
+        #[cfg(windows)]
+        if eframe::wgpu::Backends::from_env().is_none() {
+            assert_eq!(setup.instance_descriptor.backends, eframe::wgpu::Backends::PRIMARY);
+        }
     }
 }

@@ -14,7 +14,7 @@ fn main() -> eframe::Result {
     let elevated = logexplorer::elevated_drop::is_elevated();
     #[cfg(not(windows))]
     let elevated = false;
-    let native = eframe::NativeOptions {
+    let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Log Explorer")
             .with_app_id("io.github.koudelkab.LogExplorer")
@@ -37,6 +37,7 @@ fn main() -> eframe::Result {
         })),
         ..Default::default()
     };
+    logexplorer::configure_wgpu(&mut native.wgpu_options);
     eframe::run_native(
         "Log Explorer",
         native,
