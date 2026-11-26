@@ -18,7 +18,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
         let finder = memmem::Finder::new(op.search.as_bytes());
         let search_length = op.search.len();
         let chunks = par_chunks(stage.len(), cancel, |range| {
-            let mut assembler = Assembler::new(stage);
+            let mut assembler = Assembler::with_origin(stage, splits_rows);
             for row in range {
                 let span = stage.span(row);
                 let line = stage.span_bytes(span);
@@ -33,7 +33,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
             }
             assembler.finish()
         })?;
-        return Ok(stage.derive("Replace", merge_chunks(chunks, splits_rows)?));
+        return Ok(stage.derive("Replace", merge_chunks(chunks, splits_rows, stage.bufs.len() as u16)?));
     }
 
     // The search spans rows: its first line ends a row, its last line starts one, and the
@@ -42,7 +42,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
     let (first, last, middle) = (parts[0], parts[parts.len() - 1], &parts[1..parts.len() - 1]);
     let reach = parts.len() - 1;
     let rows = stage.len();
-    let mut assembler = Assembler::new(stage);
+    let mut assembler = Assembler::with_origin(stage, true);
     let (mut row, mut from) = (0usize, 0usize);
     while row < rows {
         if row % 4096 == 0 {
@@ -67,7 +67,7 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
             from = 0;
         }
     }
-    Ok(stage.derive("Replace", merge_chunks(vec![assembler.finish()?], true)?))
+    Ok(stage.derive("Replace", merge_chunks(vec![assembler.finish()?], true, stage.bufs.len() as u16)?))
 }
 
 #[cfg(test)]

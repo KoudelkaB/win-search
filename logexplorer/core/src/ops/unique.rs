@@ -74,8 +74,13 @@ pub fn apply(stage: &Stage, op: &UniqueOp, cancel: &Cancel) -> OpResult<Stage> {
             (if descending { order.reverse() } else { order }).then(left.1.cmp(&right.1))
         });
     }
+    if !op.trim {
+        let origin: Vec<u32> = entries.into_iter().map(|(_, row)| row).collect();
+        let preserves_max = op.case_sensitive || stage.bufs.iter().all(|buf| buf.ascii);
+        return Ok(stage.derive_rows("Unique", origin, preserves_max.then_some(stage.max_cols)));
+    }
     let (spans, origin) = entries.into_iter().unzip();
-    Ok(stage.derive("Unique", OutRows { spans, origin: Some(origin), arena: Vec::new() }))
+    Ok(stage.derive("Unique", OutRows { spans, origin: Some(origin), ..Default::default() }))
 }
 
 #[cfg(test)]

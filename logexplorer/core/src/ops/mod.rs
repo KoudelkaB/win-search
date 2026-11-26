@@ -12,7 +12,7 @@ pub mod unique;
 use crate::cancel::{Cancel, OpError, OpResult};
 use crate::operator::{OpKind, Operator};
 use crate::stage::{OutRows, Stage, NO_ROW};
-use crate::text::{as_str, Span, ARENA};
+use crate::text::{as_str, char_len, Span, ARENA};
 use rayon::prelude::*;
 use std::ops::Range;
 
@@ -53,19 +53,35 @@ pub(crate) struct Chunk {
     pub spans: Vec<Span>,
     pub origin: Vec<u32>,
     pub arena: Vec<u8>,
+    pub max_cols: u64,
+    pub arena_non_ascii: bool,
 }
 
-pub(crate) fn merge_chunks(chunks: Vec<Chunk>, keep_origin: bool) -> OpResult<OutRows> {
+pub(crate) fn merge_chunks(chunks: Vec<Chunk>, keep_origin: bool, arena_buf: u16) -> OpResult<OutRows> {
     let rows: usize = chunks.iter().map(|chunk| chunk.spans.len()).sum();
     if rows > u32::MAX as usize - 1 {
         return Err(OpError::msg("The result has too many rows."));
     }
-    let mut out = OutRows { spans: Vec::with_capacity(rows), origin: keep_origin.then(|| Vec::with_capacity(rows)), arena: Vec::new() };
-    out.arena.reserve_exact(chunks.iter().map(|chunk| chunk.arena.len()).sum());
+    let total_arena: usize = chunks.iter().map(|chunk| chunk.arena.len()).sum();
+    let max_cols = chunks.iter().map(|chunk| chunk.max_cols).max().unwrap_or(0);
+    let arena_ascii = !chunks.iter().any(|chunk| chunk.arena_non_ascii);
+    let mut out = OutRows {
+        spans: Vec::with_capacity(rows),
+        origin: keep_origin.then(|| Vec::with_capacity(rows)),
+        arena: Vec::new(),
+        max_cols: Some(max_cols),
+        arena_resolved: true,
+        arena_ascii: (total_arena > 0).then_some(arena_ascii),
+    };
+    out.arena.reserve_exact(total_arena);
     for chunk in chunks {
         let base = out.arena.len() as u64;
         out.arena.extend_from_slice(&chunk.arena);
-        out.spans.extend(chunk.spans.iter().map(|span| if span.buf() == ARENA { span.shifted(base) } else { *span }));
+        if total_arena > 0 {
+            out.spans.extend(chunk.spans.iter().map(|span| if span.buf() == ARENA { span.shifted(base).with_buf(arena_buf) } else { *span }));
+        } else {
+            out.spans.extend_from_slice(&chunk.spans);
+        }
         if let Some(origin) = &mut out.origin {
             origin.extend_from_slice(&chunk.origin);
         }
@@ -82,13 +98,14 @@ pub(crate) struct Assembler<'a> {
     single: Option<Span>,
     spilled: bool,
     origin: u32,
+    keep_origin: bool,
     /// A row grew past what a span can hold
     pub overflow: bool,
 }
 
 impl<'a> Assembler<'a> {
-    pub fn new(stage: &'a Stage) -> Self {
-        Assembler { stage, out: Chunk::default(), line_start: 0, single: None, spilled: false, origin: NO_ROW, overflow: false }
+    pub fn with_origin(stage: &'a Stage, keep_origin: bool) -> Self {
+        Assembler { stage, out: Chunk::default(), line_start: 0, single: None, spilled: false, origin: NO_ROW, keep_origin, overflow: false }
     }
 
     fn spill(&mut self) {
@@ -139,15 +156,33 @@ impl<'a> Assembler<'a> {
 
     /// Ends the row; an empty row belongs to `fallback_origin`
     pub fn end_row(&mut self, fallback_origin: u32) {
-        let span = if self.spilled {
-            let length = self.out.arena.len() - self.line_start;
+        let (span, cols) = if self.spilled {
+            let slice = &self.out.arena[self.line_start..];
+            let length = slice.len();
             self.overflow |= length > u32::MAX as usize;
-            Span::new(ARENA, self.line_start as u64, length as u32)
+            let cols = if slice.is_ascii() {
+                length as u64
+            } else {
+                self.out.arena_non_ascii = true;
+                char_len(slice) as u64
+            };
+            (Span::new(ARENA, self.line_start as u64, length as u32), cols)
         } else {
-            self.single.take().unwrap_or(Span::EMPTY)
+            let span = self.single.take().unwrap_or(Span::EMPTY);
+            let cols = if span.is_empty() {
+                0
+            } else if self.stage.bufs[span.buf() as usize].ascii {
+                span.len() as u64
+            } else {
+                char_len(self.stage.span_bytes(span)) as u64
+            };
+            (span, cols)
         };
+        self.out.max_cols = self.out.max_cols.max(cols);
         self.out.spans.push(span);
-        self.out.origin.push(if self.origin == NO_ROW { fallback_origin } else { self.origin });
+        if self.keep_origin {
+            self.out.origin.push(if self.origin == NO_ROW { fallback_origin } else { self.origin });
+        }
         self.line_start = self.out.arena.len();
         self.spilled = false;
         self.origin = NO_ROW;

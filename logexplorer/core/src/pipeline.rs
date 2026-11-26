@@ -14,7 +14,66 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 pub const CACHE_MAX_STAGES: usize = 24;
-const CACHE_MIN_BYTES: usize = 512 << 20;
+const CACHE_FLOOR_BYTES: usize = 64 << 20;
+const CACHE_MIN_BYTES: usize = 128 << 20;
+const CACHE_MAX_BYTES: usize = 512 << 20;
+
+#[cfg(windows)]
+fn available_memory_bytes() -> Option<usize> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    unsafe extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut status = MemoryStatusEx {
+        length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        memory_load: 0,
+        total_phys: 0,
+        avail_phys: 0,
+        total_page_file: 0,
+        avail_page_file: 0,
+        total_virtual: 0,
+        avail_virtual: 0,
+        avail_extended_virtual: 0,
+    };
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+    (ok != 0 && status.avail_phys > 0).then(|| status.avail_phys.min(usize::MAX as u64) as usize)
+}
+
+#[cfg(target_os = "linux")]
+fn available_memory_bytes() -> Option<usize> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kib: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kib.saturating_mul(1024).min(usize::MAX as u64) as usize);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn available_memory_bytes() -> Option<usize> {
+    None
+}
+
+fn cache_budget(source_bytes: usize, available_ram: Option<usize>) -> usize {
+    let target = (source_bytes / 2).clamp(CACHE_MIN_BYTES, CACHE_MAX_BYTES);
+    match available_ram {
+        Some(available) => target.min((available / 4).max(CACHE_FLOOR_BYTES)),
+        None => target,
+    }
+}
 
 pub type ChainKey = u64;
 
@@ -41,7 +100,7 @@ pub struct StageCache {
 
 impl Default for StageCache {
     fn default() -> Self {
-        StageCache { entries: HashMap::new(), clock: 0, max_bytes: CACHE_MIN_BYTES }
+        StageCache { entries: HashMap::new(), clock: 0, max_bytes: cache_budget(0, available_memory_bytes()) }
     }
 }
 
@@ -63,9 +122,10 @@ impl StageCache {
         self.entries.values().map(|entry| entry.stage.own_bytes).sum()
     }
 
-    /// The cache may grow to the size of the source text, but never needs to stay under 512 MiB
+    /// Adaptive cap: half the source clamped to 128-512 MiB, and never more than a quarter
+    /// of currently available RAM (with a 64 MiB floor so at least a few stages stay cached).
     pub fn set_source_bytes(&mut self, bytes: usize) {
-        self.max_bytes = bytes.max(CACHE_MIN_BYTES);
+        self.max_bytes = cache_budget(bytes, available_memory_bytes());
     }
 
     fn get(&mut self, key: ChainKey, parent: ChainKey, signature: &str) -> Option<Arc<Stage>> {
@@ -202,5 +262,14 @@ mod tests {
         let chain = active_operators(&operators, Some(0));
         assert!(compute(&cache, &raw, &chain, &cancel, &|_| {}).is_err());
         assert!(cache.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cache_budget_scales_with_source_and_respects_available_ram() {
+        assert_eq!(cache_budget(20 << 20, Some(8 << 30)), CACHE_MIN_BYTES);
+        assert_eq!(cache_budget(1200 << 20, Some(8 << 30)), CACHE_MAX_BYTES);
+        assert_eq!(cache_budget(1200 << 20, Some(1024 << 20)), 256 << 20);
+        assert_eq!(cache_budget(1200 << 20, Some(100 << 20)), CACHE_FLOOR_BYTES);
+        assert_eq!(cache_budget(600 << 20, None), 300 << 20);
     }
 }

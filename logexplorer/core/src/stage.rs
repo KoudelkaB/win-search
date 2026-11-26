@@ -107,8 +107,9 @@ impl LineIndex {
 }
 
 pub enum Rows {
-    Lines(LineIndex),
-    Spans(Vec<Span>),
+    Lines(Arc<LineIndex>),
+    Indexed { base: Arc<LineIndex>, rows: Arc<Vec<u32>> },
+    Spans(Arc<Vec<Span>>),
 }
 
 #[derive(Clone)]
@@ -158,6 +159,7 @@ impl Stage {
     pub fn len(&self) -> usize {
         match &self.rows {
             Rows::Lines(index) => index.starts.len(),
+            Rows::Indexed { rows, .. } => rows.len(),
             Rows::Spans(spans) => spans.len(),
         }
     }
@@ -173,6 +175,11 @@ impl Stage {
             Rows::Lines(index) => {
                 let bytes = self.bufs[index.buf as usize].bytes();
                 let (start, end) = index.bounds(row, bytes);
+                &bytes[start..end]
+            }
+            Rows::Indexed { base, rows } => {
+                let bytes = self.bufs[base.buf as usize].bytes();
+                let (start, end) = base.bounds(rows[row] as usize, bytes);
                 &bytes[start..end]
             }
             Rows::Spans(spans) => {
@@ -198,6 +205,10 @@ impl Stage {
             Rows::Lines(index) => {
                 let (start, end) = index.bounds(row, self.bufs[index.buf as usize].bytes());
                 Span::new(index.buf, start as u64, (end - start) as u32)
+            }
+            Rows::Indexed { base, rows } => {
+                let (start, end) = base.bounds(rows[row] as usize, self.bufs[base.buf as usize].bytes());
+                Span::new(base.buf, start as u64, (end - start) as u32)
             }
             Rows::Spans(spans) => spans[row],
         }
@@ -265,6 +276,17 @@ impl Stage {
                     })
                     .sum()
             }
+            Rows::Indexed { base, rows: indices } => {
+                let bytes = self.bufs[base.buf as usize].bytes();
+                indices
+                    .par_iter()
+                    .with_min_len(1 << 14)
+                    .map(|&row| {
+                        let (start, end) = base.bounds(row as usize, bytes);
+                        (end - start) as u64
+                    })
+                    .sum()
+            }
             Rows::Spans(spans) => spans.par_iter().with_min_len(1 << 14).map(|span| span.len() as u64).sum(),
         };
         content + rows.saturating_sub(1) as u64
@@ -277,7 +299,7 @@ impl Stage {
             id: next_stage_id(),
             label: "Raw",
             bufs: vec![buf],
-            rows: Rows::Lines(LineIndex { buf: 0, starts, end }),
+            rows: Rows::Lines(Arc::new(LineIndex { buf: 0, starts, end })),
             src: SrcIds::Uniform(0),
             row_ids: RowIds::Identity,
             sources: Arc::new(vec![source]),
@@ -289,7 +311,25 @@ impl Stage {
 
     /// A stage made of explicit rows (several sources combined, or the result of an operation).
     pub fn from_spans(label: &'static str, bufs: Vec<BufRef>, spans: Vec<Span>, src: SrcIds, row_ids: RowIds, sources: Arc<Vec<SourceDesc>>) -> Stage {
-        let max_cols = max_cols_of(&bufs, &spans);
+        Stage::from_spans_with_cols(label, bufs, spans, src, row_ids, sources, None)
+    }
+
+    fn from_spans_with_cols(
+        label: &'static str,
+        bufs: Vec<BufRef>,
+        spans: Vec<Span>,
+        src: SrcIds,
+        row_ids: RowIds,
+        sources: Arc<Vec<SourceDesc>>,
+        known_max_cols: Option<u64>,
+    ) -> Stage {
+        let max_cols = match known_max_cols {
+            Some(cols) => {
+                debug_assert_eq!(cols, max_cols_of(&bufs, &spans));
+                cols
+            }
+            None => max_cols_of(&bufs, &spans),
+        };
         let mut own_bytes = spans.capacity() * std::mem::size_of::<Span>();
         if let SrcIds::PerRow(list) = &src {
             own_bytes += list.capacity() * 2;
@@ -297,29 +337,40 @@ impl Stage {
         if let RowIds::List(list) = &row_ids {
             own_bytes += list.capacity() * 4;
         }
-        Stage { id: next_stage_id(), label, bufs, rows: Rows::Spans(spans), src, row_ids, sources, max_cols, own_bytes, diff_meta: None }
+        Stage { id: next_stage_id(), label, bufs, rows: Rows::Spans(Arc::new(spans)), src, row_ids, sources, max_cols, own_bytes, diff_meta: None }
     }
 
     /// The result of an operation on `self`.
     pub fn derive(&self, label: &'static str, out: OutRows) -> Stage {
-        let OutRows { mut spans, origin, arena } = out;
+        let OutRows { mut spans, origin, mut arena, max_cols, arena_resolved, arena_ascii } = out;
         let mut bufs = self.bufs.clone();
         let mut arena_bytes = 0;
         if !arena.is_empty() {
             let arena_index = bufs.len() as u16;
-            let mut arena = arena;
-            arena.shrink_to_fit();
+            if arena.capacity() - arena.len() > (1 << 20) {
+                arena.shrink_to_fit();
+            }
             arena_bytes = arena.capacity();
-            bufs.push(Buf::new(arena));
-            spans.par_iter_mut().with_min_len(1 << 14).for_each(|span| {
-                if span.buf() == ARENA {
-                    *span = span.with_buf(arena_index);
+            let buf = match arena_ascii {
+                Some(ascii) => {
+                    debug_assert_eq!(ascii, crate::text::is_ascii_par(&arena));
+                    Buf::with_ascii(arena, ascii)
                 }
-            });
+                None => Buf::new(arena),
+            };
+            bufs.push(buf);
+            if !arena_resolved {
+                spans.par_iter_mut().with_min_len(1 << 14).for_each(|span| {
+                    if span.buf() == ARENA {
+                        *span = span.with_buf(arena_index);
+                    }
+                });
+            }
         } else {
             debug_assert!(spans.iter().all(|span| span.buf() != ARENA));
         }
-        let (src, row_ids) = match &origin {
+        let shared_ids = origin.is_none();
+        let (src, row_ids) = match origin {
             // Same rows in the same order: the ids are shared with the input
             None => {
                 debug_assert_eq!(spans.len(), self.len());
@@ -329,7 +380,7 @@ impl Stage {
                 let src = match &self.src {
                     // A row that comes from no row (an empty Join) has no source either
                     SrcIds::Uniform(id) if origin.par_iter().with_min_len(1 << 14).any(|&row| row == NO_ROW) => {
-                        SrcIds::PerRow(Arc::new(origin.iter().map(|&row| if row == NO_ROW { NO_SRC } else { *id }).collect()))
+                        SrcIds::PerRow(Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| if row == NO_ROW { NO_SRC } else { *id }).collect()))
                     }
                     SrcIds::Uniform(id) => SrcIds::Uniform(*id),
                     SrcIds::PerRow(list) => {
@@ -337,42 +388,194 @@ impl Stage {
                     }
                 };
                 let row_ids = match &self.row_ids {
-                    RowIds::Identity => RowIds::List(Arc::new(origin.clone())),
+                    RowIds::Identity => RowIds::List(Arc::new(origin)),
                     RowIds::List(list) => RowIds::List(Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| list.get(row as usize).copied().unwrap_or(NO_ROW)).collect())),
                 };
                 (src, row_ids)
             }
         };
-        let shared_ids = origin.is_none();
-        let mut stage = Stage::from_spans(label, bufs, spans, src, row_ids, self.sources.clone());
+        let mut stage = Stage::from_spans_with_cols(label, bufs, spans, src, row_ids, self.sources.clone(), max_cols);
         if shared_ids {
             // from_spans counted the id lists this stage only borrows
             stage.own_bytes = match &stage.rows {
                 Rows::Spans(spans) => spans.capacity() * std::mem::size_of::<Span>(),
-                Rows::Lines(_) => 0,
+                Rows::Lines(_) | Rows::Indexed { .. } => 0,
             };
         }
         stage.own_bytes += arena_bytes;
         stage
     }
 
+    /// The result of an operation that only picks or reorders whole rows of `self`.
+    /// When `self` is backed by a `LineIndex`, keeps 4 bytes per row instead of 16.
+    pub fn derive_rows(&self, label: &'static str, origin: Vec<u32>, known_max_cols: Option<u64>) -> Stage {
+        debug_assert!(origin.iter().all(|&row| (row as usize) < self.len()));
+        match &self.rows {
+            Rows::Lines(base) => {
+                let src = match &self.src {
+                    SrcIds::Uniform(id) => SrcIds::Uniform(*id),
+                    SrcIds::PerRow(list) => {
+                        SrcIds::PerRow(Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| list.get(row as usize).copied().unwrap_or(NO_SRC)).collect()))
+                    }
+                };
+                let rows = Arc::new(origin);
+                let (row_ids, shared_row_ids) = match &self.row_ids {
+                    RowIds::Identity => (RowIds::List(Arc::clone(&rows)), true),
+                    RowIds::List(list) => (
+                        RowIds::List(Arc::new(rows.par_iter().with_min_len(1 << 14).map(|&row| list.get(row as usize).copied().unwrap_or(NO_ROW)).collect())),
+                        false,
+                    ),
+                };
+                let max_cols = match known_max_cols {
+                    Some(cols) => {
+                        debug_assert_eq!(cols, max_cols_indexed(&self.bufs, base, &rows));
+                        cols
+                    }
+                    None => max_cols_indexed(&self.bufs, base, &rows),
+                };
+                let mut own_bytes = rows.capacity() * 4;
+                if !shared_row_ids {
+                    if let RowIds::List(list) = &row_ids {
+                        own_bytes += list.capacity() * 4;
+                    }
+                }
+                if let SrcIds::PerRow(list) = &src {
+                    own_bytes += list.capacity() * 2;
+                }
+                Stage {
+                    id: next_stage_id(),
+                    label,
+                    bufs: self.bufs.clone(),
+                    rows: Rows::Indexed { base: Arc::clone(base), rows },
+                    src,
+                    row_ids,
+                    sources: self.sources.clone(),
+                    max_cols,
+                    own_bytes,
+                    diff_meta: None,
+                }
+            }
+            Rows::Indexed { base, rows: parent_rows } => {
+                let src = match &self.src {
+                    SrcIds::Uniform(id) => SrcIds::Uniform(*id),
+                    SrcIds::PerRow(list) => {
+                        SrcIds::PerRow(Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| list.get(row as usize).copied().unwrap_or(NO_SRC)).collect()))
+                    }
+                };
+                let shares_with_row_ids = matches!(&self.row_ids, RowIds::List(parent_ids) if Arc::ptr_eq(parent_rows, parent_ids));
+                let (mapped, row_ids, shared_row_ids) = if shares_with_row_ids {
+                    let mut mapped = origin;
+                    mapped.par_iter_mut().with_min_len(1 << 14).for_each(|row| *row = parent_rows[*row as usize]);
+                    let mapped = Arc::new(mapped);
+                    (Arc::clone(&mapped), RowIds::List(mapped), true)
+                } else {
+                    let mapped: Arc<Vec<u32>> = Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| parent_rows[row as usize]).collect());
+                    let row_ids = match &self.row_ids {
+                        RowIds::Identity => RowIds::List(Arc::new(origin)),
+                        RowIds::List(parent_ids) => RowIds::List(Arc::new(
+                            origin.par_iter().with_min_len(1 << 14).map(|&row| parent_ids.get(row as usize).copied().unwrap_or(NO_ROW)).collect(),
+                        )),
+                    };
+                    (mapped, row_ids, false)
+                };
+                let max_cols = match known_max_cols {
+                    Some(cols) => {
+                        debug_assert_eq!(cols, max_cols_indexed(&self.bufs, base, &mapped));
+                        cols
+                    }
+                    None => max_cols_indexed(&self.bufs, base, &mapped),
+                };
+                let mut own_bytes = mapped.capacity() * 4;
+                if !shared_row_ids {
+                    if let RowIds::List(list) = &row_ids {
+                        own_bytes += list.capacity() * 4;
+                    }
+                }
+                if let SrcIds::PerRow(list) = &src {
+                    own_bytes += list.capacity() * 2;
+                }
+                Stage {
+                    id: next_stage_id(),
+                    label,
+                    bufs: self.bufs.clone(),
+                    rows: Rows::Indexed { base: Arc::clone(base), rows: mapped },
+                    src,
+                    row_ids,
+                    sources: self.sources.clone(),
+                    max_cols,
+                    own_bytes,
+                    diff_meta: None,
+                }
+            }
+            Rows::Spans(parent_spans) => {
+                let spans: Vec<Span> = origin.par_iter().with_min_len(1 << 14).map(|&row| parent_spans[row as usize]).collect();
+                self.derive(label, OutRows { spans, origin: Some(origin), arena: Vec::new(), max_cols: known_max_cols, arena_resolved: true, arena_ascii: None })
+            }
+        }
+    }
+
     /// The same rows as a new stage (an operation with nothing to do).
     pub fn copy_as(&self, label: &'static str) -> Stage {
-        let spans: Vec<Span> = (0..self.len()).into_par_iter().with_min_len(1 << 14).map(|row| self.span(row)).collect();
-        self.derive(label, OutRows { spans, origin: None, arena: Vec::new() })
+        let rows = match &self.rows {
+            Rows::Lines(index) => Rows::Lines(Arc::clone(index)),
+            Rows::Indexed { base, rows } => Rows::Indexed { base: Arc::clone(base), rows: Arc::clone(rows) },
+            Rows::Spans(spans) => Rows::Spans(Arc::clone(spans)),
+        };
+        Stage {
+            id: next_stage_id(),
+            label,
+            bufs: self.bufs.clone(),
+            rows,
+            src: self.src.clone(),
+            row_ids: self.row_ids.clone(),
+            sources: self.sources.clone(),
+            max_cols: self.max_cols,
+            own_bytes: 0,
+            diff_meta: None,
+        }
     }
 }
 
 /// Rows an operation produced.
 #[derive(Default)]
 pub struct OutRows {
-    /// Spans into the input's buffers, or into `arena` (buffer [`ARENA`])
+    /// Spans into the input's buffers, or into `arena` (buffer [`ARENA`], or already resolved to `stage.bufs.len()`)
     pub spans: Vec<Span>,
     /// Input row each output row comes from ([`NO_ROW`] for none); `None` when the rows are
     /// the input rows one to one
     pub origin: Option<Vec<u32>>,
     /// Text written by the operation
     pub arena: Vec<u8>,
+    /// Longest row in columns when already computed while building the spans
+    pub max_cols: Option<u64>,
+    /// True when spans pointing into `arena` already carry the final arena buffer index
+    pub arena_resolved: bool,
+    /// Whether `arena` is pure ASCII, when already known while writing it
+    pub arena_ascii: Option<bool>,
+}
+
+fn max_cols_indexed(bufs: &[BufRef], base: &LineIndex, rows: &[u32]) -> u64 {
+    let buf = &bufs[base.buf as usize];
+    let bytes = buf.bytes();
+    if buf.ascii {
+        rows.par_iter()
+            .with_min_len(1 << 14)
+            .map(|&row| {
+                let (start, end) = base.bounds(row as usize, bytes);
+                (end - start) as u64
+            })
+            .max()
+            .unwrap_or(0)
+    } else {
+        rows.par_iter()
+            .with_min_len(1 << 14)
+            .map(|&row| {
+                let (start, end) = base.bounds(row as usize, bytes);
+                char_len(&bytes[start..end]) as u64
+            })
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 pub fn max_cols_of(bufs: &[BufRef], spans: &[Span]) -> u64 {
@@ -416,5 +619,35 @@ pub(crate) mod testing {
 
     pub fn srcs_of(stage: &Stage) -> Vec<u16> {
         (0..stage.len()).map(|row| stage.src(row)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::*;
+    use super::*;
+
+    #[test]
+    fn derive_rows_keeps_indexed_representation_and_shares_row_ids() {
+        let raw = stage_of(&["alpha", "beta", "gamma", "delta"]);
+        let filtered = raw.derive_rows("Filter", vec![3, 1, 2], None);
+        assert!(matches!(filtered.rows, Rows::Indexed { .. }));
+        assert_eq!(lines_of(&filtered), ["delta", "beta", "gamma"]);
+        assert_eq!(row_ids_of(&filtered), [3, 1, 2]);
+        assert_eq!(filtered.max_cols, 5);
+        // Only the 4-byte row index list is owned (shared with row_ids)
+        assert_eq!(filtered.own_bytes, 3 * 4);
+        assert_eq!(filtered.text_bytes(), 5 + 4 + 5 + 2);
+
+        // Chaining another row-reordering operation stays indexed and still shares row_ids
+        let sorted = filtered.derive_rows("Sort", vec![1, 0, 2], Some(filtered.max_cols));
+        assert!(matches!(sorted.rows, Rows::Indexed { .. }));
+        assert_eq!(lines_of(&sorted), ["beta", "delta", "gamma"]);
+        assert_eq!(row_ids_of(&sorted), [1, 3, 2]);
+        assert_eq!(sorted.own_bytes, 3 * 4);
+
+        let copied = sorted.copy_as("Copy");
+        assert_eq!(copied.own_bytes, 0);
+        assert_eq!(lines_of(&copied), ["beta", "delta", "gamma"]);
     }
 }

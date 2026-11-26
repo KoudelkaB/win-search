@@ -4,8 +4,7 @@ use super::par_chunks;
 use crate::cancel::{Cancel, OpResult};
 use crate::literal::LiteralSet;
 use crate::operator::FilterOp;
-use crate::stage::{OutRows, SourceDesc, Stage};
-use rayon::prelude::*;
+use crate::stage::{SourceDesc, Stage};
 
 /// A filter ready to test rows; also colors the rows the next filter would keep.
 pub struct FilterMatcher {
@@ -46,8 +45,8 @@ pub fn apply(stage: &Stage, op: &FilterOp, cancel: &Cancel) -> OpResult<Stage> {
     for chunk in kept {
         origin.extend_from_slice(&chunk);
     }
-    let spans = origin.par_iter().with_min_len(1 << 14).map(|&row| stage.span(row as usize)).collect();
-    Ok(stage.derive("Filter", OutRows { spans, origin: Some(origin), arena: Vec::new() }))
+    let known_max_cols = (origin.len() == stage.len()).then_some(stage.max_cols);
+    Ok(stage.derive_rows("Filter", origin, known_max_cols))
 }
 
 #[cfg(test)]

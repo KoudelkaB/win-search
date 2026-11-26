@@ -5,7 +5,7 @@ use super::par_chunks;
 use crate::cancel::{Cancel, OpResult};
 use crate::collate;
 use crate::operator::{AnchorSide, SortMode, SortOp, SortOrder};
-use crate::stage::{OutRows, Stage};
+use crate::stage::Stage;
 use crate::text::cols_to_bytes;
 use crate::typed::{parse_typed, ValueType};
 use memchr::memmem;
@@ -144,8 +144,7 @@ pub fn apply(stage: &Stage, op: &SortOp, cancel: &Cancel) -> OpResult<Stage> {
         let block = grouped.blocks[block as usize];
         origin.extend(block.start..block.end);
     }
-    let spans = origin.par_iter().with_min_len(1 << 14).map(|&row| stage.span(row as usize)).collect();
-    Ok(stage.derive("Sort", OutRows { spans, origin: Some(origin), arena: Vec::new() }))
+    Ok(stage.derive_rows("Sort", origin, Some(stage.max_cols)))
 }
 
 #[cfg(test)]

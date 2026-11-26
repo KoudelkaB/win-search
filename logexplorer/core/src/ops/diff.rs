@@ -5,7 +5,7 @@ use super::sort::{group_rows, Grouped, Keys, SliceSpec};
 use crate::cancel::{Cancel, OpResult};
 use crate::operator::DiffOp;
 use crate::stage::{DiffMeta, OutRows, Stage};
-use crate::text::{cols_to_bytes, Span, ARENA};
+use crate::text::{cols_to_bytes, Span};
 use crate::typed::{align_to_slice, format_diff_value, iso_string, parse_date_time, DiffProfile, ProfileSample, ValueType};
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -186,16 +186,17 @@ pub fn apply(stage: &Arc<Stage>, op: &DiffOp, cancel: &Cancel) -> OpResult<Stage
     };
 
     let mut spans: Vec<Span> = (0..stage.len()).into_par_iter().with_min_len(1 << 14).map(|row| stage.span(row)).collect();
+    let arena_buf = stage.bufs.len() as u16;
     let mut arena = Vec::new();
     arena.reserve_exact(chunks.iter().map(|(text, _)| text.len()).sum());
     for (text, changed) in chunks {
         let base = arena.len();
         arena.extend_from_slice(&text);
         for (row, offset, length) in changed {
-            spans[row as usize] = Span::new(ARENA, (base + offset) as u64, length);
+            spans[row as usize] = Span::new(arena_buf, (base + offset) as u64, length);
         }
     }
-    let mut out = stage.derive("Diff", OutRows { spans, origin: None, arena });
+    let mut out = stage.derive("Diff", OutRows { spans, origin: None, arena, max_cols: None, arena_resolved: true, arena_ascii: None });
     out.diff_meta = Some(DiffMeta { signature, original: stage.clone() });
     Ok(out)
 }

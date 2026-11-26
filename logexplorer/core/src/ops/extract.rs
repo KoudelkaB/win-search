@@ -7,7 +7,7 @@ use crate::cancel::{Cancel, OpError, OpResult};
 use crate::literal::Needle;
 use crate::operator::{ExtractMode, ExtractOp, ExtractScope, RowMode};
 use crate::stage::{OutRows, Stage};
-use crate::text::{as_str, cols_to_bytes, Span};
+use crate::text::{as_str, char_len, cols_to_bytes, Span};
 use regex_syntax::hir::{Class, Hir, HirKind};
 use std::ops::Range;
 
@@ -18,11 +18,26 @@ struct Output<'a> {
     skip_empty: bool,
     spans: Vec<Span>,
     origin: Vec<u32>,
+    max_cols: u64,
 }
 
 impl<'a> Output<'a> {
     fn new(stage: &'a Stage, op: &ExtractOp) -> Self {
-        Output { stage, trim: op.trim, skip_empty: op.skip_empty, spans: Vec::new(), origin: Vec::new() }
+        Output { stage, trim: op.trim, skip_empty: op.skip_empty, spans: Vec::new(), origin: Vec::new(), max_cols: 0 }
+    }
+
+    #[inline]
+    fn push(&mut self, span: Span, row: usize) {
+        let cols = if span.is_empty() {
+            0
+        } else if self.stage.bufs[span.buf() as usize].ascii {
+            span.len() as u64
+        } else {
+            char_len(self.stage.span_bytes(span)) as u64
+        };
+        self.max_cols = self.max_cols.max(cols);
+        self.spans.push(span);
+        self.origin.push(row as u32);
     }
 
     fn add(&mut self, span: Span, row: usize) {
@@ -30,8 +45,7 @@ impl<'a> Output<'a> {
         if self.skip_empty && span.is_empty() {
             return;
         }
-        self.spans.push(span);
-        self.origin.push(row as u32);
+        self.push(span, row);
     }
 
     /// A value from byte `from.1` of row `from.0` to byte `to.1` of row `to.0`; one that
@@ -66,9 +80,12 @@ impl<'a> Output<'a> {
             }
         }
         for (span, row) in pieces {
-            self.spans.push(span);
-            self.origin.push(row as u32);
+            self.push(span, row);
         }
+    }
+
+    fn into_out_rows(self) -> OutRows {
+        OutRows { spans: self.spans, origin: Some(self.origin), arena: Vec::new(), max_cols: Some(self.max_cols), arena_resolved: true, arena_ascii: None }
     }
 }
 
@@ -198,7 +215,15 @@ fn collect_chunks(stage: &Stage, op: &ExtractOp, rows: Range<usize>, cancel: &Ca
         Ok(output)
     })?;
     let total = chunks.iter().map(|chunk| chunk.spans.len()).sum();
-    let mut out = OutRows { spans: Vec::with_capacity(total), origin: Some(Vec::with_capacity(total)), arena: Vec::new() };
+    let max_cols = chunks.iter().map(|chunk| chunk.max_cols).max().unwrap_or(0);
+    let mut out = OutRows {
+        spans: Vec::with_capacity(total),
+        origin: Some(Vec::with_capacity(total)),
+        arena: Vec::new(),
+        max_cols: Some(max_cols),
+        arena_resolved: true,
+        arena_ascii: None,
+    };
     for chunk in chunks {
         out.spans.extend_from_slice(&chunk.spans);
         out.origin.as_mut().unwrap().extend_from_slice(&chunk.origin);
@@ -252,7 +277,7 @@ fn regex_whole_text(stage: &Stage, op: &ExtractOp, pattern: &Pattern, cancel: &C
             output.add_range(from, to);
         }
     })?;
-    Ok(OutRows { spans: output.spans, origin: Some(output.origin), arena: Vec::new() })
+    Ok(output.into_out_rows())
 }
 
 fn apply_regex(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<OutRows> {
@@ -284,7 +309,7 @@ fn apply_regex(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<OutRo
             break;
         }
     }
-    Ok(OutRows { spans: output.spans, origin: Some(output.origin), arena: Vec::new() })
+    Ok(output.into_out_rows())
 }
 
 // --- between two texts ------------------------------------------------------------------------
@@ -340,7 +365,7 @@ fn between_whole(stage: &Stage, op: &ExtractOp, start: &Needle, end: &Needle, ca
     let rows = stage.len();
     let mut cursor = (0usize, 0usize);
     if rows == 0 {
-        return Ok(OutRows { spans: Vec::new(), origin: Some(Vec::new()), arena: Vec::new() });
+        return Ok(output.into_out_rows());
     }
     loop {
         let anchor = if start.is_empty() {
@@ -370,7 +395,7 @@ fn between_whole(stage: &Stage, op: &ExtractOp, start: &Needle, end: &Needle, ca
         }
         cursor = after_end.max((anchor.0, anchor.2.max(anchor.1 + 1)));
     }
-    Ok(OutRows { spans: output.spans, origin: Some(output.origin), arena: Vec::new() })
+    Ok(output.into_out_rows())
 }
 
 pub fn apply(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<Stage> {

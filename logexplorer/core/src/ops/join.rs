@@ -32,7 +32,7 @@ pub fn decode_escapes(value: &str) -> String {
 pub fn apply(stage: &Stage, op: &JoinOp, cancel: &Cancel) -> OpResult<Stage> {
     let decode = |value: &str| if op.interpret_escapes { decode_escapes(value) } else { value.to_string() };
     let (delimiter, prefix, suffix) = (decode(&op.delimiter), decode(&op.prefix), decode(&op.suffix));
-    let mut assembler = Assembler::new(stage);
+    let mut assembler = Assembler::with_origin(stage, true);
     let (mut first, mut last) = (NO_ROW, NO_ROW);
     let mut joined = 0usize;
     for row in 0..stage.len() {
@@ -58,7 +58,7 @@ pub fn apply(stage: &Stage, op: &JoinOp, cancel: &Cancel) -> OpResult<Stage> {
     }
     assembler.push_text(suffix.as_bytes(), last);
     assembler.end_row(last);
-    Ok(stage.derive("Join", merge_chunks(vec![assembler.finish()?], true)?))
+    Ok(stage.derive("Join", merge_chunks(vec![assembler.finish()?], true, stage.bufs.len() as u16)?))
 }
 
 #[cfg(test)]
