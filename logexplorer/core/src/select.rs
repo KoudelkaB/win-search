@@ -119,10 +119,66 @@ struct Token {
     regex: fancy_regex::Regex,
     precedence: u8,
     group: usize,
+    /// Sentence punctuation after a match is not part of it (paths and URLs)
+    trim: bool,
 }
 
 fn token(pattern: &str, precedence: u8, group: usize) -> Token {
-    Token { regex: fancy_regex::Regex::new(pattern).expect("token pattern"), precedence, group }
+    Token { regex: fancy_regex::Regex::new(pattern).expect("token pattern"), precedence, group, trim: false }
+}
+
+fn trimmed_token(pattern: &str, precedence: u8) -> Token {
+    Token { trim: true, ..token(pattern, precedence, 0) }
+}
+
+/// The end of a path or URL without the sentence punctuation after it (`…\file.cfg, section …`).
+/// A closing bracket is dropped only when unbalanced, so `Program Files (x86)` stays whole.
+fn trim_trailing_punctuation(line: &[char], start: usize, mut end: usize) -> usize {
+    while end > start {
+        let last = line[end - 1];
+        if ".,;:!?".contains(last) {
+            let dots = line[start..end].iter().rev().take_while(|ch| **ch == '.').count();
+            // `.` and `..` after a separator are directories
+            if dots <= 2 && (start + dots == end || matches!(line[end - dots - 1], '\\' | '/')) {
+                break;
+            }
+            end -= 1;
+            continue;
+        }
+        let open = match last {
+            ')' => '(',
+            ']' => '[',
+            '}' => '{',
+            _ => break,
+        };
+        let text = &line[start..end];
+        if text.iter().filter(|ch| **ch == last).count() <= text.iter().filter(|ch| **ch == open).count() {
+            break;
+        }
+        end -= 1;
+    }
+    end
+}
+
+/// Rooted Windows-style paths (`C:\`, `\\server\`, `\\?\`, `%VAR%\`, `~\` and their forward-slash
+/// forms). A directory name may contain spaces because the separator after it shows it is part
+/// of the path. A file name may contain them only when it ends with an extension and its later
+/// words do not start with a lowercase letter, so `System32 for kernel32.dll` stops after
+/// `System32` while `New Text Document.txt` stays whole.
+fn rooted_path_patterns() -> [String; 2] {
+    const NAME: &str = r#"[^\s\\/:*?"<>|]"#;
+    const NAME_NO_DOT: &str = r#"[^\s\\/:*?"<>|.]"#;
+    const WORD_END: &str = r#"[^\s\\/:*?"<>|,;]"#;
+    const FILE_WORD_END: &str = r#"[^\s\\/:*?"<>|.,;]"#;
+    const FILE_WORD_START: &str = r#"[^\s\\/:*?"<>|.,;a-z]"#;
+    let spaced_file = format!(
+        r#"{NAME_NO_DOT}*{FILE_WORD_END}(?: {FILE_WORD_START}(?:{NAME_NO_DOT}*{FILE_WORD_END})?)* {FILE_WORD_START}{NAME}*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?=$|[\s.,;:!?)\]}}"'<>|])"#
+    );
+    let path = |roots: &str, separator: &str| format!(r"(?:{roots})(?:(?:{NAME}*{WORD_END} )*{NAME}+{separator})*(?:{spaced_file}|{NAME}+)?");
+    [
+        path(&format!(r"[A-Za-z]:\\+|\\\\[?.]\\(?:[A-Za-z]:\\)?|\\{{2,}}(?={NAME})|%[A-Za-z_][\w()]*%\\+|~\\+"), r"\\+"),
+        path(r"(?<![A-Za-z0-9])[A-Za-z]:/+|%[A-Za-z_][\w()]*%/+|~/+", "/+"),
+    ]
 }
 
 const DATE_TIME_ISO: &str = r"\b[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,9})?)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?\b";
@@ -138,6 +194,7 @@ const GUID_LIKE: &str = r"(?i)(^|[^A-Za-z0-9-])([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){
 fn tokens() -> &'static [Token] {
     static TOKENS: OnceLock<Vec<Token>> = OnceLock::new();
     TOKENS.get_or_init(|| {
+        let [backslash_path, slash_path] = rooted_path_patterns();
         vec![
             token(DATE_TIME_ISO, 4, 0),
             token(DATE_TIME_YMD, 4, 0),
@@ -146,8 +203,10 @@ fn tokens() -> &'static [Token] {
             token(GUID_LIKE, 3, 2),
             token(r"\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\b", 3, 0),
             token(r"\b[0-9]+(?:\.[0-9]+){2,}(?:[-+][A-Za-z0-9][A-Za-z0-9.-]*)?\b", 3, 0),
-            token(r#"(?i)\b(?:https?|ftp)://[^\s"'<>]+"#, 3, 0),
-            token(r#"(?:[A-Za-z]:\\[^\s"'<>|]+|\\\\[^\s"'<>|]+|(?:[\\/]|\.{1,2}[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+)"#, 3, 0),
+            trimmed_token(r#"(?i)\b(?:https?|ftp)://[^\s"'<>]+"#, 3),
+            trimmed_token(&backslash_path, 3),
+            trimmed_token(&slash_path, 3),
+            trimmed_token(r"(?:[\\/]|\.{1,2}[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+", 3),
             token(r"\b[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\.)[A-Za-z_][A-Za-z0-9_]*)+\b", 3, 0),
             token(DATE_YMD, 3, 0),
             token(DATE_DMY, 3, 0),
@@ -513,6 +572,7 @@ impl<'a> Window<'a> {
         let mut candidates = Vec::new();
         for token in tokens() {
             piece.each_match(&token.regex, token.group, |start, end| {
+                let end = if token.trim { trim_trailing_punctuation(line, start, end) } else { end };
                 if col >= start && col < end {
                     candidates.push(Range { start: self.starts[index] + start, end: self.starts[index] + end, delimiters: None, precedence: token.precedence });
                 }
@@ -1120,6 +1180,40 @@ mod tests {
         assert_eq!(click(&stage, 2, "log/"), "/var/log/syslog");
         assert_eq!(click(&stage, 2, "0x1F"), "0x1F");
         assert_eq!(click(&stage, 2, "kůň"), "žluťoučký_kůň");
+    }
+
+    #[test]
+    fn a_path_keeps_its_spaces_and_leaves_trailing_punctuation_out() {
+        let stage = stage_of(&[
+            r"Name: ESET Security, Path: C:\Program Files\ESET\ESET Security\ekrn.exe, Time: 1",
+            r"Name: Windows Defender, Path: %ProgramFiles%\Windows Defender\MsMpEng.exe, Time",
+            r"SPGenerateCopyListFromConfigFile: Didn't find file list in C:\$WINDOWS.~BT\Sources\SetupPlatform.cfg, section Footprint.Migration.amd64",
+            r"Saved C:\Users\me\Desktop\New Text Document.txt. Scanning C:\Windows\System32 for kernel32.dll",
+            r"(see C:\Program Files (x86)\App\app.exe) Share \\server\My Share\file.txt; done",
+            r#""path": "C:\\Program Files\\App\\x.log", Copy C:\a\b C:\c\d"#,
+            r"Config C:/Program Files/App/config.json; see logs/app.log. Visit https://example.com/a/b, then",
+            r"Docs https://en.wikipedia.org/wiki/Foo_(bar).",
+        ]);
+        for needle in ["C:", "Program", "Files", r"ESET\ESET", r"Security\", "ekrn"] {
+            assert_eq!(click(&stage, 0, needle), r"C:\Program Files\ESET\ESET Security\ekrn.exe", "{needle}");
+        }
+        assert_eq!(click(&stage, 0, "Time"), "Time");
+        assert_eq!(click_with(&stage, 0, "Files", None, true).1, "Files");
+        assert_eq!(click(&stage, 1, r"Defender\"), r"%ProgramFiles%\Windows Defender\MsMpEng.exe");
+        for needle in ["$WINDOWS", "Sources", "SetupPlatform"] {
+            assert_eq!(click(&stage, 2, needle), r"C:\$WINDOWS.~BT\Sources\SetupPlatform.cfg", "{needle}");
+        }
+        assert_eq!(click(&stage, 2, "Footprint"), "Footprint.Migration.amd64");
+        assert_eq!(click(&stage, 3, "Text"), r"C:\Users\me\Desktop\New Text Document.txt");
+        assert_eq!(click(&stage, 3, "System32"), r"C:\Windows\System32");
+        assert_eq!(click(&stage, 4, "x86"), r"C:\Program Files (x86)\App\app.exe");
+        assert_eq!(click(&stage, 4, r"Share\"), r"\\server\My Share\file.txt");
+        assert_eq!(click(&stage, 5, "Files"), r"C:\\Program Files\\App\\x.log");
+        assert_eq!(click(&stage, 5, "b C"), r"C:\a\b");
+        assert_eq!(click(&stage, 6, "App/"), "C:/Program Files/App/config.json");
+        assert_eq!(click(&stage, 6, "logs"), "logs/app.log");
+        assert_eq!(click(&stage, 6, "example"), "https://example.com/a/b");
+        assert_eq!(click(&stage, 7, "wiki/"), "https://en.wikipedia.org/wiki/Foo_(bar)");
     }
 
     #[test]
