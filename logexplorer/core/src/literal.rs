@@ -32,9 +32,58 @@ pub enum Needle {
         anchor_pos: usize,
         anchor_lo: u8,
         anchor_hi: u8,
+        /// Unicode case folding also lets `k` match the Kelvin sign and `s` the long s; text
+        /// with other letters than ASCII is searched by it when the needle has them
+        unicode: Option<Box<regex::bytes::Regex>>,
     },
     /// Case-insensitive non-ASCII literal, by Unicode simple case folding
-    Fold(regex::bytes::Regex, bool),
+    Fold {
+        regex: Box<regex::bytes::Regex>,
+        has_break: bool,
+        /// Bytes a match can take at most
+        max_len: usize,
+    },
+}
+
+/// Case-insensitive regex of a literal, by Unicode simple case folding
+fn fold_regex(text: &str) -> Option<Box<regex::bytes::Regex>> {
+    regex::bytes::RegexBuilder::new(&regex::escape(text)).case_insensitive(true).build().ok().map(Box::new)
+}
+
+/// The last match of a literal `regex` starting at byte `limit` or earlier. A regex only
+/// searches forward, so windows growing back from `limit` are searched: a match near `limit`
+/// costs little however long `hay` is.
+fn regex_rfind(regex: &regex::bytes::Regex, max_len: usize, hay: &[u8], limit: usize) -> Option<(usize, usize)> {
+    // Matches start before `window_end`
+    let mut window_end = limit.min(hay.len()) + 1;
+    let mut size = 1usize << 12;
+    loop {
+        let mut window_start = window_end.saturating_sub(size);
+        // A match starts at a character
+        while window_start > 0 && (hay[window_start] & 0xC0) == 0x80 {
+            window_start -= 1;
+        }
+        // A literal has no look-around: matches inside the cut are matches of the whole
+        let scope = &hay[..window_end.saturating_add(max_len).min(hay.len())];
+        let mut last = None;
+        let mut from = window_start;
+        while let Some(found) = regex.find_at(scope, from) {
+            if found.start() >= window_end {
+                break;
+            }
+            last = Some((found.start(), found.end()));
+            // Overlapping matches count too, like lastIndexOf
+            from = found.start() + 1;
+            while from < scope.len() && (scope[from] & 0xC0) == 0x80 {
+                from += 1;
+            }
+        }
+        if last.is_some() || window_start == 0 {
+            return last;
+        }
+        window_end = window_start;
+        size = size.saturating_mul(8);
+    }
 }
 
 impl Needle {
@@ -46,17 +95,26 @@ impl Needle {
             return Needle::Exact(Box::new((memmem::Finder::new(text).into_owned(), memmem::FinderRev::new(text).into_owned())), text.len());
         }
         if text.is_ascii() {
-            let needle = text.as_bytes().to_vec();
-            let anchor_pos = needle.iter().enumerate().min_by_key(|&(_, &b)| ascii_anchor_cost(b)).map_or(0, |(idx, _)| idx);
-            let anchor_lo = needle[anchor_pos].to_ascii_lowercase();
-            let anchor_hi = needle[anchor_pos].to_ascii_uppercase();
-            return Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi };
+            return Needle::ascii_fold(text, true);
         }
         let has_break = text.as_bytes().iter().any(|&b| b == b'\n' || b == b'\r');
-        match regex::bytes::RegexBuilder::new(&regex::escape(text)).case_insensitive(true).build() {
-            Ok(regex) => Needle::Fold(regex, has_break),
-            Err(_) => Needle::Exact(Box::new((memmem::Finder::new(text).into_owned(), memmem::FinderRev::new(text).into_owned())), text.len()),
+        match fold_regex(text) {
+            Some(regex) => Needle::Fold { regex, has_break, max_len: text.chars().count() * 4 },
+            None => Needle::Exact(Box::new((memmem::Finder::new(text).into_owned(), memmem::FinderRev::new(text).into_owned())), text.len()),
         }
+    }
+
+    /// Case-insensitive search of an ASCII `text` with a letter; `unicode` keeps the matches of
+    /// Unicode case folding (the Kelvin sign for `k`, the long s for `s`)
+    fn ascii_fold(text: &str, unicode: bool) -> Needle {
+        debug_assert!(text.is_ascii() && !text.is_empty());
+        let needle = text.as_bytes().to_vec();
+        let anchor_pos = needle.iter().enumerate().min_by_key(|&(_, &b)| ascii_anchor_cost(b)).map_or(0, |(idx, _)| idx);
+        let anchor_lo = needle[anchor_pos].to_ascii_lowercase();
+        let anchor_hi = needle[anchor_pos].to_ascii_uppercase();
+        // `k` and `s` are the only ASCII letters with a non-ASCII case variant
+        let unicode = (unicode && needle.iter().any(|byte| matches!(byte.to_ascii_lowercase(), b'k' | b's'))).then(|| fold_regex(text)).flatten();
+        Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi, unicode }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -69,7 +127,7 @@ impl Needle {
             Needle::Empty => false,
             Needle::Exact(finders, _) => finders.0.needle().iter().any(|&b| b == b'\n' || b == b'\r'),
             Needle::AsciiFold { needle, .. } => needle.iter().any(|&b| b == b'\n' || b == b'\r'),
-            Needle::Fold(_, has_break) => *has_break,
+            Needle::Fold { has_break, .. } => *has_break,
         }
     }
 
@@ -82,30 +140,16 @@ impl Needle {
         match self {
             Needle::Empty => Some((from, from)),
             Needle::Exact(finders, length) => finders.0.find(&hay[from..]).map(|at| (from + at, from + at + length)),
-            Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi } => {
-                let len = needle.len();
-                if from.saturating_add(len) > hay.len() {
-                    return None;
+            Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi, unicode } => {
+                let found = ascii_fold_find(needle, *anchor_pos, *anchor_lo, *anchor_hi, hay, from);
+                match unicode {
+                    // A match with a non-ASCII letter starts before the ASCII one only when it
+                    // ends after it, so ASCII text up to its end has no other
+                    Some(regex) if !hay[from..found.map_or(hay.len(), |(_, end)| end)].is_ascii() => regex.find_at(hay, from).map(|found| (found.start(), found.end())),
+                    _ => found,
                 }
-                let anchor = *anchor_pos;
-                let search_end = hay.len() - len + anchor + 1;
-                let mut at = from + anchor;
-                while at < search_end {
-                    let rel = if anchor_lo == anchor_hi {
-                        memchr::memchr(*anchor_lo, &hay[at..search_end])?
-                    } else {
-                        memchr::memchr2(*anchor_lo, *anchor_hi, &hay[at..search_end])?
-                    };
-                    let hit = at + rel;
-                    let pos = hit - anchor;
-                    if hay[pos..pos + len].eq_ignore_ascii_case(needle) {
-                        return Some((pos, pos + len));
-                    }
-                    at = hit + 1;
-                }
-                None
             }
-            Needle::Fold(regex, _) => regex.find_at(hay, from).map(|found| (found.start(), found.end())),
+            Needle::Fold { regex, .. } => regex.find_at(hay, from).map(|found| (found.start(), found.end())),
         }
     }
 
@@ -117,49 +161,60 @@ impl Needle {
                 let end = (limit.saturating_add(*length)).min(hay.len());
                 finders.1.rfind(&hay[..end]).map(|at| (at, at + length))
             }
-            Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi } => {
-                let len = needle.len();
-                if hay.len() < len {
-                    return None;
+            Needle::AsciiFold { needle, anchor_pos, anchor_lo, anchor_hi, unicode } => {
+                let found = ascii_fold_rfind(needle, *anchor_pos, *anchor_lo, *anchor_hi, hay, limit);
+                let Some(regex) = unicode else { return found };
+                // A match with a non-ASCII letter after the ASCII one has that letter before
+                // `limit` plus the needle's length in bytes
+                let max_len = needle.len() * 3;
+                let checked = found.map_or(0, |(start, _)| start)..limit.saturating_add(max_len).min(hay.len());
+                if checked.is_empty() || hay[checked].is_ascii() {
+                    found
+                } else {
+                    regex_rfind(regex, max_len, hay, limit)
                 }
-                let anchor = *anchor_pos;
-                let max_start = limit.min(hay.len() - len);
-                let mut end = max_start + anchor + 1;
-                while end > anchor {
-                    let rel = if anchor_lo == anchor_hi {
-                        memchr::memrchr(*anchor_lo, &hay[anchor..end])?
-                    } else {
-                        memchr::memrchr2(*anchor_lo, *anchor_hi, &hay[anchor..end])?
-                    };
-                    let pos = rel;
-                    if hay[pos..pos + len].eq_ignore_ascii_case(needle) {
-                        return Some((pos, pos + len));
-                    }
-                    end = anchor + rel;
-                }
-                None
             }
-            Needle::Fold(regex, _) => {
-                let mut last = None;
-                let mut from = 0;
-                while let Some(found) = regex.find_at(hay, from) {
-                    if found.start() > limit {
-                        break;
-                    }
-                    last = Some((found.start(), found.end()));
-                    // Overlapping matches count too, like lastIndexOf
-                    from = found.start() + 1;
-                    while from < hay.len() && (hay[from] & 0xC0) == 0x80 {
-                        from += 1;
-                    }
-                    if from > hay.len() {
-                        break;
-                    }
-                }
-                last
-            }
+            Needle::Fold { regex, max_len, .. } => regex_rfind(regex, *max_len, hay, limit),
         }
     }
+}
+
+#[inline]
+fn ascii_fold_find(needle: &[u8], anchor: usize, anchor_lo: u8, anchor_hi: u8, hay: &[u8], from: usize) -> Option<(usize, usize)> {
+    let len = needle.len();
+    if from.saturating_add(len) > hay.len() {
+        return None;
+    }
+    let search_end = hay.len() - len + anchor + 1;
+    let mut at = from + anchor;
+    while at < search_end {
+        let rel = if anchor_lo == anchor_hi { memchr::memchr(anchor_lo, &hay[at..search_end])? } else { memchr::memchr2(anchor_lo, anchor_hi, &hay[at..search_end])? };
+        let hit = at + rel;
+        let pos = hit - anchor;
+        if hay[pos..pos + len].eq_ignore_ascii_case(needle) {
+            return Some((pos, pos + len));
+        }
+        at = hit + 1;
+    }
+    None
+}
+
+fn ascii_fold_rfind(needle: &[u8], anchor: usize, anchor_lo: u8, anchor_hi: u8, hay: &[u8], limit: usize) -> Option<(usize, usize)> {
+    let len = needle.len();
+    if hay.len() < len {
+        return None;
+    }
+    let max_start = limit.min(hay.len() - len);
+    let mut end = max_start + anchor + 1;
+    while end > anchor {
+        let rel = if anchor_lo == anchor_hi { memchr::memrchr(anchor_lo, &hay[anchor..end])? } else { memchr::memrchr2(anchor_lo, anchor_hi, &hay[anchor..end])? };
+        let pos = rel;
+        if hay[pos..pos + len].eq_ignore_ascii_case(needle) {
+            return Some((pos, pos + len));
+        }
+        end = anchor + rel;
+    }
+    None
 }
 
 /// The alternatives of the clauses of a Filter: a row matches when it contains any of them.
@@ -200,7 +255,8 @@ impl LiteralSet {
             (!patterns.is_empty()).then(|| AhoCorasickBuilder::new().match_kind(MatchKind::Standard).ascii_case_insensitive(fold).build(patterns).ok()).flatten()
         };
         let single = (exact.len() == 1).then(|| memmem::Finder::new(exact[0]).into_owned());
-        let single_ascii_fold = (ascii_fold.len() == 1).then(|| Needle::new(ascii_fold[0], false));
+        // Like the set of several alternatives, by ASCII case only
+        let single_ascii_fold = (ascii_fold.len() == 1).then(|| Needle::ascii_fold(ascii_fold[0], false));
         LiteralSet {
             clauses: count,
             exact: if single.is_some() { None } else { build(&exact, false) },
@@ -306,6 +362,35 @@ mod tests {
         assert_eq!(mid_anchor.rfind_from(b"xxstatus=1 yySTATUS=2", 21), Some((13, 20)));
         assert_eq!(mid_anchor.rfind_from(b"xxstatus=1 yySTATUS=2", 12), Some((2, 9)));
         assert_eq!(mid_anchor.rfind_from(b"xxstatus=1 yySTATUS=2", 1), None);
+    }
+
+    #[test]
+    fn an_ascii_needle_without_case_keeps_the_matches_of_unicode_folding() {
+        // `k` matches the Kelvin sign, `s` the long s
+        let kelvin = Needle::new("kelvin", false);
+        let hay = "a \u{212A}elvin b".as_bytes();
+        assert_eq!(kelvin.find_at(hay, 0), Some((2, 10)));
+        assert_eq!(kelvin.rfind_from(hay, 99), Some((2, 10)));
+        let something = Needle::new("something", false);
+        let hay = "x \u{17F}omething, then SOMETHING".as_bytes();
+        assert_eq!(something.find_at(hay, 0), Some((2, 12)));
+        assert_eq!(something.find_at(hay, 3), Some((19, 28)));
+        assert_eq!(something.rfind_from(hay, 99), Some((19, 28)));
+        assert_eq!(something.rfind_from(hay, 18), Some((2, 12)));
+        assert_eq!(something.rfind_from(hay, 1), None);
+    }
+
+    #[test]
+    fn a_unicode_needle_finds_backward_far_from_the_limit() {
+        let fold = Needle::new("Žlu", false);
+        let mut long = "žlu ".to_string();
+        long.push_str(&"ř".repeat(50_000));
+        let tail = long.len();
+        long.push_str(" ŽLU");
+        assert_eq!(fold.rfind_from(long.as_bytes(), usize::MAX - 64), Some((tail + 1, tail + 5)));
+        assert_eq!(fold.rfind_from(long.as_bytes(), tail), Some((0, 4)));
+        assert_eq!(fold.rfind_from(long.as_bytes(), 0), Some((0, 4)));
+        assert_eq!(fold.rfind_from(&long.as_bytes()[1..], usize::MAX - 64), Some((tail, tail + 4)));
     }
 
     #[test]

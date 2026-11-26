@@ -6,7 +6,7 @@ use super::{par_chunks, trim_span};
 use crate::cancel::{Cancel, OpError, OpResult};
 use crate::literal::Needle;
 use crate::operator::{ExtractMode, ExtractOp, ExtractScope, RowMode};
-use crate::stage::{EolKind, OutRows, Rows, Stage};
+use crate::stage::{EolKind, OutRows, Rows, Stage, SPARSE_WALK_ROWS};
 use crate::text::{as_str, char_len, cols_to_bytes, Span};
 use regex_syntax::hir::{Class, Hir, HirKind};
 use std::ops::Range;
@@ -346,25 +346,56 @@ fn apply_regex(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<OutRo
     if op.all_matches {
         return regex_rows(stage, op, &pattern, 0..stage.len(), cancel);
     }
-    // Only the first match of the whole view
+    // Only the first match of the whole view: the walk stops at it
     let mut output = Output::new(stage, op);
     let mut locations = pattern.new_locations();
-    let mut matched = false;
-    stage.try_for_each_row(0..stage.len(), |row, span, line| {
-        if matched {
-            return Ok(());
-        }
+    walk_from(stage, 0, |row, span, line| {
         if row % 8192 == 0 {
-            cancel.check()?;
+            cancel.check().map_err(Stop::Failed)?;
         }
-        pattern.each_match(as_str(line), false, &mut locations, |group| {
-            matched = true;
-            if let Some((start, end)) = group {
-                output.add(span.sub(start, end), row);
-            }
-        })
+        let mut matched = false;
+        pattern
+            .each_match(as_str(line), false, &mut locations, |group| {
+                matched = true;
+                if let Some((start, end)) = group {
+                    output.add(span.sub(start, end), row);
+                }
+            })
+            .map_err(Stop::Failed)?;
+        if matched {
+            Err(Stop::Found)
+        } else {
+            Ok(())
+        }
     })?;
     Ok(output.into_out_rows())
+}
+
+/// Ends a walk over the rows: at what it looks for, or on an error
+enum Stop {
+    Found,
+    Failed(OpError),
+}
+
+/// Calls `visit` on the rows from `first` on until it stops. The rows near `first` are read
+/// before a longer walk builds the dense line index of a filtered view: a match there costs
+/// neither the time nor the memory of the index.
+fn walk_from(stage: &Stage, first: usize, mut visit: impl FnMut(usize, Span, &[u8]) -> Result<(), Stop>) -> OpResult<()> {
+    let rows = stage.len();
+    let first = first.min(rows);
+    let near = (first + SPARSE_WALK_ROWS - 1).min(rows);
+    match stage.try_for_each_row(first..near, &mut visit).and_then(|()| stage.try_for_each_row(near..rows, &mut visit)) {
+        Err(Stop::Failed(error)) => Err(error),
+        Ok(()) | Err(Stop::Found) => Ok(()),
+    }
+}
+
+/// True when the Extract looks for the first match of the whole view only: it reads the rows
+/// one after another from the top, may stop at the first of them, and builds a dense line index
+/// only when its walk gets long. All matches read every row (Between in many short walks), so
+/// they need the index from the start.
+pub(crate) fn walks_from_top(op: &ExtractOp) -> bool {
+    op.scope != ExtractScope::Line && !op.all_matches && op.mode != ExtractMode::Column
 }
 
 // --- between two texts ------------------------------------------------------------------------
@@ -402,15 +433,20 @@ fn between_in_row(output: &mut Output, row: usize, span: Span, line: &[u8], star
 
 /// The first match of `needle` at or after `from`, searching on through the rows
 fn find_across(stage: &Stage, needle: &Needle, from: (usize, usize), cancel: &Cancel) -> OpResult<Option<(usize, usize, usize)>> {
-    for row in from.0..stage.len() {
+    let mut found = None;
+    walk_from(stage, from.0, |row, _, line| {
         if row % 8192 == 0 {
-            cancel.check()?;
+            cancel.check().map_err(Stop::Failed)?;
         }
-        if let Some((start, end)) = needle.find_at(stage.line_bytes(row), if row == from.0 { from.1 } else { 0 }) {
-            return Ok(Some((row, start, end)));
+        match needle.find_at(line, if row == from.0 { from.1 } else { 0 }) {
+            Some((start, end)) => {
+                found = Some((row, start, end));
+                Err(Stop::Found)
+            }
+            None => Ok(()),
         }
-    }
-    Ok(None)
+    })?;
+    Ok(found)
 }
 
 fn between_whole(stage: &Stage, op: &ExtractOp, start: &Needle, end: &Needle, cancel: &Cancel) -> OpResult<OutRows> {
@@ -557,6 +593,68 @@ mod tests {
         assert_eq!(run(&stage, &op), ["95.6", "48.6", "78.0"]);
         assert_eq!(run(&stage, &ExtractOp { skip_empty: false, ..op.clone() }), ["95.6", "48.6", "", "78.0"]);
         assert_eq!(run(&stage, &ExtractOp { row_mode: RowMode::Range, from_row: 2, to_row: 3, ..op }), ["48.6"]);
+    }
+
+    /// Every other row of a file of its own, as large as a filtered view that gets its line
+    /// index made dense before an operation, and the line index of the file
+    fn large_filtered_view() -> (std::sync::Arc<Stage>, std::sync::Arc<crate::stage::LineIndex>) {
+        use crate::stage::{next_stage_id, RowIds};
+        use std::sync::Arc;
+        // More lines than a loaded file gets a dense index for at once
+        let text: String = (0..100_000).map(|row| format!("row {row} id={row}\n")).collect();
+        let source = crate::load::source_from_bytes(text.into_bytes(), "big", "big").unwrap().stage;
+        let Rows::Lines(base) = &source.rows else { panic!("a loaded file is its lines") };
+        // Made like Filter makes it: `derive_rows` would build the dense index in its debug
+        // check of the longest row
+        let rows: Arc<Vec<u32>> = Arc::new((0..40_000u32).step_by(2).collect());
+        let view = Stage {
+            id: next_stage_id(),
+            label: "Filter",
+            bufs: source.bufs.clone(),
+            rows: Rows::Indexed { base: base.clone(), rows: rows.clone() },
+            src: source.src.clone(),
+            row_ids: RowIds::List(rows),
+            sources: source.sources.clone(),
+            max_cols: source.max_cols,
+            own_bytes: 0,
+            diff_meta: None,
+        };
+        assert!(view.len() >= 16_384);
+        assert_eq!(base.heap_bytes(), base.checkpoints.heap_bytes());
+        (Arc::new(view), base.clone())
+    }
+
+    fn apply_op(stage: &std::sync::Arc<Stage>, op: ExtractOp) -> Vec<String> {
+        let mut operator = create_default(1, OpType::Extract, None);
+        operator.kind = OpKind::Extract(op);
+        lines_of(&crate::ops::apply(stage, &operator, &Cancel::new()).unwrap())
+    }
+
+    #[test]
+    fn a_first_match_near_the_top_of_a_filtered_view_needs_no_dense_line_index() {
+        let (filtered, base) = large_filtered_view();
+        let sparse = base.heap_bytes();
+        assert_eq!(apply_op(&filtered, ExtractOp { pattern: r"id=(\d+)".into(), all_matches: false, ..extract() }), ["0"]);
+        let between = ExtractOp { mode: ExtractMode::Between, start_anchor: "row ".into(), end_anchor: " id".into(), all_matches: false, ..extract() };
+        assert_eq!(apply_op(&filtered, between.clone()), ["0"]);
+        assert_eq!(base.heap_bytes(), sparse);
+        // Far down, the walk goes on through the dense index
+        assert_eq!(apply_op(&filtered, ExtractOp { pattern: r"id=(39998)".into(), all_matches: false, ..extract() }), ["39998"]);
+        assert_eq!(apply_op(&filtered, ExtractOp { start_anchor: "row 39998 ".into(), end_anchor: "=".into(), ..between }), ["id"]);
+        assert!(base.heap_bytes() > sparse);
+    }
+
+    #[test]
+    fn all_matches_between_two_texts_read_a_filtered_view_through_the_dense_index() {
+        // A match in every row: each search ends after a row, so only the index built before
+        // the operation saves reading every row from its checkpoint
+        let (filtered, base) = large_filtered_view();
+        let sparse = base.heap_bytes();
+        let between = ExtractOp { mode: ExtractMode::Between, start_anchor: "row ".into(), end_anchor: " id".into(), ..extract() };
+        let values = apply_op(&filtered, between);
+        assert_eq!(values.len(), filtered.len());
+        assert_eq!((values[0].as_str(), values[19_999].as_str()), ("0", "39998"));
+        assert!(base.heap_bytes() > sparse);
     }
 
     #[test]

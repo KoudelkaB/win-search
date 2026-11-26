@@ -122,7 +122,7 @@ impl StageCache {
         self.entries.values().map(|entry| entry.stage.own_bytes).sum()
     }
 
-    /// Adaptive cap: half the source clamped to 128-512 MiB, and never more than a quarter
+    /// Adaptive cap: half the source clamped to 256-512 MiB, and never more than a quarter
     /// of currently available RAM (with a 64 MiB floor so at least a few stages stay cached).
     pub fn set_source_bytes(&mut self, bytes: usize) {
         self.max_bytes = cache_budget(bytes, available_memory_bytes());
@@ -156,42 +156,49 @@ pub fn active_operators(operators: &[Operator], selected: Option<usize>) -> Vec<
     }
 }
 
+/// Cache key, parent key and signature of every stage of the chain
+fn chain_links(raw: &Stage, chain: &[&Operator]) -> Vec<(ChainKey, ChainKey, String)> {
+    let mut parent = raw.id;
+    chain
+        .iter()
+        .map(|operator| {
+            let signature = operator.signature();
+            let key = chain_key(parent, &signature);
+            let link = (key, parent, signature);
+            parent = key;
+            link
+        })
+        .collect()
+}
+
+/// The deepest computed stage of the chain and the number of operations it covers. Looks from
+/// the end: a stage stays usable when the cache dropped one of the stages before it.
+fn deepest_cached(cache: &mut StageCache, raw: &Arc<Stage>, links: &[(ChainKey, ChainKey, String)]) -> (Arc<Stage>, usize) {
+    for (depth, (key, parent, signature)) in links.iter().enumerate().rev() {
+        if let Some(found) = cache.get(*key, *parent, signature) {
+            return (found, depth + 1);
+        }
+    }
+    (raw.clone(), 0)
+}
+
 /// The deepest stage of the chain that is already computed, and whether it is the last one
 pub fn cached_stage(cache: &Mutex<StageCache>, raw: &Arc<Stage>, chain: &[&Operator]) -> (Arc<Stage>, bool) {
-    let mut cache = cache.lock().unwrap();
-    let mut stage = raw.clone();
-    let mut key = raw.id;
-    for operator in chain {
-        let signature = operator.signature();
-        let next = chain_key(key, &signature);
-        match cache.get(next, key, &signature) {
-            Some(found) => stage = found,
-            None => return (stage, false),
-        }
-        key = next;
-    }
-    (stage, true)
+    let links = chain_links(raw, chain);
+    let (stage, depth) = deepest_cached(&mut cache.lock().unwrap(), raw, &links);
+    (stage, depth == links.len())
 }
 
 /// The stage after the whole chain; every new stage on the way is cached. `on_step` is told
 /// the operation being applied.
 pub fn compute(cache: &Mutex<StageCache>, raw: &Arc<Stage>, chain: &[&Operator], cancel: &Cancel, on_step: &dyn Fn(&Operator)) -> OpResult<Arc<Stage>> {
-    let mut stage = raw.clone();
-    let mut key = raw.id;
-    for operator in chain {
-        let signature = operator.signature();
-        let next = chain_key(key, &signature);
-        let found = cache.lock().unwrap().get(next, key, &signature);
-        stage = match found {
-            Some(found) => found,
-            None => {
-                on_step(operator);
-                let computed = Arc::new(ops::apply(&stage, operator, cancel)?);
-                cache.lock().unwrap().insert(next, key, signature, computed.clone());
-                computed
-            }
-        };
-        key = next;
+    let links = chain_links(raw, chain);
+    let (mut stage, depth) = deepest_cached(&mut cache.lock().unwrap(), raw, &links);
+    for (operator, (key, parent, signature)) in chain.iter().zip(links).skip(depth) {
+        on_step(operator);
+        let computed = Arc::new(ops::apply(&stage, operator, cancel)?);
+        cache.lock().unwrap().insert(key, parent, signature, computed.clone());
+        stage = computed;
     }
     Ok(stage)
 }
@@ -250,6 +257,27 @@ mod tests {
         let (partial, complete) = cached_stage(&cache, &raw, &chain);
         assert!(!complete);
         assert_eq!(lines_of(&partial), ["a1", "a2"]);
+    }
+
+    #[test]
+    fn the_last_stage_is_found_when_a_stage_before_it_was_dropped() {
+        let raw = Arc::new(stage_of(&["a1", "a2", "b1", "b2"]));
+        // A budget too small for two stages: computing the second one drops the first
+        let cache = Mutex::new(StageCache { max_bytes: 0, ..StageCache::default() });
+        let operators = vec![filter(1, "a"), filter(2, "1")];
+        let steps = AtomicUsize::new(0);
+        let count = |_: &Operator| {
+            steps.fetch_add(1, Ordering::Relaxed);
+        };
+        let chain = active_operators(&operators, Some(1));
+        assert_eq!(lines_of(&compute(&cache, &raw, &chain, &Cancel::new(), &count).unwrap()), ["a1"]);
+        assert_eq!(cache.lock().unwrap().len(), 1);
+        let (stage, complete) = cached_stage(&cache, &raw, &chain);
+        assert!(complete);
+        assert_eq!(lines_of(&stage), ["a1"]);
+        // Nothing is computed again
+        assert_eq!(lines_of(&compute(&cache, &raw, &chain, &Cancel::new(), &count).unwrap()), ["a1"]);
+        assert_eq!(steps.load(Ordering::Relaxed), 2);
     }
 
     #[test]

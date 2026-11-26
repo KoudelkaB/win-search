@@ -93,6 +93,10 @@ impl Starts {
 /// Number of consecutive lines represented by one checkpoint in [`LineIndex`].
 pub const LINE_INDEX_STRIDE: usize = 64;
 
+/// A walk over fewer rows of an indexed stage reads them through the sparse checkpoints; a
+/// longer one builds the dense line index of the source first.
+pub const SPARSE_WALK_ROWS: usize = 1024;
+
 /// Line-ending structure of the region indexed by a [`LineIndex`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EolKind {
@@ -554,7 +558,7 @@ impl Stage {
             }
             Rows::Indexed { base, rows } => {
                 let bytes = self.bufs[base.buf as usize].bytes();
-                if range.len() >= 1024 {
+                if range.len() >= SPARSE_WALK_ROWS {
                     base.ensure_dense(bytes);
                 }
                 let buf = base.buf;
@@ -589,7 +593,7 @@ impl Stage {
             }
             Rows::Indexed { base, rows } => {
                 let bytes = self.bufs[base.buf as usize].bytes();
-                if range.len() >= 1024 {
+                if range.len() >= SPARSE_WALK_ROWS {
                     base.ensure_dense(bytes);
                 }
                 let buf = base.buf;

@@ -128,7 +128,8 @@ impl Context<'_> {
         out.arena.extend_from_slice(&line.as_bytes()[end..]);
         let new_len = out.arena.len() - offset;
         let orig_ascii = self.stage.bufs[span.buf() as usize].ascii;
-        let line_ascii = orig_ascii && replacement.is_ascii();
+        // The buffer's flag covers all of its text: an ASCII row of a non-ASCII file stays ASCII
+        let line_ascii = (orig_ascii && replacement.is_ascii()) || out.arena[offset..].is_ascii();
         if !line_ascii {
             out.arena_non_ascii = true;
         }
@@ -309,6 +310,15 @@ mod tests {
         let mut left = diff(5, 4, ValueType::Number);
         left.output_extend = Some("left".into());
         assert_eq!(lines_of(&apply(&stage, &left, &Cancel::new()).unwrap()), ["afr  95.6%", "afr  -0.4%", "amh -46.6%"]);
+    }
+
+    #[test]
+    fn ascii_rows_written_from_a_file_with_other_letters_stay_ascii() {
+        let stage = arc(&["a 1", "b 4", "ř"]);
+        assert!(!stage.bufs[0].ascii);
+        let out = apply(&stage, &diff(2, 1, ValueType::Number), &Cancel::new()).unwrap();
+        assert_eq!(lines_of(&out), ["a  1", "b  3", "ř"]);
+        assert!(out.bufs.last().unwrap().ascii);
     }
 
     #[test]

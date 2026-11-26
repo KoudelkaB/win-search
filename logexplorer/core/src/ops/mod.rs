@@ -18,10 +18,17 @@ use std::ops::Range;
 
 /// The stage after `operator`.
 pub fn apply(stage: &std::sync::Arc<Stage>, operator: &Operator, cancel: &Cancel) -> OpResult<Stage> {
+    // A canceled computation neither prepares anything nor gives a result to cache
+    cancel.check()?;
+    // Every thread of this operation converts local times with the time zone in effect now
+    crate::typed::refresh_local_offsets();
     // Materialize a dense line table before parallel workers enter `for_each_row` on a large
     // `Rows::Indexed` stage, so `OnceLock` never stalls rayon workers during `build_dense`.
-    if matches!(stage.rows, crate::stage::Rows::Indexed { .. }) && stage.len() >= 16_384 {
+    // An Extract that walks from the top on this thread builds it only if its walk gets long.
+    let walks_from_top = matches!(&operator.kind, OpKind::Extract(op) if extract::walks_from_top(op));
+    if !walks_from_top && matches!(stage.rows, crate::stage::Rows::Indexed { .. }) && stage.len() >= 16_384 {
         stage.ensure_random_access();
+        cancel.check()?;
     }
     match &operator.kind {
         OpKind::Filter(op) => filter::apply(stage, op, cancel),

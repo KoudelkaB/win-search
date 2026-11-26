@@ -27,43 +27,52 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
                 let mut overflow = false;
                 stage.for_each_row(range, |_, span, line| {
                     let Some(first) = finder.find(line) else {
-                        let cols = if span.is_empty() {
-                            0
-                        } else if all_ascii || stage.bufs[span.buf() as usize].ascii {
-                            span.len() as u64
-                        } else {
-                            char_len(line) as u64
-                        };
-                        out.max_cols = out.max_cols.max(cols);
-                        out.spans.push(span);
+                        push_shared(&mut out, stage, span, line, all_ascii);
                         return;
                     };
                     let start = out.arena.len();
-                    out.arena.extend_from_slice(&line[..first]);
-                    out.arena.extend_from_slice(replacement);
-                    let mut copied = first + search_length;
-                    while let Some(rel) = finder.find(&line[copied..]) {
-                        let found = copied + rel;
-                        out.arena.extend_from_slice(&line[copied..found]);
-                        out.arena.extend_from_slice(replacement);
-                        copied = found + search_length;
-                    }
-                    out.arena.extend_from_slice(&line[copied..]);
-                    let len = out.arena.len() - start;
-                    overflow |= len > u32::MAX as usize;
-                    let cols = if all_ascii {
-                        len as u64
-                    } else {
-                        let slice = &out.arena[start..];
-                        if slice.is_ascii() {
-                            len as u64
-                        } else {
-                            out.arena_non_ascii = true;
-                            char_len(slice) as u64
+                    if replacement.is_empty() {
+                        // Deleting: a row left with a single piece of its text (a prefix or a
+                        // suffix removed) stays a span of it, like the general path keeps it
+                        let mut kept: Option<(usize, usize)> = None;
+                        let mut spilled = false;
+                        let mut copied = 0;
+                        let mut next = Some(first);
+                        loop {
+                            let end = next.unwrap_or(line.len());
+                            if end > copied {
+                                if spilled {
+                                    out.arena.extend_from_slice(&line[copied..end]);
+                                } else if let Some((kept_start, kept_end)) = kept.take() {
+                                    out.arena.extend_from_slice(&line[kept_start..kept_end]);
+                                    out.arena.extend_from_slice(&line[copied..end]);
+                                    spilled = true;
+                                } else {
+                                    kept = Some((copied, end));
+                                }
+                            }
+                            let Some(found) = next else { break };
+                            copied = found + search_length;
+                            next = finder.find(&line[copied..]).map(|rel| copied + rel);
                         }
-                    };
-                    out.max_cols = out.max_cols.max(cols);
-                    out.spans.push(Span::new(ARENA, start as u64, len as u32));
+                        if !spilled {
+                            let (piece_start, piece_end) = kept.unwrap_or((0, 0));
+                            push_shared(&mut out, stage, span.sub(piece_start, piece_end), &line[piece_start..piece_end], all_ascii);
+                            return;
+                        }
+                    } else {
+                        out.arena.extend_from_slice(&line[..first]);
+                        out.arena.extend_from_slice(replacement);
+                        let mut copied = first + search_length;
+                        while let Some(rel) = finder.find(&line[copied..]) {
+                            let found = copied + rel;
+                            out.arena.extend_from_slice(&line[copied..found]);
+                            out.arena.extend_from_slice(replacement);
+                            copied = found + search_length;
+                        }
+                        out.arena.extend_from_slice(&line[copied..]);
+                    }
+                    overflow |= !push_written(&mut out, start, all_ascii);
                 });
                 if overflow {
                     return Err(OpError::msg("A row of the result is longer than 4 GiB."));
@@ -123,6 +132,41 @@ pub fn apply(stage: &Stage, op: &ReplaceOp, cancel: &Cancel) -> OpResult<Stage> 
     Ok(stage.derive("Replace", merge_chunks(vec![assembler.finish()?], true, stage.bufs.len() as u16)?))
 }
 
+/// Keeps `piece` of an existing row as the row: nothing is copied
+#[inline]
+fn push_shared(out: &mut Chunk, stage: &Stage, piece: Span, text: &[u8], all_ascii: bool) {
+    let cols = if piece.is_empty() {
+        0
+    } else if all_ascii || stage.bufs[piece.buf() as usize].ascii {
+        piece.len() as u64
+    } else {
+        char_len(text) as u64
+    };
+    out.max_cols = out.max_cols.max(cols);
+    out.spans.push(piece);
+}
+
+/// Ends the row written to the arena from `start`; `false` when it is too long for a span.
+#[inline]
+fn push_written(out: &mut Chunk, start: usize, all_ascii: bool) -> bool {
+    let len = out.arena.len() - start;
+    if len == 0 {
+        // An empty row points into no buffer: an arena that stays empty is never added
+        out.spans.push(Span::EMPTY);
+        return true;
+    }
+    let slice = &out.arena[start..];
+    let cols = if all_ascii || slice.is_ascii() {
+        len as u64
+    } else {
+        out.arena_non_ascii = true;
+        char_len(slice) as u64
+    };
+    out.max_cols = out.max_cols.max(cols);
+    out.spans.push(Span::new(ARENA, start as u64, len as u32));
+    len <= u32::MAX as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +190,32 @@ mod tests {
     fn an_empty_replacement_deletes() {
         let stage = stage_of(&["a--b--c", "--"]);
         assert_eq!(lines_of(&replace(&stage, "--", "")), ["abc", ""]);
+    }
+
+    #[test]
+    fn rows_deleted_entirely_are_empty_rows_of_no_new_text() {
+        let stage = stage_of(&["abc", "abc"]);
+        let out = replace(&stage, "abc", "");
+        assert_eq!(lines_of(&out), ["", ""]);
+        assert_eq!(out.bufs.len(), stage.bufs.len());
+        let out = replace(&stage_of(&["abcabc", "x"]), "abc", "");
+        assert_eq!(lines_of(&out), ["", "x"]);
+    }
+
+    #[test]
+    fn a_removed_prefix_or_suffix_leaves_the_rest_of_the_row_shared() {
+        let stage = stage_of(&["INFO start", "INFO INFO twice", "plain", "end INFO"]);
+        let out = replace(&stage, "INFO ", "");
+        assert_eq!(lines_of(&out), ["start", "twice", "plain", "end INFO"]);
+        assert_eq!(out.bufs.len(), stage.bufs.len());
+        let suffixed = stage_of(&["start INFO", "plain", "end INFO"]);
+        let out = replace(&suffixed, " INFO", "");
+        assert_eq!(lines_of(&out), ["start", "plain", "end"]);
+        assert_eq!(out.bufs.len(), suffixed.bufs.len());
+        // Pieces from both sides of a match are written out
+        let out = replace(&stage_of(&["a INFO b"]), "INFO ", "");
+        assert_eq!(lines_of(&out), ["a b"]);
+        assert_eq!(out.bufs.last().unwrap().len(), 3);
     }
 
     #[test]

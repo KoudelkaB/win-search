@@ -3,6 +3,7 @@
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone};
 use std::cell::Cell;
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ValueType {
@@ -459,9 +460,20 @@ enum HourOffset {
 }
 
 const TZ_CACHE_SLOTS: usize = 16;
+const TZ_CACHE_EMPTY: [(i64, HourOffset); TZ_CACHE_SLOTS] = [(i64::MIN, HourOffset::Transition); TZ_CACHE_SLOTS];
+
+/// Bumped when the remembered offsets may be out of date (the time zone may have changed)
+static TZ_GENERATION: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
-    static LOCAL_TZ_CACHE: Cell<[(i64, HourOffset); TZ_CACHE_SLOTS]> = const { Cell::new([(i64::MIN, HourOffset::Transition); TZ_CACHE_SLOTS]) };
+    /// Offsets of recently seen local hours, valid for one [`TZ_GENERATION`]
+    static LOCAL_TZ_CACHE: Cell<(u32, [(i64, HourOffset); TZ_CACHE_SLOTS])> = const { Cell::new((0, TZ_CACHE_EMPTY)) };
+}
+
+/// Forgets the UTC offsets every thread remembers for local hours. Called when an operation
+/// starts, so all its threads convert local times with the time zone in effect then.
+pub fn refresh_local_offsets() {
+    TZ_GENERATION.fetch_add(1, AtomicOrdering::Relaxed);
 }
 
 fn compute_hour_offset(date: NaiveDate, hours: u32) -> HourOffset {
@@ -491,14 +503,18 @@ fn compute_hour_offset(date: NaiveDate, hours: u32) -> HourOffset {
 fn cached_hour_offset(date: NaiveDate, hours: u32) -> HourOffset {
     let key = (date.num_days_from_ce() as i64) * 24 + hours as i64;
     let slot = (key as usize) & (TZ_CACHE_SLOTS - 1);
+    // Workers start after the bump that begins an operation, so they see it
+    let generation = TZ_GENERATION.load(AtomicOrdering::Relaxed);
     LOCAL_TZ_CACHE.with(|cache| {
-        let mut entries = cache.get();
-        if entries[slot].0 == key {
+        let (cached_generation, mut entries) = cache.get();
+        if cached_generation != generation {
+            entries = TZ_CACHE_EMPTY;
+        } else if entries[slot].0 == key {
             return entries[slot].1;
         }
         let computed = compute_hour_offset(date, hours);
         entries[slot] = (key, computed);
-        cache.set(entries);
+        cache.set((generation, entries));
         computed
     })
 }
@@ -919,8 +935,11 @@ pub fn infer_value_type(selected: &str) -> ValueType {
         return ValueType::String;
     }
     if parse_number(selected).is_some() {
-        ValueType::Number
-    } else if parse_date_time(selected).is_some() {
+        return ValueType::Number;
+    }
+    // Runs outside any operation, so nothing else refreshed the offsets for the time zone now
+    refresh_local_offsets();
+    if parse_date_time(selected).is_some() {
         ValueType::DateTime
     } else if parse_time_span(selected).is_some() {
         ValueType::TimeSpan
