@@ -91,7 +91,7 @@ namespace search.Tests
                 File.SetUnixFileMode(sudo, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
                 var command = Shell.RootShell("Press Enter to close.");
 
-                var output = Run(command.Skip(1), folder + ":/usr/bin:/bin", "\n");
+                var output = Run(command.Skip(1), folder + ":/usr/bin:/bin", allowed ? "" : "\n");
 
                 Assert.Equal(allowed ? "root shell\n" : "\nPress Enter to close. ", output);
             }
