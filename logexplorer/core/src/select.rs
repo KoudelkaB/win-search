@@ -945,7 +945,8 @@ impl<'a> Window<'a> {
 
 fn is_angle_tag_content(content: &[char]) -> bool {
     let text: String = content.iter().collect();
-    let trimmed = text.trim();
+    // A space after `<` makes it a comparison (`count < limit`), not a tag
+    let trimmed = text.trim_end();
     if trimmed.is_empty() {
         return false;
     }
@@ -1115,6 +1116,15 @@ impl ClickSelector {
         let (index, col) = window.local(point)?;
         let clicked = window.offset_of(point)?;
         let current = current.filter(|_| !extend).map(Selection::normalized);
+        let operator = window.at(clicked).is_some_and(|ch| "=!<>".contains(ch));
+        // A second click on the operator of a log field takes the expression it starts (`a=b + 1`),
+        // and a further one keeps it unless a structure around it grows it. In a tag the attribute
+        // grows to the tag instead.
+        let log_operator = current.filter(|_| operator && !shrink && !window.angle_pairs().iter().any(|pair| pair.start < clicked && clicked < pair.end));
+        if let Some(selection) = log_operator.and_then(|current| expression::grown(stage, point, current)) {
+            return Some((selection.start, selection.end));
+        }
+        let keep = log_operator.filter(|current| expression::is_grown(stage, point, *current));
         let local = current.and_then(|selection| window.local_selection(selection));
         let mut growth = None;
         if let Some(current) = &local {
@@ -1137,6 +1147,9 @@ impl ClickSelector {
                 return Some((selection.start, selection.end));
             }
         }
+        if let Some(kept) = keep {
+            return Some((kept.start, kept.end));
+        }
         // A key colon follows the key's closing quote. Other colons, such as in times, need no scan.
         let after_key = || window.text[..clicked].iter().rev().find(|ch| !ch.is_whitespace()).is_some_and(|ch| is_quote(*ch));
         if ch == Some(':') && after_key() {
@@ -1155,7 +1168,7 @@ impl ClickSelector {
                 return Some((attribute.start, attribute.end));
             }
         }
-        if ch.is_some_and(|ch| "=!<>".contains(ch)) {
+        if operator {
             if let Some(selection) = expression::at(stage, point) {
                 return Some((selection.start, selection.end));
             }
@@ -1549,12 +1562,68 @@ mod tests {
     }
 
     #[test]
-    fn an_expression_in_a_log_can_continue_past_its_first_term() {
-        let arithmetic = "2026-11-11 23:24:28 [debug] evaluation a=b + 1";
-        let call_chain = "2026-11-11 23:24:28 [debug] total=items";
-        let stage = stage_of(&[arithmetic, call_chain, "    .sum();"]);
-        assert_eq!(click(&stage, 0, "=b"), arithmetic);
-        assert_eq!(click(&stage, 1, "=items"), format!("{call_chain}\n    .sum()"));
+    fn a_log_field_grows_to_its_expression_on_the_next_click() {
+        let stage = stage_of(&[
+            "2026-11-11 23:24:28 [debug] evaluation a=b + 1",
+            "2026-11-11 23:24:28 [debug] total=items",
+            "    .sum();",
+            "2026-11-11 23:24:28 [debug] retry=3 limit=5",
+            "2026-11-11 23:24:28 [debug] a=b + 1 retry=3 limit=5",
+            "2026-11-11 23:24:28 [debug] ok=count < limit",
+            "2026-11-11 23:24:28 [debug] ok=count >= limit next=1",
+            "2026-11-11 23:24:28 [debug] ok=count != 0",
+            "2026-11-11 23:24:28 [debug] <input type=checkbox />",
+            "2026-11-11 23:24:28 [debug] ok=count>limit && ready",
+            "2026-11-11 23:24:28 [debug] a=b + compute(1, retry=3) next=1",
+            "2026-11-11 23:24:28 [debug] ok=count + offset==0",
+            "2026-11-11 23:24:28 [debug] chain=x => y=>x+y",
+        ]);
+        assert_eq!(growth(&stage, 0, "=b", 3), ["a=b", "a=b + 1", "a=b + 1"]);
+        assert_eq!(growth(&stage, 1, "=items", 2), ["total=items", "total=items\n    .sum()"]);
+        // A clear field stays as it is
+        assert_eq!(growth(&stage, 3, "=3", 2), ["retry=3", "retry=3"]);
+        assert_eq!(growth(&stage, 4, "=b", 2), ["a=b", "a=b + 1"]);
+        assert_eq!(growth(&stage, 5, "=count", 2), ["ok=count", "ok=count < limit"]);
+        assert_eq!(growth(&stage, 6, "=count", 2), ["ok=count", "ok=count >= limit"]);
+        assert_eq!(growth(&stage, 7, "=count", 2), ["ok=count", "ok=count != 0"]);
+        assert_eq!(growth(&stage, 8, "=checkbox", 2), ["type=checkbox", "input type=checkbox /"]);
+        assert_eq!(growth(&stage, 9, "=count", 2), ["ok=count>limit", "ok=count>limit && ready"]);
+        assert_eq!(growth(&stage, 10, "=b", 2), ["a=b", "a=b + compute(1, retry=3)"]);
+        assert_eq!(growth(&stage, 11, "=count", 2), ["ok=count", "ok=count + offset==0"]);
+        assert_eq!(growth(&stage, 12, "=x", 2), ["chain=x", "chain=x => y=>x+y"]);
+    }
+
+    #[test]
+    fn generic_types_can_continue_an_expression_on_the_next_rows() {
+        let stage = stage_of(&[
+            "let values = HashMap::<",
+            "    String,",
+            "    usize,",
+            ">::new();",
+            "let ok = x<5 && y",
+            "next();",
+            "var d = new Dictionary<string,",
+            "    int",
+            ">();",
+            "let m = HashMap::<String,",
+            "    usize",
+            ">::new();",
+        ]);
+        assert_eq!(click(&stage, 0, "= Hash"), "let values = HashMap::<\n    String,\n    usize,\n>::new()");
+        // An unclosed comparison does not take the next rows
+        assert_eq!(click(&stage, 4, "= x"), "let ok = x<5 && y");
+        assert_eq!(click(&stage, 6, "= new"), "var d = new Dictionary<string,\n    int\n>()");
+        assert_eq!(click(&stage, 9, "= Hash"), "let m = HashMap::<String,\n    usize\n>::new()");
+    }
+
+    #[test]
+    fn an_equals_sign_in_a_log_message_takes_the_words_after_a_colon() {
+        let row = "2025-11-18 10:37:01, Info                  Source OS: Host SKU Info: Edition = 'Professional', Edition Type = 'Client', Installation Type = 'Client'";
+        let stage = stage_of(&[row, "let x: u32 = 5;"]);
+        assert_eq!(click(&stage, 0, "= 'Pro"), "Edition = 'Professional'");
+        assert_eq!(click(&stage, 0, "= 'Client', I"), "Edition Type = 'Client'");
+        // Not in code
+        assert_eq!(click(&stage, 1, "= 5"), "let x: u32 = 5");
     }
 
     #[test]
@@ -1562,11 +1631,15 @@ mod tests {
         let stage = stage_of(&[
             "2026-11-03 23:26:52.234 UI    update user sort=+LastChangeTime rows=4668: wait 0 ms, reason=filter, cache=miss, query 84 ms, publish 13 ms",
             "Přepočet phase=load tasks=-12: hotovo",
+            "2025-11-18 10:43:59, Warning                  MOUPG  ImageExit: Unable to resurrect NewSystem object. hr=0x80070002",
+            "[2025-11-18 10:43:59] Unable to resurrect NewSystem object. hr=0x80070002",
         ]);
         assert_eq!(click(&stage, 0, "=filter"), "reason=filter");
         assert_eq!(click(&stage, 0, "=miss"), "cache=miss");
         assert_eq!(click(&stage, 0, "=4668"), "rows=4668");
         assert_eq!(click(&stage, 1, "=-12"), "tasks=-12");
+        assert_eq!(click(&stage, 2, "=0x"), "hr=0x80070002");
+        assert_eq!(click(&stage, 3, "=0x"), "hr=0x80070002");
     }
 
     #[test]
