@@ -713,18 +713,30 @@ namespace search.Tests
         static NetworkStream Raw(string socketPath, byte mode)
         {
             var stream = Silent(socketPath);
+            SendHello(stream, mode);
+            return stream;
+        }
+
+        static void SendHello(NetworkStream stream, byte mode)
+        {
             var hello = ServiceProtocol.Begin(ServiceProtocol.Hello);
             hello.Writer.Write(ServiceProtocol.Version);
             hello.Writer.Write(mode);
             ServiceProtocol.Send(stream, hello);
-            return stream;
         }
 
-        /// <summary>The service closed the connection without a word (a hello it did not read resets it)</summary>
+        /// <summary>The service can close a refused connection before or during the hello</summary>
         static bool Refused(NetworkStream client)
         {
-            try { return ServiceProtocol.ReadFrame(client, 1 << 20) == null; }
-            catch (IOException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset })
+            try
+            {
+                SendHello(client, ServiceProtocol.ModeOwn);
+                var frame = ServiceProtocol.ReadFrame(client, 1 << 20);
+                if (frame == null) return true;
+                Assert.Equal(ServiceProtocol.Welcome, TypeOf(frame));
+                return false;
+            }
+            catch (IOException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset or SocketError.Shutdown })
             {
                 return true;
             }
@@ -793,7 +805,7 @@ namespace search.Tests
                     Assert.Equal(ServiceProtocol.Welcome, TypeOf(ServiceProtocol.ReadFrame(clients[^1], 1 << 20)));
                 }
                 for (var i = 0; i < 16; i++) clients.Add(Silent(service.Socket));
-                clients.Add(Raw(service.Socket, ServiceProtocol.ModeOwn));
+                clients.Add(Silent(service.Socket));
                 Assert.True(Refused(clients[^1]));
 
                 clients[^2].Dispose(); //One gone: room for another, once the service noticed
@@ -801,7 +813,7 @@ namespace search.Tests
                 NetworkStream admitted = null;
                 while (admitted == null && Environment.TickCount64 < end)
                 {
-                    var again = Raw(service.Socket, ServiceProtocol.ModeOwn);
+                    var again = Silent(service.Socket);
                     if (!Refused(again)) admitted = again;
                     else
                     {
