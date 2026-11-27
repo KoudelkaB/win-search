@@ -122,9 +122,8 @@ fn collect_parallel(stage: &Stage, op: &UniqueOp, all_ascii: bool, cancel: &Canc
             for chunk in &chunk_buckets {
                 for &(span, row, hash) in &chunk[part] {
                     let text = stage.span_bytes(span);
-                    let found = seen
-                        .find(hash, |&entry| hashes[entry as usize] == hash && same(stage.span_bytes(entries[entry as usize].0), text, op.case_sensitive, all_ascii))
-                        .is_some();
+                    let found =
+                        seen.find(hash, |&entry| hashes[entry as usize] == hash && same(stage.span_bytes(entries[entry as usize].0), text, op.case_sensitive, all_ascii)).is_some();
                     if !found {
                         seen.insert_unique(hash, entries.len() as u32, |&entry| hashes[entry as usize]);
                         entries.push((span, row));
@@ -151,11 +150,7 @@ fn collect_parallel(stage: &Stage, op: &UniqueOp, all_ascii: bool, cancel: &Canc
 
 pub fn apply(stage: &Stage, op: &UniqueOp, cancel: &Cancel) -> OpResult<Stage> {
     let all_ascii = stage.bufs.iter().all(|buf| buf.ascii);
-    let mut entries = if stage.len() < PARALLEL_THRESHOLD {
-        collect_serial(stage, op, all_ascii, cancel)?
-    } else {
-        collect_parallel(stage, op, all_ascii, cancel)?
-    };
+    let mut entries = if stage.len() < PARALLEL_THRESHOLD { collect_serial(stage, op, all_ascii, cancel)? } else { collect_parallel(stage, op, all_ascii, cancel)? };
     if op.order != UniqueOrder::Stable {
         cancel.check()?;
         let descending = op.order == UniqueOrder::Desc;

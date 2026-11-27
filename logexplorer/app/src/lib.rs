@@ -66,9 +66,7 @@ pub fn configure_wgpu(config: &mut eframe::egui_wgpu::WgpuConfiguration) {
     let default_descriptor = std::sync::Arc::clone(&setup.device_descriptor);
     setup.device_descriptor = std::sync::Arc::new(move |adapter| {
         let mut descriptor = default_descriptor(adapter);
-        descriptor.memory_hints = eframe::wgpu::MemoryHints::Manual {
-            suballocated_device_memory_block_size: (4 << 20)..(16 << 20),
-        };
+        descriptor.memory_hints = eframe::wgpu::MemoryHints::Manual { suballocated_device_memory_block_size: (4 << 20)..(16 << 20) };
         descriptor
     });
 }

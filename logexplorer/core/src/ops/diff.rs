@@ -257,10 +257,7 @@ pub fn apply(stage: &Arc<Stage>, op: &DiffOp, cancel: &Cancel) -> OpResult<Stage
             spans[row as usize] = Span::new(arena_buf, (base + offset) as u64, length);
         }
     }
-    let mut out = stage.derive(
-        "Diff",
-        OutRows { spans, origin: None, arena, max_cols, arena_resolved: true, arena_ascii: (total_arena > 0).then_some(arena_ascii) },
-    );
+    let mut out = stage.derive("Diff", OutRows { spans, origin: None, arena, max_cols, arena_resolved: true, arena_ascii: (total_arena > 0).then_some(arena_ascii) });
     out.diff_meta = Some(DiffMeta { signature, original: stage.clone() });
     Ok(out)
 }

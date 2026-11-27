@@ -140,11 +140,7 @@ fn expand_tabs_with_counts(bytes: &[u8], ranges: &[(usize, usize)], chunk_tabs: 
         target[written..written + plain.len()].copy_from_slice(plain);
     };
     if parallel {
-        ranges
-            .par_iter()
-            .zip(chunk_tabs.par_iter())
-            .zip(targets.into_par_iter())
-            .for_each(|((range, tabs), target)| expand_one((range, tabs, target)));
+        ranges.par_iter().zip(chunk_tabs.par_iter()).zip(targets.into_par_iter()).for_each(|((range, tabs), target)| expand_one((range, tabs, target)));
     } else {
         for ((range, tabs), target) in ranges.iter().zip(chunk_tabs.iter()).zip(targets) {
             expand_one((range, tabs, target));
@@ -281,7 +277,22 @@ fn scan_chunk(bytes: &[u8], base: usize, end: usize, check_utf8: bool, known_asc
         (tail_bytes, tail_cols)
     };
 
-    ChunkScan { base, valid_utf8: true, ascii, has_cr, has_lone_cr, tabs, starts, first_part_bytes, first_part_cols, inner_cols, max_inner_cols, max_inner_bytes, last_part_bytes, last_part_cols }
+    ChunkScan {
+        base,
+        valid_utf8: true,
+        ascii,
+        has_cr,
+        has_lone_cr,
+        tabs,
+        starts,
+        first_part_bytes,
+        first_part_cols,
+        inner_cols,
+        max_inner_cols,
+        max_inner_bytes,
+        last_part_bytes,
+        last_part_cols,
+    }
 }
 
 /// Single-pass UTF-8 check, ASCII check, tab count, sparse line indexing and column metrics.

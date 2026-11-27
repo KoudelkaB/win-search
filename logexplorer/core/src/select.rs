@@ -1672,8 +1672,12 @@ mod tests {
     fn an_equals_sign_selects_audit_fields_and_the_fields_of_their_messages() {
         for separator in ["\u{1d}", ""] {
             let rows = [
-                format!(r#"type=CRED_DISP msg=audit(1790879654.546:187): pid=1554 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:xdm_t:s0-s0:c0.c1023 msg='op=PAM:setcred grantors=pam_permit acct="gdm-greeter" exe="/usr/libexec/gdm-session-worker" hostname=fedora addr=? terminal=/dev/tty1 res=success'{separator}UID="root" AUID="unset""#),
-                format!(r#"type=SERVICE_STOP msg=audit(1790879664.820:189): pid=1 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:init_t:s0 msg='unit=user@60578 comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'{separator}UID="root" AUID="unset""#),
+                format!(
+                    r#"type=CRED_DISP msg=audit(1790879654.546:187): pid=1554 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:xdm_t:s0-s0:c0.c1023 msg='op=PAM:setcred grantors=pam_permit acct="gdm-greeter" exe="/usr/libexec/gdm-session-worker" hostname=fedora addr=? terminal=/dev/tty1 res=success'{separator}UID="root" AUID="unset""#
+                ),
+                format!(
+                    r#"type=SERVICE_STOP msg=audit(1790879664.820:189): pid=1 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:init_t:s0 msg='unit=user@60578 comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'{separator}UID="root" AUID="unset""#
+                ),
                 "type=BPF msg=audit(1790879667.925:192): prog-id=81 op=UNLOAD".to_string(),
             ];
             let stage = stage_of(&rows.iter().map(String::as_str).collect::<Vec<_>>());
@@ -1683,7 +1687,10 @@ mod tests {
             assert_eq!(click(&stage, 0, "=0 "), "uid=0");
             assert_eq!(click(&stage, 0, "=42"), "auid=4294967295");
             assert_eq!(click(&stage, 0, "=system_u"), "subj=system_u:system_r:xdm_t:s0-s0:c0.c1023");
-            assert_eq!(click(&stage, 0, "='"), r#"msg='op=PAM:setcred grantors=pam_permit acct="gdm-greeter" exe="/usr/libexec/gdm-session-worker" hostname=fedora addr=? terminal=/dev/tty1 res=success'"#);
+            assert_eq!(
+                click(&stage, 0, "='"),
+                r#"msg='op=PAM:setcred grantors=pam_permit acct="gdm-greeter" exe="/usr/libexec/gdm-session-worker" hostname=fedora addr=? terminal=/dev/tty1 res=success'"#
+            );
             assert_eq!(click(&stage, 0, "=PAM"), "op=PAM:setcred");
             assert_eq!(click(&stage, 0, "=pam_"), "grantors=pam_permit");
             assert_eq!(click(&stage, 0, "=\"gdm"), r#"acct="gdm-greeter""#);

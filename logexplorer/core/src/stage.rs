@@ -636,10 +636,7 @@ impl Stage {
                 let bytes = self.bufs[index.buf as usize].bytes();
                 let step = 1 << 16;
                 let chunks: Vec<Range<usize>> = (0..rows).step_by(step).map(|start| start..(start + step).min(rows)).collect();
-                chunks
-                    .into_par_iter()
-                    .map(|range| index.iter_range(bytes, range).map(|(start, end)| (end - start) as u64).sum::<u64>())
-                    .sum()
+                chunks.into_par_iter().map(|range| index.iter_range(bytes, range).map(|(start, end)| (end - start) as u64).sum::<u64>()).sum()
             }
             Rows::Indexed { base, rows: indices } => {
                 let bytes = self.bufs[base.buf as usize].bytes();
@@ -789,10 +786,9 @@ impl Stage {
                 let rows = Arc::new(origin);
                 let (row_ids, shared_row_ids) = match &self.row_ids {
                     RowIds::Identity => (RowIds::List(Arc::clone(&rows)), true),
-                    RowIds::List(list) => (
-                        RowIds::List(Arc::new(rows.par_iter().with_min_len(1 << 14).map(|&row| list.get(row as usize).copied().unwrap_or(NO_ROW)).collect())),
-                        false,
-                    ),
+                    RowIds::List(list) => {
+                        (RowIds::List(Arc::new(rows.par_iter().with_min_len(1 << 14).map(|&row| list.get(row as usize).copied().unwrap_or(NO_ROW)).collect())), false)
+                    }
                 };
                 let max_cols = match known_max_cols {
                     Some(cols) => {
@@ -840,9 +836,9 @@ impl Stage {
                     let mapped: Arc<Vec<u32>> = Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| parent_rows[row as usize]).collect());
                     let row_ids = match &self.row_ids {
                         RowIds::Identity => RowIds::List(Arc::new(origin)),
-                        RowIds::List(parent_ids) => RowIds::List(Arc::new(
-                            origin.par_iter().with_min_len(1 << 14).map(|&row| parent_ids.get(row as usize).copied().unwrap_or(NO_ROW)).collect(),
-                        )),
+                        RowIds::List(parent_ids) => {
+                            RowIds::List(Arc::new(origin.par_iter().with_min_len(1 << 14).map(|&row| parent_ids.get(row as usize).copied().unwrap_or(NO_ROW)).collect()))
+                        }
                     };
                     (mapped, row_ids, false)
                 };

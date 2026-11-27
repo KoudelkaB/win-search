@@ -182,10 +182,7 @@ pub fn find_backward(stage: &Stage, needle: &Needle, from: Point) -> Option<Matc
                     return Some(match_at_offset(stage, index, bytes, hit, true));
                 }
             }
-            return needle
-                .rfind_from(stage.line_bytes(from.row), usize::MAX - 64)
-                .filter(|bytes| bytes.0 >= from_byte)
-                .map(|bytes| found(stage, from.row, bytes, true));
+            return needle.rfind_from(stage.line_bytes(from.row), usize::MAX - 64).filter(|bytes| bytes.0 >= from_byte).map(|bytes| found(stage, from.row, bytes, true));
         }
     }
     let last_in = |row: usize| needle.rfind_from(stage.line_bytes(row), usize::MAX - 64);

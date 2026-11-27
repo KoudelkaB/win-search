@@ -275,12 +275,7 @@ impl LiteralSet {
 
     /// True when the set has clauses but zero searchable alternatives (matches nothing)
     pub fn matches_nothing(&self) -> bool {
-        self.clauses > 0
-            && self.single.is_none()
-            && self.exact.is_none()
-            && self.single_ascii_fold.is_none()
-            && self.ascii_fold.is_none()
-            && self.unicode_fold.is_none()
+        self.clauses > 0 && self.single.is_none() && self.exact.is_none() && self.single_ascii_fold.is_none() && self.ascii_fold.is_none() && self.unicode_fold.is_none()
     }
 
     /// True when this set can scan contiguous multi-line byte slices with a single fast engine
@@ -288,10 +283,8 @@ impl LiteralSet {
         if self.has_cr || self.unicode_fold.is_some() {
             return false;
         }
-        let engines = usize::from(self.single.is_some())
-            + usize::from(self.exact.is_some())
-            + usize::from(self.single_ascii_fold.is_some())
-            + usize::from(self.ascii_fold.is_some());
+        let engines =
+            usize::from(self.single.is_some()) + usize::from(self.exact.is_some()) + usize::from(self.single_ascii_fold.is_some()) + usize::from(self.ascii_fold.is_some());
         engines == 1
     }
 

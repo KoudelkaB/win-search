@@ -737,29 +737,13 @@ fn slashed_date(text: &str) -> Option<f64> {
 
 fn month_of(word: &str) -> Option<u32> {
     const MONTHS: [&[u8]; 12] = [b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov", b"dec"];
-    const FULL: [&[u8]; 12] = [
-        b"january",
-        b"february",
-        b"march",
-        b"april",
-        b"may",
-        b"june",
-        b"july",
-        b"august",
-        b"september",
-        b"october",
-        b"november",
-        b"december",
-    ];
+    const FULL: [&[u8]; 12] = [b"january", b"february", b"march", b"april", b"may", b"june", b"july", b"august", b"september", b"october", b"november", b"december"];
     let bytes = word.as_bytes();
     if bytes.len() < 3 {
         return None;
     }
     (0..12)
-        .find(|&index| {
-            bytes.eq_ignore_ascii_case(MONTHS[index])
-                || (bytes.len() > 3 && bytes.len() <= FULL[index].len() && FULL[index][..bytes.len()].eq_ignore_ascii_case(bytes))
-        })
+        .find(|&index| bytes.eq_ignore_ascii_case(MONTHS[index]) || (bytes.len() > 3 && bytes.len() <= FULL[index].len() && FULL[index][..bytes.len()].eq_ignore_ascii_case(bytes)))
         .map(|index| index as u32 + 1)
 }
 

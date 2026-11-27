@@ -174,13 +174,7 @@ impl Pattern {
 
     /// Calls `found` with the byte range of the group of every match (`None` when the group
     /// took no part in it); only the first match unless `all`. Reuses `locations` across rows.
-    fn each_match(
-        &self,
-        text: &str,
-        all: bool,
-        locations: &mut Option<regex::CaptureLocations>,
-        mut found: impl FnMut(Option<(usize, usize)>),
-    ) -> OpResult<()> {
+    fn each_match(&self, text: &str, all: bool, locations: &mut Option<regex::CaptureLocations>, mut found: impl FnMut(Option<(usize, usize)>)) -> OpResult<()> {
         let mut at = 0;
         match &self.engine {
             Engine::Fast(regex) => {
@@ -235,14 +229,8 @@ fn collect_chunks<S>(
     })?;
     let total = chunks.iter().map(|chunk| chunk.spans.len()).sum();
     let max_cols = chunks.iter().map(|chunk| chunk.max_cols).max().unwrap_or(0);
-    let mut out = OutRows {
-        spans: Vec::with_capacity(total),
-        origin: Some(Vec::with_capacity(total)),
-        arena: Vec::new(),
-        max_cols: Some(max_cols),
-        arena_resolved: true,
-        arena_ascii: None,
-    };
+    let mut out =
+        OutRows { spans: Vec::with_capacity(total), origin: Some(Vec::with_capacity(total)), arena: Vec::new(), max_cols: Some(max_cols), arena_resolved: true, arena_ascii: None };
     for chunk in chunks {
         out.spans.extend_from_slice(&chunk.spans);
         out.origin.as_mut().unwrap().extend_from_slice(&chunk.origin);
@@ -287,11 +275,7 @@ fn regex_whole_text(stage: &Stage, op: &ExtractOp, pattern: &Pattern, cancel: &C
                     let (to_row, to_line_start) = index.row_of_offset(first_start + end, bytes);
                     let to = (to_row, (first_start + end) - to_line_start);
                     // An end right after a line break belongs to the row before it
-                    let to = if to.1 == 0 && to.0 > from.0 && end > start && region[end - 1] == b'\n' {
-                        (to.0 - 1, stage.span(to.0 - 1).len() as usize)
-                    } else {
-                        to
-                    };
+                    let to = if to.1 == 0 && to.0 > from.0 && end > start && region[end - 1] == b'\n' { (to.0 - 1, stage.span(to.0 - 1).len() as usize) } else { to };
                     output.add_range(from, to);
                 }
             })?;
@@ -499,21 +483,35 @@ pub fn apply(stage: &Stage, op: &ExtractOp, cancel: &Cancel) -> OpResult<Stage> 
             let start = Needle::new(&op.start_anchor, op.case_sensitive);
             let end = Needle::new(&op.end_anchor, op.case_sensitive);
             if op.scope == ExtractScope::Line {
-                collect_chunks(stage, op, row_bounds(stage, op), cancel, || (), |output, _, row, span, line| {
-                    between_in_row(output, row, span, line, &start, &end, op.all_matches);
-                    Ok(())
-                })?
+                collect_chunks(
+                    stage,
+                    op,
+                    row_bounds(stage, op),
+                    cancel,
+                    || (),
+                    |output, _, row, span, line| {
+                        between_in_row(output, row, span, line, &start, &end, op.all_matches);
+                        Ok(())
+                    },
+                )?
             } else {
                 between_whole(stage, op, &start, &end, cancel)?
             }
         }
         ExtractMode::Column => {
             let (pos, len) = (op.pos as usize, op.len.max(1) as usize);
-            collect_chunks(stage, op, row_bounds(stage, op), cancel, || (), |output, _, row, span, line| {
-                let (start, end) = cols_to_bytes(as_str(line), pos, pos + len);
-                output.add(span.sub(start, end), row);
-                Ok(())
-            })?
+            collect_chunks(
+                stage,
+                op,
+                row_bounds(stage, op),
+                cancel,
+                || (),
+                |output, _, row, span, line| {
+                    let (start, end) = cols_to_bytes(as_str(line), pos, pos + len);
+                    output.add(span.sub(start, end), row);
+                    Ok(())
+                },
+            )?
         }
     };
     if out.spans.len() > u32::MAX as usize - 1 {

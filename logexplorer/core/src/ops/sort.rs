@@ -170,9 +170,7 @@ pub fn apply(stage: &Stage, op: &SortOp, cancel: &Cancel) -> OpResult<Stage> {
                     })
                     .collect();
                 keyed.par_sort_unstable_by(|&(lk, lb), &(rk, rb)| {
-                    lk.cmp(&rk)
-                        .then_with(|| directed(collate::compare_ascii(stage.span_bytes(slices[lb as usize]), stage.span_bytes(slices[rb as usize]))))
-                        .then(lb.cmp(&rb))
+                    lk.cmp(&rk).then_with(|| directed(collate::compare_ascii(stage.span_bytes(slices[lb as usize]), stage.span_bytes(slices[rb as usize])))).then(lb.cmp(&rb))
                 });
                 keyed.into_iter().map(|(_, block)| block).collect()
             } else {
