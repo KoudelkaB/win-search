@@ -119,20 +119,31 @@ struct Token {
     regex: fancy_regex::Regex,
     precedence: u8,
     group: usize,
-    /// Sentence punctuation after a match is not part of it (paths and URLs)
-    trim: bool,
+    /// A path or URL, which leaves out the punctuation after it
+    value: bool,
 }
 
 fn token(pattern: &str, precedence: u8, group: usize) -> Token {
-    Token { regex: fancy_regex::Regex::new(pattern).expect("token pattern"), precedence, group, trim: false }
+    Token { regex: fancy_regex::Regex::new(pattern).expect("token pattern"), precedence, group, value: false }
 }
 
-fn trimmed_token(pattern: &str, precedence: u8) -> Token {
-    Token { trim: true, ..token(pattern, precedence, 0) }
+fn value_token(pattern: &str, precedence: u8) -> Token {
+    Token { value: true, ..token(pattern, precedence, 0) }
+}
+
+/// Where a path or URL matched at `start..end` ends: without the sentence punctuation after it,
+/// unless the same quote is right before and after it (`"C:\logs\snapshot!"`).
+fn value_end(line: &[char], start: usize, end: usize) -> usize {
+    let quoted = start.checked_sub(1).map(|before| line[before]).is_some_and(|quote| is_quote(quote) && line.get(end) == Some(&quote));
+    if quoted {
+        end
+    } else {
+        trim_trailing_punctuation(line, start, end)
+    }
 }
 
 /// The end of a path or URL without the sentence punctuation after it (`…\file.cfg, section …`).
-/// A closing bracket is dropped only when unbalanced, so `Program Files (x86)` stays whole.
+/// A closing bracket or quote is dropped only when unbalanced, so `Program Files (x86)` stays whole.
 fn trim_trailing_punctuation(line: &[char], start: usize, mut end: usize) -> usize {
     while end > start {
         let last = line[end - 1];
@@ -145,14 +156,16 @@ fn trim_trailing_punctuation(line: &[char], start: usize, mut end: usize) -> usi
             end -= 1;
             continue;
         }
-        let open = match last {
-            ')' => '(',
-            ']' => '[',
-            '}' => '{',
-            _ => break,
-        };
         let text = &line[start..end];
-        if text.iter().filter(|ch| **ch == last).count() <= text.iter().filter(|ch| **ch == open).count() {
+        let count = |ch: char| text.iter().filter(|other| **other == ch).count();
+        let unbalanced = match last {
+            ')' => count(')') > count('('),
+            ']' => count(']') > count('['),
+            '}' => count('}') > count('{'),
+            '\'' | '`' => count(last) % 2 == 1,
+            _ => false,
+        };
+        if !unbalanced {
             break;
         }
         end -= 1;
@@ -161,24 +174,58 @@ fn trim_trailing_punctuation(line: &[char], start: usize, mut end: usize) -> usi
 }
 
 /// Rooted Windows-style paths (`C:\`, `\\server\`, `\\?\`, `%VAR%\`, `~\` and their forward-slash
-/// forms). A directory name may contain spaces because the separator after it shows it is part
-/// of the path. A file name may contain them only when it ends with an extension and its later
-/// words do not start with a lowercase letter, so `System32 for kernel32.dll` stops after
-/// `System32` while `New Text Document.txt` stays whole.
-fn rooted_path_patterns() -> [String; 2] {
-    const NAME: &str = r#"[^\s\\/:*?"<>|]"#;
-    const NAME_NO_DOT: &str = r#"[^\s\\/:*?"<>|.]"#;
-    const WORD_END: &str = r#"[^\s\\/:*?"<>|,;]"#;
-    const FILE_WORD_END: &str = r#"[^\s\\/:*?"<>|.,;]"#;
-    const FILE_WORD_START: &str = r#"[^\s\\/:*?"<>|.,;a-z]"#;
+/// forms), with either separator after any directory (`C:\Program Files/App/app.log`).
+/// - A directory name may contain spaces, because the separator after it shows it is part of the
+///   path (`C:\Program Files\ASP.NET MVC 4\bin`). Before the other separator than the root's one,
+///   its words must not have a file extension, so `C:\logs\app.log and/or` stops at `app.log`.
+/// - A file name may contain spaces only when it ends with an extension and its later words do
+///   not start with a lowercase letter, so `System32 for kernel32.dll` stops after `System32` while
+///   `New Text Document.txt` stays whole.
+/// - A word after a space never starts another root (`one.txt %TEMP%\two.txt`).
+/// - A quote is part of a name only between two of its characters (`O'Brien`), so a closing quote
+///   ends the path and `'C:\a.txt','C:\b.txt'` are two paths. A `;` separates paths (`PATH`).
+///
+/// Anything less certain is left to the next click, which grows the selection to the quotes or
+/// brackets around it (`"C:\logs\error report.txt"`).
+fn rooted_path_pattern() -> String {
+    const CHAR: &str = r#"[^\s\\/:*?"<>|;'`]"#;
+    // A name character, and a quote when another one follows it
+    let name_char = |also_not: &str| format!(r#"(?:[^\s\\/:*?"<>|;'`{also_not}]|['`](?=[^\s\\/:*?"<>|;'`,{also_not}]))"#);
+    let (name, name_no_dot) = (name_char(""), name_char("."));
+    const WORD_END: &str = r#"[^\s\\/:*?"<>|;'`,]"#;
+    const FILE_WORD_END: &str = r#"[^\s\\/:*?"<>|;'`,.]"#;
+    const FILE_WORD_START: &str = r#"[^\s\\/:*?"<>|;'`,.a-z]"#;
+    // At least one letter, so `.7z` is an extension and the `.2` of a version is not
+    const EXTENSION: &str = r"\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,8}";
+    // A word after a space that starts another path, quoted or not (`' '\\server`), ends this one
+    const NO_ROOT: &str = r"(?!['`]?(?:%[A-Za-z_][\w()]*%[\\/]|~[\\/]|\\\\|//))";
+    let backslash_roots = [
+        r"[A-Za-z]:\\+".to_string(),
+        // `\\?\C:\` long paths and `\\.\` devices
+        r"\\\\[?.]\\(?:[A-Za-z]:\\)?".to_string(),
+        format!(r"\\{{2,}}(?={CHAR})"),
+        r"%[A-Za-z_][\w()]*%\\+".to_string(),
+        r"~\\+".to_string(),
+    ];
+    let slash_roots = [
+        // Not the last letter of a URL scheme (`http://`)
+        r"(?<![A-Za-z0-9])[A-Za-z]:/+".to_string(),
+        // `//server/share` needs both parts, so a `//comment` in code is not a path
+        format!(r"(?<![\w:/])//(?={CHAR}+[\\/]+{CHAR})"),
+        r"%[A-Za-z_][\w()]*%/+".to_string(),
+        r"~/+".to_string(),
+    ];
+    let word = format!(r"{name}*{WORD_END}");
+    let word_without_extension = format!(r"(?!{name}*{EXTENSION} ){word}");
     let spaced_file = format!(
-        r#"{NAME_NO_DOT}*{FILE_WORD_END}(?: {FILE_WORD_START}(?:{NAME_NO_DOT}*{FILE_WORD_END})?)* {FILE_WORD_START}{NAME}*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?=$|[\s.,;:!?)\]}}"'<>|])"#
+        r#"{name_no_dot}*{FILE_WORD_END}(?: {NO_ROOT}{FILE_WORD_START}(?:{name_no_dot}*{FILE_WORD_END})?)* {NO_ROOT}{FILE_WORD_START}{name}*{EXTENSION}(?=$|[\s.,;:!?)\]}}"'`<>|])"#
     );
-    let path = |roots: &str, separator: &str| format!(r"(?:{roots})(?:(?:{NAME}*{WORD_END} )*{NAME}+{separator})*(?:{spaced_file}|{NAME}+)?");
-    [
-        path(&format!(r"[A-Za-z]:\\+|\\\\[?.]\\(?:[A-Za-z]:\\)?|\\{{2,}}(?={NAME})|%[A-Za-z_][\w()]*%\\+|~\\+"), r"\\+"),
-        path(r"(?<![A-Za-z0-9])[A-Za-z]:/+|%[A-Za-z_][\w()]*%/+|~/+", "/+"),
-    ]
+    let path = |roots: &[String], separator: &str| {
+        let roots = roots.join("|");
+        let directory = format!(r"(?:{word} {NO_ROOT})*{name}+{separator}+|(?:{word_without_extension} {NO_ROOT})*{name}+[\\/]+");
+        format!(r"(?:{roots})(?:{directory})*(?:{spaced_file}|{name}+)?")
+    };
+    format!("{}|{}", path(&backslash_roots, r"\\"), path(&slash_roots, "/"))
 }
 
 const DATE_TIME_ISO: &str = r"\b[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,9})?)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?\b";
@@ -194,7 +241,6 @@ const GUID_LIKE: &str = r"(?i)(^|[^A-Za-z0-9-])([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){
 fn tokens() -> &'static [Token] {
     static TOKENS: OnceLock<Vec<Token>> = OnceLock::new();
     TOKENS.get_or_init(|| {
-        let [backslash_path, slash_path] = rooted_path_patterns();
         vec![
             token(DATE_TIME_ISO, 4, 0),
             token(DATE_TIME_YMD, 4, 0),
@@ -203,10 +249,9 @@ fn tokens() -> &'static [Token] {
             token(GUID_LIKE, 3, 2),
             token(r"\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\b", 3, 0),
             token(r"\b[0-9]+(?:\.[0-9]+){2,}(?:[-+][A-Za-z0-9][A-Za-z0-9.-]*)?\b", 3, 0),
-            trimmed_token(r#"(?i)\b(?:https?|ftp)://[^\s"'<>]+"#, 3),
-            trimmed_token(&backslash_path, 3),
-            trimmed_token(&slash_path, 3),
-            trimmed_token(r"(?:[\\/]|\.{1,2}[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+", 3),
+            value_token(r#"(?i)\b(?:https?|ftp)://[^\s"'<>]+"#, 3),
+            value_token(&rooted_path_pattern(), 3),
+            value_token(r"(?:[\\/]|\.{1,2}[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+", 3),
             token(r"\b[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\.)[A-Za-z_][A-Za-z0-9_]*)+\b", 3, 0),
             token(DATE_YMD, 3, 0),
             token(DATE_DMY, 3, 0),
@@ -572,7 +617,7 @@ impl<'a> Window<'a> {
         let mut candidates = Vec::new();
         for token in tokens() {
             piece.each_match(&token.regex, token.group, |start, end| {
-                let end = if token.trim { trim_trailing_punctuation(line, start, end) } else { end };
+                let end = if token.value { value_end(line, start, end) } else { end };
                 if col >= start && col < end {
                     candidates.push(Range { start: self.starts[index] + start, end: self.starts[index] + end, delimiters: None, precedence: token.precedence });
                 }
@@ -1214,6 +1259,63 @@ mod tests {
         assert_eq!(click(&stage, 6, "logs"), "logs/app.log");
         assert_eq!(click(&stage, 6, "example"), "https://example.com/a/b");
         assert_eq!(click(&stage, 7, "wiki/"), "https://en.wikipedia.org/wiki/Foo_(bar)");
+    }
+
+    #[test]
+    fn a_path_mixes_separators_and_ends_at_punctuation_or_the_next_root() {
+        let stage = stage_of(&[
+            r"C:\logs/archive/app.log and C:\Program Files/App/app.log",
+            r"Could not open C:\logs\app.log and/or fallback",
+            r"C:\src\one.txt %TEMP%\two.txt",
+            r"PATH=C:\Windows;C:\Windows\System32;C:\Program Files\Git\cmd;",
+            r"C:\logs\Error Report.7z C:\x\Setup V1.2 done",
+            r"//server/My Share/file.txt //comment see http://host/a/b.",
+            r"but not after C:\logs\snapshot! or https://example.com/api/!",
+            r"C:\Program Files\ASP.NET MVC 4\bin\app.dll //server\share\file.txt",
+        ]);
+        assert_eq!(click(&stage, 0, "app.log"), r"C:\logs/archive/app.log");
+        assert_eq!(click(&stage, 0, "App/"), r"C:\Program Files/App/app.log");
+        assert_eq!(click(&stage, 1, "app.log"), r"C:\logs\app.log");
+        assert_eq!(click(&stage, 2, "one"), r"C:\src\one.txt");
+        assert_eq!(click(&stage, 2, "two"), r"%TEMP%\two.txt");
+        assert_eq!(click(&stage, 3, "Windows;"), r"C:\Windows");
+        assert_eq!(click(&stage, 3, "System32"), r"C:\Windows\System32");
+        assert_eq!(click(&stage, 3, "Git"), r"C:\Program Files\Git\cmd");
+        assert_eq!(click(&stage, 4, "Report"), r"C:\logs\Error Report.7z");
+        assert_eq!(click(&stage, 4, "Setup"), r"C:\x\Setup");
+        assert_eq!(click(&stage, 5, "server"), "//server/My Share/file.txt");
+        assert_eq!(click(&stage, 5, "comment"), "comment");
+        assert_eq!(click(&stage, 5, "host"), "http://host/a/b");
+        assert_eq!(click(&stage, 6, "snapshot"), r"C:\logs\snapshot");
+        assert_eq!(click(&stage, 6, "example"), "https://example.com/api/");
+        assert_eq!(click(&stage, 7, "app.dll"), r"C:\Program Files\ASP.NET MVC 4\bin\app.dll");
+        assert_eq!(click(&stage, 7, "file"), r"//server\share\file.txt");
+    }
+    #[test]
+    fn a_quote_ends_a_path_and_the_next_click_takes_the_whole_quoted_text() {
+        let list = |root: &str| (0..75).map(|index| format!(r"'{root}\folder\file{index:03}.txt'")).collect::<Vec<_>>().join(",");
+        let (drives, shares) = (list("C:"), list(r"\\server"));
+        let stage = stage_of(&[
+            r"Copy-Item 'C:\src\one.txt' '\\server\share\two.txt' C:\Users\O'Brien\z.txt",
+            r#"message="C:\logs\app.log was not found" retry="C:\logs\app.log, Retry scheduled""#,
+            r#"open "C:\logs\error report.txt" "C:\logs\report.v2 final.txt" "C:\Program Files""#,
+            r#"keep "C:\logs\snapshot!" "https://example.com/api/!" 'C:\a\b'"#,
+            &drives,
+            &shares,
+        ]);
+        assert_eq!(click(&stage, 0, "one"), r"C:\src\one.txt");
+        assert_eq!(click(&stage, 0, "two"), r"\\server\share\two.txt");
+        assert_eq!(click(&stage, 0, "Brien"), r"C:\Users\O'Brien\z.txt");
+        assert_eq!(click(&stage, 1, "app.log w"), r"C:\logs\app.log");
+        assert_eq!(click(&stage, 1, "app.log,"), r"C:\logs\app.log");
+        assert_eq!(growth(&stage, 2, "report.txt", 2), ["report.txt", r"C:\logs\error report.txt"]);
+        assert_eq!(growth(&stage, 2, "final", 2), ["final.txt", r"C:\logs\report.v2 final.txt"]);
+        assert_eq!(growth(&stage, 2, "Files", 2), ["Files", r"C:\Program Files"]);
+        assert_eq!(click(&stage, 3, "snapshot"), r"C:\logs\snapshot!");
+        assert_eq!(click(&stage, 3, "example"), "https://example.com/api/!");
+        assert_eq!(click(&stage, 3, "a\\b"), r"C:\a\b");
+        assert_eq!(click(&stage, 4, "file065"), r"C:\folder\file065.txt");
+        assert_eq!(click(&stage, 5, "file065"), r"\\server\folder\file065.txt");
     }
 
     #[test]
