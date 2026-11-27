@@ -1,12 +1,10 @@
 name: tests
 
 # The headless tests (search.tests): the model, the index readers and the real main window
-# on Avalonia's headless platform - no display, no input. On every pull request and push to
-# main, on both systems; the release calls it before it publishes.
+# on Avalonia's headless platform - no display, no input. Runs on both systems for pull requests,
+# on demand, and before publishing a release.
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
   workflow_call:
 
