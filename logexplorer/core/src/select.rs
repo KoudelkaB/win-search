@@ -265,6 +265,31 @@ fn tokens() -> &'static [Token] {
     })
 }
 
+/// The length in bytes of the longest value a click selects by itself at the start of `text`, as
+/// `C:\Program Files\app.log` or `2026-03-13 10:02:00` at the start of the value of a log field
+fn token_len(text: &str) -> Option<usize> {
+    static ANCHORED: OnceLock<Vec<(fancy_regex::Regex, usize, bool)>> = OnceLock::new();
+    let anchored = ANCHORED.get_or_init(|| {
+        let anchor = |token: &Token| fancy_regex::Regex::new(&format!(r"\A(?:{})", token.regex.as_str())).expect("anchored token pattern");
+        tokens().iter().map(|token| (anchor(token), token.group, token.value)).collect()
+    });
+    let mut reach = text.len().min(TOKEN_REACH);
+    while !text.is_char_boundary(reach) {
+        reach -= 1;
+    }
+    let text = &text[..reach];
+    let token_len = |(regex, group, value): &(fancy_regex::Regex, usize, bool)| {
+        let matched = regex.captures(text).ok()??.get(*group).filter(|matched| matched.start() == 0)?;
+        if !value {
+            return Some(matched.end());
+        }
+        let chars: Vec<char> = text[..matched.end()].chars().collect();
+        let end = trim_trailing_punctuation(&chars, 0, chars.len());
+        Some(chars[..end].iter().map(|ch| ch.len_utf8()).sum())
+    };
+    anchored.iter().filter_map(token_len).max()
+}
+
 fn date_time_tokens() -> &'static [fancy_regex::Regex] {
     static TOKENS: OnceLock<Vec<fancy_regex::Regex>> = OnceLock::new();
     TOKENS.get_or_init(|| [DATE_TIME_ISO, DATE_TIME_YMD, DATE_TIME_DMY, DATE_YMD, DATE_DMY, TIME].iter().map(|pattern| fancy_regex::Regex::new(pattern).unwrap()).collect())
@@ -857,9 +882,16 @@ impl<'a> Window<'a> {
         ranges
     }
 
-    /// The `"key": value` members of the objects around an offset
+    /// The members of the objects around an offset
     fn objects_at(&self, offset: usize) -> json::Objects<usize> {
         json::objects_in(&self.text, offset, self.leading_quote())
+    }
+
+    fn structure_encloses(&self, offset: usize) -> bool {
+        let encloses = |start, end| start < offset && offset < end;
+        self.bracket_pairs().iter().any(|(pair, _)| encloses(pair.start, pair.end))
+            || (self.text.contains(&'<')
+                && (self.angle_pairs().iter().any(|pair| encloses(pair.start, pair.end)) || self.xml_elements().iter().any(|element| encloses(element.start, element.end))))
     }
 
     /// Every structure around the pointer
@@ -973,6 +1005,10 @@ struct DocumentScopes {
     members: Vec<json::Member<Point>>,
 }
 
+fn starts_with_markup(stage: &Stage) -> bool {
+    (0..stage.len()).find_map(|row| stage.line_bytes(row).iter().find(|byte| !byte.is_ascii_whitespace())) == Some(&b'<')
+}
+
 impl DocumentScopes {
     fn read(stage: &Stage, point: Point) -> Self {
         let clicked = (point.row, col_to_byte(stage.line(point.row), point.col));
@@ -1010,8 +1046,7 @@ impl DocumentScopes {
                 delimiters::brackets(stage, clicked, Some((inner.content_start, inner.content_end)), |pair| pairs.push(pair));
             }
             // Log text or source code can have brackets around an entire markup fragment.
-            let first = (0..stage.len()).find_map(|row| stage.line_bytes(row).iter().find(|byte| !byte.is_ascii_whitespace()));
-            if first != Some(&b'<') {
+            if !starts_with_markup(stage) {
                 let outer = tags.iter().max_by_key(markup).unwrap();
                 delimiters::brackets(stage, clicked, None, |pair| {
                     if pair.content_start <= outer.start && outer.end <= pair.content_end {
@@ -1150,16 +1185,23 @@ impl ClickSelector {
         if let Some(kept) = keep {
             return Some((kept.start, kept.end));
         }
-        // A key colon follows the key's closing quote. Other colons, such as in times, need no scan.
-        let after_key = || window.text[..clicked].iter().rev().find(|ch| !ch.is_whitespace()).is_some_and(|ch| is_quote(*ch));
-        if ch == Some(':') && after_key() {
-            if let Some(member) = window.objects_at(clicked).members.into_iter().find(|member| member.colon == clicked) {
-                return Some((window.point_of(member.start), window.point_of(member.end)));
-            }
-            if !window.complete {
-                if let Some(member) = scopes(&mut self.document_scopes, stage, point).members.iter().find(|member| member.colon == point) {
-                    return Some((member.start, member.end));
+        // Colons outside a possible object member, such as in timestamps, need no scan.
+        if ch == Some(':') {
+            if let Some(key) = json::key_before(&window.text[..clicked]) {
+                if let Some(member) = window.objects_at(clicked).members.into_iter().find(|member| member.colon == clicked) {
+                    return Some((window.point_of(member.start), window.point_of(member.end)));
                 }
+                // A bare key after others on its row is common in plain logs, and scanning the
+                // document for each would make clicks slow. A field takes its place without an
+                // object in the window.
+                if !window.complete && key == json::KeyBefore::Distant {
+                    if let Some(member) = scopes(&mut self.document_scopes, stage, point).members.iter().find(|member| member.colon == point) {
+                        return Some((member.start, member.end));
+                    }
+                }
+            }
+            if let Some(field) = expression::colon_field_at(stage, point).filter(|_| !window.structure_encloses(clicked) && !starts_with_markup(stage)) {
+                return Some((field.start, field.end));
             }
         }
         if ch == Some('=') {
@@ -1431,6 +1473,36 @@ mod tests {
     }
 
     #[test]
+    fn a_log_object_member_with_a_bare_key_is_selected_before_the_object() {
+        let stage = stage_of(&[r#"[03/13/2026 00:00:00 INF  [ { Id: 1001, Name: "Http Request" }] Ok [statusCode=200]"#]);
+        let member = r#"Name: "Http Request""#;
+        assert_eq!(growth(&stage, 0, "Name", 3), ["Name", member, r#" Id: 1001, Name: "Http Request" "#]);
+        assert_eq!(click(&stage, 0, r#": "Http"#), member);
+        assert_eq!(click(&stage, 0, ": 1001"), "Id: 1001");
+        assert_eq!(growth(&stage, 0, "1001", 2), ["1001", "Id: 1001"]);
+
+        let (object_contents, _) = click_with(&stage, 0, "{ Id", None, false);
+        let (selection, selected) = click_with(&stage, 0, "Name", object_contents.as_ref(), true);
+        assert_eq!(selected, member);
+        assert_eq!(click_with(&stage, 0, "Name", selection.as_ref(), true).1, "Name");
+    }
+
+    #[test]
+    fn a_bare_key_is_found_when_the_object_starts_beyond_the_window() {
+        let padding = vec!["  Another: 0,"; WINDOW_ROWS + 10];
+        let mut rows = vec!["{"];
+        rows.extend(&padding);
+        let row = rows.len();
+        rows.push(r#"  Jméno: "Http Request","#);
+        rows.extend(&padding);
+        rows.push(r#"  "end": 0"#);
+        rows.push("}");
+        let stage = stage_of(&rows);
+        assert_eq!(growth(&stage, row, "méno", 2), ["Jméno", r#"Jméno: "Http Request""#]);
+        assert_eq!(click(&stage, row, r#": "Http"#), r#"Jméno: "Http Request""#);
+    }
+
+    #[test]
     fn a_colon_selects_the_json_member() {
         let stage = stage_of(&[r#"log {'id': 7, "url": "http://a:80", "at": 12:30} f(a: 1)"#, "{", r#"  "list": ["#, "    1", "  ],", r#"  "k" : "v""#, "}"]);
         assert_eq!(click(&stage, 0, ": 7"), "'id': 7");
@@ -1444,6 +1516,99 @@ mod tests {
         let stage = stage_of(&[r#"{x: 1, "y" 2: 3}"#]);
         assert_ne!(click(&stage, 0, ": 1"), "x: 1");
         assert_ne!(click(&stage, 0, ": 3"), r#""y" 2: 3"#);
+
+        let stage = stage_of(&["if (ok) { retry: run(); }", "use { Type::member other }"]);
+        assert_eq!(growth(&stage, 0, "retry", 2), ["retry", " retry: run(); "]);
+        assert_ne!(click(&stage, 0, ": run"), "retry: run();");
+        assert_eq!(click(&stage, 1, "::"), "Type::member");
+    }
+
+    #[test]
+    fn a_colon_selects_a_plain_log_field_and_keeps_other_colon_tokens() {
+        let stage = stage_of(&[
+            r#"INFO Name: "Http Request" id=1001"#,
+            "INFO Id: 1001, Status: ready",
+            "2026-03-13 00:00:00 INFO Result: OK",
+            "Status : ready",
+            r#"https://example.com:8080/health C:\logs\app.log Type::member"#,
+            r#"INFO message="Name: not a field""#,
+        ]);
+        assert_eq!(click(&stage, 0, r#": "Http"#), r#"Name: "Http Request""#);
+        assert_eq!(click(&stage, 1, ": 1001"), "Id: 1001");
+        assert_eq!(click(&stage, 1, ": ready"), "Status: ready");
+        assert_eq!(click(&stage, 2, ": OK"), "Result: OK");
+        assert_eq!(click(&stage, 3, ": ready"), "Status : ready");
+        assert_eq!(click(&stage, 2, ":00:"), "2026-03-13 00:00:00");
+        assert_eq!(click(&stage, 4, "://"), "https://example.com:8080/health");
+        assert_eq!(click(&stage, 4, ":8080"), "https://example.com:8080/health");
+        assert_eq!(click(&stage, 4, r#":\logs"#), r#"C:\logs\app.log"#);
+        assert_eq!(click(&stage, 4, "::"), "Type::member");
+        assert_ne!(click(&stage, 5, ": not"), "Name: not");
+    }
+
+    #[test]
+    fn a_plain_log_field_is_not_used_in_markup_or_other_brackets() {
+        let stage = stage_of(&["before <root>", r#"  Name: "inside XML""#, "</root>", "function(", r#"  Name: "inside parentheses""#, ")"]);
+        assert_ne!(click(&stage, 1, r#": "inside"#), r#"Name: "inside XML""#);
+        assert_ne!(click(&stage, 4, r#": "inside"#), r#"Name: "inside parentheses""#);
+        assert_eq!(growth(&stage, 1, "Name", 2), ["Name", "\n  Name: \"inside XML\"\n"]);
+    }
+
+    #[test]
+    fn a_field_value_is_a_whole_value_that_a_click_selects_by_itself() {
+        let stage = stage_of(&[
+            r"Name: ESET Security, Path: C:\Program Files\ESET\ESET Security\ekrn.exe, Time: 1",
+            r"2026-03-13 10:00:00 INFO path=C:\Program Files\App\app.log started=2026-03-13 10:02:00 user=bob",
+            r"INFO dir=C:\Program Files\App user=bob at=10:02 AM",
+            "INFO Started: 13.3.2026 10:02, Status: ok",
+            r"2026-03-13 10:00:00 INFO files=C:\a.log,C:\b.log url=http://a/b,c=1",
+        ]);
+        assert_eq!(click(&stage, 0, r": C:\P"), r"Path: C:\Program Files\ESET\ESET Security\ekrn.exe");
+        assert_eq!(click(&stage, 0, ": 1"), "Time: 1");
+        assert_eq!(click(&stage, 1, "=C:"), r"path=C:\Program Files\App\app.log");
+        assert_eq!(click(&stage, 1, "=2026"), "started=2026-03-13 10:02:00");
+        assert_eq!(click(&stage, 1, "=bob"), "user=bob");
+        assert_eq!(click(&stage, 2, "=C:"), r"dir=C:\Program Files\App");
+        assert_eq!(click(&stage, 2, "=10"), "at=10:02 AM");
+        assert_eq!(click(&stage, 3, ": 13"), "Started: 13.3.2026 10:02");
+        assert_eq!(click(&stage, 3, ": ok"), "Status: ok");
+        // A value does not go on over a separator.
+        assert_eq!(click(&stage, 4, "=C:"), r"files=C:\a.log");
+        assert_eq!(click(&stage, 4, "=http"), "url=http://a/b");
+    }
+
+    #[test]
+    fn a_label_before_prose_is_not_a_field() {
+        let stage = stage_of(&[
+            r"Name: ESET Security, Path: C:\Program Files\ESET\ekrn.exe",
+            "Error: Connection refused by peer",
+            "2026-03-13 00:00:00 ERROR Reason: The system cannot find the file specified.",
+            "  Description: Service started",
+            "INFO Id: 1001 Status: ready",
+            "Exception: System.IO.FileNotFoundException: Could not find file",
+        ]);
+        assert_ne!(click(&stage, 0, ": ESET"), "Name: ESET");
+        assert_ne!(click(&stage, 1, ": Conn"), "Error: Connection");
+        assert_ne!(click(&stage, 2, ": The"), "Reason: The");
+        assert_ne!(click(&stage, 3, ": Serv"), "Description: Service");
+        assert_eq!(click(&stage, 4, ": 1001"), "Id: 1001");
+        assert_eq!(click(&stage, 4, ": ready"), "Status: ready");
+        assert_eq!(click(&stage, 5, ": System"), "Exception: System.IO.FileNotFoundException");
+    }
+
+    #[test]
+    fn a_bare_key_after_others_on_its_row_needs_no_document_scan() {
+        let filler = vec!["INFO worker done"; 2 * WINDOW_ROWS];
+        let mut rows = filler.clone();
+        let row = rows.len();
+        rows.push("INFO Id: 1001, Status: ready");
+        rows.extend(&filler);
+        let stage = stage_of(&rows);
+        let mut selector = ClickSelector::default();
+        let col = stage.line(row).find(": ready").expect("colon");
+        let (start, end) = selector.click_range(&stage, Point::new(row, col), None, false, false).expect("field");
+        assert_eq!(selection_text(&stage, &Selection::new(start, end)), "Status: ready");
+        assert!(selector.document_scopes.is_none());
     }
 
     #[test]

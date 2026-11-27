@@ -1,10 +1,11 @@
-//! Members of JSON objects: a quoted key, a colon and the value after it.
+//! Members of JSON and log objects: a key, a colon and the value after it.
 
-use super::BytePosition;
+use super::{is_quote, BytePosition};
 use crate::stage::Stage;
+use crate::text::as_str;
 use memchr::memchr2;
 
-/// `"key": value`, from the key's opening quote to the end of the value
+/// `"key": value` or `key: value`, from the start of the key to the end of the value
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Member<P> {
     pub start: P,
@@ -18,13 +19,19 @@ impl<P> Member<P> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Key {
+    Quoted,
+    Bare,
+}
+
 /// How far a member of an object has got
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Part {
     Empty,
-    Key,
-    Colon,
-    Value,
+    Key(Key),
+    Colon(Key),
+    Value(Key),
     /// Not a member, such as code or prose in braces
     Other,
 }
@@ -35,33 +42,48 @@ struct Level<P> {
     colon: Option<P>,
     end: Option<P>,
     part: Part,
+    /// Bare keys require the surrounding braces to contain a list of members.
+    only_members: bool,
     /// The member around the click, kept until the object closes
-    found: Option<Member<P>>,
+    found: Option<(Member<P>, Key)>,
 }
 
 impl<P: Copy + Ord> Level<P> {
     fn new(open: u8) -> Self {
-        Level { open, start: None, colon: None, end: None, part: Part::Empty, found: None }
+        Level { open, start: None, colon: None, end: None, part: Part::Empty, only_members: true, found: None }
     }
 
-    fn token(&mut self, start: P, end: P, quoted: bool) {
+    fn token(&mut self, start: P, end: P, key: Option<Key>) {
         if self.open != b'{' {
             return;
         }
         self.start.get_or_insert(start);
         self.end = Some(end);
-        self.part = match self.part {
-            Part::Empty if quoted => Part::Key,
-            Part::Colon | Part::Value => Part::Value,
+        self.part = match (self.part, key) {
+            (Part::Empty, Some(key)) => Part::Key(key),
+            (Part::Colon(key) | Part::Value(key), _) => Part::Value(key),
             _ => Part::Other,
         };
     }
 
+    fn colon(&mut self, position: P) -> Option<Key> {
+        if self.part == Part::Colon(Key::Bare) {
+            // A second colon can be a scope operator, as in `Type::member`.
+            self.only_members = false;
+        }
+        let Part::Key(key) = self.part else { return None };
+        self.part = Part::Colon(key);
+        self.colon = Some(position);
+        Some(key)
+    }
+
     fn finish_member(&mut self, clicked: P) {
-        if let (Part::Value, Some(start), Some(colon), Some(end)) = (self.part, self.start, self.colon, self.end) {
+        if let (Part::Value(key), Some(start), Some(colon), Some(end)) = (self.part, self.start, self.colon, self.end) {
             if start <= clicked && clicked < end {
-                self.found = Some(Member { start, colon, end });
+                self.found = Some((Member { start, colon, end }, key));
             }
+        } else if self.part != Part::Empty {
+            self.only_members = false;
         }
         (self.start, self.colon, self.end, self.part) = (None, None, None, Part::Empty);
     }
@@ -71,7 +93,7 @@ impl<P: Copy + Ord> Level<P> {
 pub(super) struct Objects<P> {
     /// Members around the click, innermost first
     pub members: Vec<Member<P>>,
-    /// The nearest colons after a key before and from the click, also in objects that do not close
+    /// The nearest colons after a quoted key before and from the click, also in objects that do not close
     pub colons: [Option<P>; 2],
     /// The last closing `"`, `'` and `` ` `` before the click
     pub closing_quotes: [Option<P>; 3],
@@ -114,9 +136,13 @@ impl<P: Copy + Ord> Scanner<P> {
         }
     }
 
-    fn token(&mut self, start: P, end: P, quoted: bool) {
+    fn expects_key(&self) -> bool {
+        self.levels.last().is_some_and(|level| level.open == b'{' && level.part == Part::Empty)
+    }
+
+    fn token(&mut self, start: P, end: P, key: Option<Key>) {
         if let Some(level) = self.levels.last_mut() {
-            level.token(start, end, quoted);
+            level.token(start, end, key);
         }
     }
 
@@ -126,7 +152,7 @@ impl<P: Copy + Ord> Scanner<P> {
         match ch {
             b' ' | b'\t' | b'\r' | b'\n' => {}
             b'(' | b'[' | b'{' => {
-                self.token(position, next, false);
+                self.token(position, next, None);
                 self.levels.push(Level::new(ch));
             }
             b')' | b']' | b'}' => {
@@ -136,13 +162,18 @@ impl<P: Copy + Ord> Scanner<P> {
                     _ => b'{',
                 };
                 let Some(at) = self.levels.iter().rposition(|level| level.open == open) else {
-                    return self.token(position, next, false);
+                    return self.token(position, next, None);
                 };
+                let balanced = at + 1 == self.levels.len();
                 let mut level = self.levels.swap_remove(at);
                 self.levels.truncate(at);
                 if level.open == b'{' {
                     level.finish_member(self.clicked);
-                    self.objects.members.extend(level.found);
+                    if let Some((member, key)) = level.found {
+                        if key == Key::Quoted || (balanced && level.only_members) {
+                            self.objects.members.push(member);
+                        }
+                    }
                 }
                 if let Some(parent) = self.levels.last_mut() {
                     parent.end = Some(next);
@@ -157,10 +188,8 @@ impl<P: Copy + Ord> Scanner<P> {
                     level.finish_member(self.clicked);
                 }
             }
-            b':' => match self.levels.last_mut() {
-                Some(level) if level.open == b'{' && level.part == Part::Key => {
-                    level.part = Part::Colon;
-                    level.colon = Some(position);
+            b':' => match self.levels.last_mut().and_then(|level| level.colon(position)) {
+                Some(Key::Quoted) => {
                     let [before, after] = &mut self.objects.colons;
                     if position < self.clicked {
                         *before = Some(position);
@@ -168,16 +197,24 @@ impl<P: Copy + Ord> Scanner<P> {
                         after.get_or_insert(position);
                     }
                 }
-                _ => self.token(position, next, false),
+                Some(Key::Bare) => {}
+                None => self.token(position, next, None),
             },
-            _ => self.token(position, next, false),
+            b';' => {
+                // A statement in braces can start with an unquoted label.
+                if let Some(level) = self.levels.last_mut() {
+                    level.only_members = false;
+                }
+                self.token(position, next, None);
+            }
+            _ => self.token(position, next, None),
         }
     }
 
     /// Quoted text from its opening quote to past its closing one, or to the end of its row
     fn quoted(&mut self, start: P, end: P, closed: bool) {
         self.reach(start);
-        self.token(start, end, closed);
+        self.token(start, end, closed.then_some(Key::Quoted));
     }
 
     fn closing_quote(&mut self, quote: u8, at: P) {
@@ -192,6 +229,40 @@ impl<P: Copy + Ord> Scanner<P> {
     }
 }
 
+fn key_start(ch: char) -> bool {
+    ch.is_alphabetic() || matches!(ch, '_' | '$')
+}
+
+fn key_char(ch: char) -> bool {
+    ch.is_alphanumeric() || matches!(ch, '_' | '$')
+}
+
+/// Where the key of a member ends right before a colon
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyBefore {
+    /// A quoted key, or a bare one that starts its row, can be in an object that opens far before.
+    Distant,
+    /// A bare key after `{` or `,` on its row, as in `INFO Id: 1001, Status: ready`
+    Inline,
+}
+
+/// Whether a colon after this text could introduce a member value, and after what key
+pub(super) fn key_before(text: &[char]) -> Option<KeyBefore> {
+    let end = text.iter().rposition(|ch| !ch.is_whitespace())?;
+    if is_quote(text[end]) {
+        return Some(KeyBefore::Distant);
+    }
+    let start = text[..=end].iter().rposition(|&ch| !key_char(ch)).map_or(0, |index| index + 1);
+    if start > end || !key_start(text[start]) {
+        return None;
+    }
+    match text[..start].iter().rposition(|ch| !ch.is_whitespace()) {
+        None => Some(KeyBefore::Distant),
+        Some(at) if matches!(text[at], '{' | ',') => Some(if text[at..start].contains(&'\n') { KeyBefore::Distant } else { KeyBefore::Inline }),
+        Some(_) => None,
+    }
+}
+
 /// The objects around `clicked` in the window text, which can start inside quotes
 pub(super) fn objects_in(text: &[char], clicked: usize, leading_quote: Option<char>) -> Objects<usize> {
     let mut scanner = Scanner::new(clicked);
@@ -201,6 +272,13 @@ pub(super) fn objects_in(text: &[char], clicked: usize, leading_quote: Option<ch
         let (quote, from) = match leading_quote.take() {
             Some(quote) => (quote, 0),
             None if matches!(text[at], '"' | '\'' | '`') => (text[at], at + 1),
+            None if scanner.expects_key() && key_start(text[at]) => {
+                let end = at + text[at..].iter().copied().take_while(|&ch| key_char(ch)).count();
+                scanner.reach(at);
+                scanner.token(at, end, Some(Key::Bare));
+                at = end;
+                continue;
+            }
             None => {
                 let ch = text[at];
                 scanner.char(at, if ch.is_ascii() { ch as u8 } else { 0 }, at + 1);
@@ -223,7 +301,7 @@ pub(super) fn objects_in(text: &[char], clicked: usize, leading_quote: Option<ch
 }
 
 fn is_bare(ch: u8) -> bool {
-    ch.is_ascii_alphanumeric() || ch >= 0x80 || matches!(ch, b'.' | b'-' | b'+' | b'_')
+    ch.is_ascii_alphanumeric() || ch >= 0x80 || matches!(ch, b'.' | b'-' | b'+' | b'_' | b'$')
 }
 
 /// The objects around `clicked` in the stage from `from` to `to`
@@ -250,11 +328,16 @@ pub(super) fn objects_on_stage(stage: &Stage, from: BytePosition, to: BytePositi
                 scanner.quoted((row, byte), (row, if closed { close + 1 } else { close }), closed);
                 byte = close + usize::from(closed);
             } else if is_bare(ch) {
-                // A run of a bare value, such as a number, is one token
-                let run = line[byte..].iter().position(|&ch| !is_bare(ch)).unwrap_or(line.len() - byte);
+                let end = byte + line[byte..].iter().take_while(|&&ch| is_bare(ch)).count();
+                let key = if scanner.expects_key() {
+                    let mut chars = as_str(&line[byte..end]).chars();
+                    (chars.next().is_some_and(key_start) && chars.all(key_char)).then_some(Key::Bare)
+                } else {
+                    None
+                };
                 scanner.reach((row, byte));
-                scanner.token((row, byte), (row, byte + run), false);
-                byte += run;
+                scanner.token((row, byte), (row, end), key);
+                byte = end;
             } else {
                 scanner.char((row, byte), ch, (row, byte + 1));
                 byte += 1;

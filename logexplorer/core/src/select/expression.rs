@@ -1,4 +1,4 @@
-//! Log fields and expressions around an assignment or comparison operator.
+//! Log fields and expressions around an assignment, comparison or field separator.
 
 use super::{delimiters, BytePosition, DATE_TIME_ISO};
 use crate::selection::{Point, Selection};
@@ -67,6 +67,17 @@ fn unquoted_value_end(value: &str) -> usize {
     value.len()
 }
 
+/// Where an unquoted value that stops at `end` ends when a value a click selects by itself starts
+/// it and goes on over a gap or a quote, as a path with spaces or a date with its time. It does not
+/// go on over a separator, so `C:\a.log,C:\b.log` keeps the first path.
+fn token_end(value: &str, end: usize) -> usize {
+    let stopped = value[end..].chars().next().is_some_and(|ch| field_gap(ch) || matches!(ch, '"' | '\'' | '`'));
+    if !stopped {
+        return end;
+    }
+    super::token_len(value).filter(|&token| token > end && !value[end..token].contains([',', ';'])).unwrap_or(end)
+}
+
 fn field_value_end(value: &str) -> Option<usize> {
     let bytes = value.as_bytes();
     let quoted = matches!(bytes.first()?, b'"' | b'\'' | b'`');
@@ -87,7 +98,7 @@ fn field_value_end(value: &str) -> Option<usize> {
             if value[..end].ends_with(':') && rest.chars().next().is_none_or(char::is_whitespace) {
                 end - 1
             } else {
-                end
+                token_end(value, end)
             }
         }
     };
@@ -147,6 +158,61 @@ fn has_adjacent_field(prefix: &str, tail: &str) -> bool {
         let value = &previous[equals + 1..];
         field_key_start(previous, equals).is_some() && field_value_end(value) == Some(value.len())
     })
+}
+
+fn colon_field_bounds(line: &str, colon: usize) -> Option<(usize, usize)> {
+    let key_end = line[..colon].trim_end_matches(field_gap).len();
+    let start = field_key_start(line, key_end)?;
+    let after = &line[colon + 1..];
+    let value = after.trim_start_matches(field_gap);
+    // An adjacent slash belongs to a URI or a drive path. A second colon is a scope operator.
+    if value.starts_with(':') || (after.len() == value.len() && value.starts_with(['/', '\\'])) {
+        return None;
+    }
+    let end = line.len() - value.len() + field_value_end(value)?;
+    Some((start, end))
+}
+
+/// A key and its colon start `text`, as in `Status: ready`
+fn starts_with_colon_field(text: &str) -> bool {
+    let after_key = text.trim_start_matches(field_key_char).trim_start_matches(field_gap);
+    after_key.starts_with(':') && colon_field_bounds(text, text.len() - after_key.len()).is_some_and(|(start, _)| start == 0)
+}
+
+fn has_adjacent_colon_field(prefix: &str, tail: &str) -> bool {
+    let separator = |ch| field_gap(ch) || ch == ',';
+    if starts_with_colon_field(tail.trim_start_matches(separator)) {
+        return true;
+    }
+    let previous = prefix.trim_end_matches(separator);
+    previous.rmatch_indices(':').any(|(colon, _)| colon_field_bounds(previous, colon).is_some_and(|(_, end)| end == previous.len()))
+}
+
+/// Whether an unquoted value after a colon ends where `tail` starts: at the end of the row, at a
+/// separator, before a message after another colon or before the next field. A label before
+/// prose, as in `Error: Connection refused`, has no single value.
+fn ends_colon_value(tail: &str) -> bool {
+    let next = tail.trim_start_matches(field_gap);
+    next.is_empty() || next.starts_with([',', ';']) || tail.starts_with(':') || starts_with_field(next) || starts_with_colon_field(next)
+}
+
+/// A colon in a plain log field. Callers give bracketed members and markup their own rules.
+pub(super) fn colon_field_at(stage: &Stage, point: Point) -> Option<Selection> {
+    let line = stage.line(point.row);
+    let colon = col_to_byte(line, point.col);
+    let (start, end) = colon_field_bounds(line, colon)?;
+    let prefix = &line[..start];
+    if !matches!(context(prefix), Context::TopLevel) {
+        return None;
+    }
+    let after = &line[colon + 1..end];
+    let value = after.trim_start_matches(field_gap);
+    let delimited_value = value.starts_with(['"', '\'', '`', '[', '{']);
+    let spaced_label = prefix.trim_matches(field_gap).is_empty() && (after != value || line[..colon].ends_with(field_gap));
+    let tail = &line[end..];
+    let field = delimited_value || spaced_label || timestamped(line) || has_adjacent_field(prefix, tail) || has_adjacent_colon_field(prefix, tail);
+    let at = |byte| Point::new(point.row, byte_to_col(line, byte));
+    (field && (delimited_value || ends_colon_value(tail))).then(|| Selection::new(at(start), at(end)))
 }
 
 /// An unspaced assignment belongs to a log field on a timestamped row or beside another
